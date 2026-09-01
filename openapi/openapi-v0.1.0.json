@@ -1,0 +1,499 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "tars-trade-audit-risk-system",
+    "description": "TARS (Trade Audit & Risk System) \u00e2\u20ac\u201d autonomous trading robot with rules it cannot break, live on testnet \u00e2\u20ac\u201d open source, 400+ automated checks passing",
+    "version": "0.1.0"
+  },
+  "servers": [
+    {
+      "url": "https://api.tars-trade.com",
+      "description": "Production"
+    },
+    {
+      "url": "https://staging-api.tars-trade.com",
+      "description": "Staging"
+    },
+    {
+      "url": "http://localhost:8000",
+      "description": "Local development"
+    }
+  ],
+  "paths": {
+    "/manifest": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "manifest endpoint",
+        "operationId": "manifest",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "health endpoint",
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/hire": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "hire endpoint",
+        "operationId": "hire",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        },
+        "security": [
+          {
+            "AgentToken": []
+          }
+        ]
+      }
+    },
+    "/": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "unknown endpoint",
+        "operationId": "unknown",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/dashboard": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "unknown endpoint",
+        "operationId": "unknown",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/depositor": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "unknown endpoint",
+        "operationId": "unknown",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/trade": {
+      "post": {
+        "tags": [
+          "Trading"
+        ],
+        "summary": "trade endpoint",
+        "operationId": "trade",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        },
+        "security": [
+          {
+            "AgentToken": []
+          }
+        ]
+      }
+    },
+    "/audit-stats": {
+      "get": {
+        "tags": [
+          "Audit"
+        ],
+        "summary": "Query onchain audit trail for recent decisions and executions.",
+        "operationId": "audit_stats",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/risk-stats": {
+      "get": {
+        "tags": [
+          "Risk"
+        ],
+        "summary": "Get current daily risk statistics for the agent.",
+        "operationId": "risk_stats",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/positions": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Fetch live positions from OKX. Returns per-asset position data\n    including side, size, entry price, unrealized P&L, and leverage.",
+        "operationId": "positions",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/funding-arb-status": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Return current funding rates and arb package status for all assets.\n    Funding rates are fetched live from the market (cached for 60s) and\n    package state comes from the multi-leg manager's open-package tracking.",
+        "operationId": "funding_arb_status",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/validation": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Read-only: the strategy-validation pipeline gate (walk-forward + PBO +\n    Calmar). When VALIDATION_RETURNS_PATH points at a CSV of historical returns\n    (columns: in_sample, out_of_sample), the real validation_report() is run and\n    its cleared_for_paper_trading boolean is returned. Without data, the gate\n    reports an honest null \u00e2\u20ac\u201d an unvalidated strategy is not the same as a failed\n    one, so it does not block the demo. CI blocks the deploy only when the gate\n    is configured AND clears=False (see scripts/check_validation_gate.py).",
+        "operationId": "validation_status",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/curator-profile": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Read-only: active curator profile with the resolve knobs for the next\n    cycle (profile defaults, overridden per-knob by CURATOR_* env vars).",
+        "operationId": "curator_profile",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/kill-switch": {
+      "get": {
+        "tags": [
+          "Trading"
+        ],
+        "summary": "Current kill switch status. Checks the off-chain gate; also checks the\n    onchain contract if configured, since either layer can independently halt\n    trading (see TradeAuditTrail.sol activateKillSwitch).",
+        "operationId": "kill_switch_status",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/kill-switch/activate": {
+      "post": {
+        "tags": [
+          "Trading"
+        ],
+        "summary": "activate_kill_switch endpoint",
+        "operationId": "activate_kill_switch",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        },
+        "security": [
+          {
+            "AgentToken": []
+          }
+        ]
+      }
+    },
+    "/kill-switch/deactivate": {
+      "post": {
+        "tags": [
+          "Trading"
+        ],
+        "summary": "deactivate_kill_switch endpoint",
+        "operationId": "deactivate_kill_switch",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        },
+        "security": [
+          {
+            "AgentToken": []
+          }
+        ]
+      }
+    },
+    "/api/v1/vault/reconciliation": {
+      "get": {
+        "tags": [
+          "Vault"
+        ],
+        "summary": "vault_reconciliation endpoint",
+        "operationId": "vault_reconciliation",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/vault/attest": {
+      "post": {
+        "tags": [
+          "Vault"
+        ],
+        "summary": "vault_attest endpoint",
+        "operationId": "vault_attest",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        },
+        "security": [
+          {
+            "AgentToken": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "AgentToken": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Agent-Token"
+      }
+    }
+  },
+  "security": [
+    {
+      "AgentToken": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Trading",
+      "description": "Trade execution and management"
+    },
+    {
+      "name": "Audit",
+      "description": "Onchain audit trail queries"
+    },
+    {
+      "name": "Risk",
+      "description": "Risk management and statistics"
+    },
+    {
+      "name": "Vault",
+      "description": "Depositor-facing vault API"
+    },
+    {
+      "name": "System",
+      "description": "Health and manifest"
+    }
+  ]
+}

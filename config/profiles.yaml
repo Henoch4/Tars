@@ -1,0 +1,66 @@
+# Fixed, human-reviewed profile allowlist for the curator agent.
+# The curator selects a NAME from this file. It never writes raw parameters.
+# Any name the curator emits that isn't a key here is rejected, not coerced.
+#
+# Adapted from the trading_system MVP profiles to the trader's risk-gate
+# vocabulary: confidence floors are in basis points (bps, 0..10000) to match
+# RiskGate.min_confidence_bps and Signal.confidence_bps.
+
+profiles:
+  conservative:
+    position_size_multiplier: 0.35
+    confidence_floor_bps: 7500
+    enabled_signals: ["funding_rate"]
+    max_leverage: 1.5
+    # Product B: Consensus thresholds per asset-class cohort
+    consensus_thresholds:
+      majors: 0.70
+      alts: 0.80
+      memecoins: 0.85
+      tokenized_stocks: 0.75
+    # Product B: Consensus behavior when threshold not met
+    consensus_behavior: "skip"  # skip | reduced_size | default_trader | hold_and_log
+
+  standard:
+    position_size_multiplier: 0.65
+    confidence_floor_bps: 6000
+    enabled_signals: ["funding_rate"]
+    max_leverage: 2.0
+    consensus_thresholds:
+      majors: 0.65
+      alts: 0.75
+      memecoins: 0.80
+      tokenized_stocks: 0.70
+    consensus_behavior: "skip"
+
+  defensive:
+    position_size_multiplier: 0.10
+    confidence_floor_bps: 9000
+    enabled_signals: []          # no new trades opened, only unwinds
+    max_leverage: 1.0
+    consensus_thresholds:
+      majors: 0.75
+      alts: 0.85
+      memecoins: 0.90
+      tokenized_stocks: 0.80
+    consensus_behavior: "hold_and_log"
+
+default_profile: standard
+
+# Curator cannot switch more often than this (cooldown).
+cooldown_cycles: 12
+
+# If a switch underperforms the prior profile's trailing PnL over this many
+# trades since the switch, auto-revert without waiting for a human.
+auto_revert_lookback_trades: 8
+auto_revert_threshold_pnl: -0.01   # revert if trailing PnL since switch < -1%
+
+# Product B: Default consensus gate settings (overridden by active profile)
+consensus_defaults:
+  thresholds:
+    majors: 0.65
+    alts: 0.75
+    memecoins: 0.80
+    tokenized_stocks: 0.70
+  behavior: "skip"
+  default_trader: "funding_carry"  # fallback trader when consensus fails

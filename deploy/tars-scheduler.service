@@ -1,0 +1,28 @@
+[Unit]
+Description=TARS Automated Trading Scheduler
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tars
+Group=tars
+WorkingDirectory=/opt/tars
+EnvironmentFile=/opt/tars/.env
+ExecStart=/opt/tars/.venv/bin/python -m src.scheduler
+Restart=always
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=tars-scheduler
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/tars/logs /opt/tars/data
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

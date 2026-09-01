@@ -1,0 +1,112 @@
+{
+  "name": "tars-trade-audit-risk-system",
+  "description": "TARS (Trade Audit & Risk System) \u00e2\u20ac\u201d autonomous trading robot with rules it cannot break, live on testnet \u00e2\u20ac\u201d open source, 400+ automated checks passing",
+  "version": "0.1.0",
+  "category": "Finance",
+  "endpoints": [
+    {
+      "path": "/",
+      "method": "GET",
+      "description": "unknown endpoint"
+    },
+    {
+      "path": "/api/v1/curator-profile",
+      "method": "GET",
+      "description": "Read-only: active curator profile with the resolve knobs for the next\n    cycle (profile defaults, overridden per-knob by CURATOR_* env vars)."
+    },
+    {
+      "path": "/api/v1/validation",
+      "method": "GET",
+      "description": "Read-only: the strategy-validation pipeline gate (walk-forward + PBO +\n    Calmar). When VALIDATION_RETURNS_PATH points at a CSV of historical returns\n    (columns: in_sample, out_of_sample), the real validation_report() is run and\n    its cleared_for_paper_trading boolean is returned. Without data, the gate\n    reports an honest null \u00e2\u20ac\u201d an unvalidated strategy is not the same as a failed\n    one, so it does not block the demo. CI blocks the deploy only when the gate\n    is configured AND clears=False (see scripts/check_validation_gate.py)."
+    },
+    {
+      "path": "/api/v1/vault/attest",
+      "method": "POST",
+      "description": "vault_attest endpoint"
+    },
+    {
+      "path": "/api/v1/vault/reconciliation",
+      "method": "GET",
+      "description": "vault_reconciliation endpoint"
+    },
+    {
+      "path": "/audit-stats",
+      "method": "GET",
+      "description": "Query onchain audit trail for decisions and executions"
+    },
+    {
+      "path": "/dashboard",
+      "method": "GET",
+      "description": "unknown endpoint"
+    },
+    {
+      "path": "/depositor",
+      "method": "GET",
+      "description": "unknown endpoint"
+    },
+    {
+      "path": "/funding-arb-status",
+      "method": "GET",
+      "description": "Return current funding rates and arb package status for all assets.\n    Funding rates are fetched live from the market (cached for 60s) and\n    package state comes from the multi-leg manager's open-package tracking."
+    },
+    {
+      "path": "/health",
+      "method": "GET",
+      "description": "Health check"
+    },
+    {
+      "path": "/hire",
+      "method": "POST",
+      "description": "Run a trading cycle: analyze market \u00e2\u2020\u2019 generate signal \u00e2\u2020\u2019 pass risk checks \u00e2\u2020\u2019 execute \u00e2\u2020\u2019 log onchain"
+    },
+    {
+      "path": "/kill-switch",
+      "method": "GET",
+      "description": "Current kill switch status. Checks the off-chain gate; also checks the\n    onchain contract if configured, since either layer can independently halt\n    trading (see TradeAuditTrail.sol activateKillSwitch)."
+    },
+    {
+      "path": "/kill-switch/activate",
+      "method": "POST",
+      "description": "activate_kill_switch endpoint"
+    },
+    {
+      "path": "/kill-switch/deactivate",
+      "method": "POST",
+      "description": "deactivate_kill_switch endpoint"
+    },
+    {
+      "path": "/manifest",
+      "method": "GET",
+      "description": "Return the ASP manifest for okx.ai registration"
+    },
+    {
+      "path": "/positions",
+      "method": "GET",
+      "description": "Fetch live positions from OKX. Returns per-asset position data\n    including side, size, entry price, unrealized P&L, and leverage."
+    },
+    {
+      "path": "/risk-stats",
+      "method": "GET",
+      "description": "Current daily risk statistics and kill-switch status"
+    },
+    {
+      "path": "/trade",
+      "method": "POST",
+      "description": "trade endpoint"
+    }
+  ],
+  "permissions": [
+    "trade:execute",
+    "trade:place_order",
+    "trade:cancel_order"
+  ],
+  "capabilities": [
+    "market_analysis",
+    "signal_generation",
+    "risk_management",
+    "trade_execution",
+    "onchain_logging"
+  ],
+  "chain": "xlayer",
+  "openapi_generated": "2026-08-30T23:18:51.197151Z"
+}

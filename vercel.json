@@ -1,0 +1,27 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "src/main.py",
+      "use": "@vercel/python",
+      "config": {
+        "maxLambdaSize": "50mb"
+      }
+    }
+  ],
+  "routes": [
+    {
+      "src": "/static/(.*)",
+      "headers": { "cache-control": "s-max-age=31536000,immutable" },
+      "continue": true
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/src/main.py"
+    }
+  ],
+  "env": {
+    "XLAYER_RPC_URL": "https://testrpc.xlayer.tech/terigon",
+    "AUDIT_CONTRACT_ADDRESS": "0x6019b96e9d0Ba17588eb22579d9c2dEf0473d07c"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "contract": "TradingVault",
+  "address": "0x747114F3Adc0338132A1E668128c2004f081cBaf",
+  "chain_id": 1952,
+  "tx_hash": "575b490482974b394f58504a570bdd15001478cadbf0ec2e4d65791bd48d1785",
+  "gas_used": 3356560,
+  "block_number": 38642467,
+  "deployer": "0x01D47a8d36a5CF99606F0a574A04B3B89176FB7E"
+}

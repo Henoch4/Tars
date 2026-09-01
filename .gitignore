@@ -1,0 +1,99 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+
+# Node
+contracts/node_modules/
+contracts/package-lock.json
+contracts/yarn.lock
+
+# Environment
+.env
+.env.local
+*.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Coverage
+coverage/
+htmlcov/
+.nox/
+.coverage
+
+# Artifacts (kept in repo but gitignore the heavy bytecode)
+contracts/artifacts/*.txt
+
+# Local append-only audit log (runtime artifact)
+audit_log.jsonl
+
+# Local test run captures
+test_output.txt
+test_results.txt
+
+# Fetched market-data cache (scripts/fetch_history.py; refetch at any time)
+data/
+
+# Inspiration clone dirs (original research material, local only — do not re-add)
+cesf-options/
+zinger-core/
+nlp-ui/
+dixon/
+ml_from_scratch/
+rbb-gpu-hunt/
+hitmeup/
+poseidon-finance/
+driftlands/
+Algo_repo/
+microgpt-c/
+solana-agent-kit/
+solana-dex-superagg/
+MTS3/
+paseo/
+grantline/
+liquid-protocol-v1/
+algo-backtester/
+hummingbot/
+oh-my-pi/
+qvac/
+
+# Reference repos for ML inspiration (local reading material, never commit)
+model-inspiration/
+
+# Inspiration research docs (removed from repos 2026-09; do not re-add)
+docs/inspiration-*.md
+
+# One-off sub-projects that live outside this repo (never commit)
+t3n/
+mermail-trading-skill/
+tars-lora-repo/
+
+# Trained LLM adapter weights (fetched on demand via scripts/fetch_tars_lora.py;
+# canonical home: github.com/Henoch4/tars-lora — never commit the weights here)
+models/
+
+# Kaggle eval upload staging (81 MB dataset.csv copy + adapter — regenerable via
+# scripts/prep_eval_dataset.py; only for the manual tars-eval Kaggle upload)
+models/tars-eval-kaggle/
+
+# Tars lora adapter weights for the HF space page (upload to HF, not git)
+hf-space/lora_model/adapter_model.safetensors
+
+# ML spike reports + internal planning (temporary, not part of rebrand)
+reports/ml-*.md
+.zcode/

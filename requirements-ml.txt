@@ -1,0 +1,8 @@
+# ML Training Dependencies (run locally/VPS — NOT for Vercel)
+# Install with: pip install -r requirements-ml.txt
+
+xgboost>=2.0.0
+lightgbm>=4.0.0
+torch>=2.0.0
+scikit-learn>=1.3.0
+pandas>=2.0.0

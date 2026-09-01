@@ -1,0 +1,172 @@
+package root:component;
+
+world root {
+  import host:tenant/tenant-context@1.0.0;
+  import host:interfaces/logging@2.1.0;
+  import host:interfaces/kv-store@2.1.0;
+  import wasi:io/poll@0.2.9;
+  import wasi:clocks/monotonic-clock@0.2.9;
+  import wasi:io/error@0.2.9;
+  import wasi:io/streams@0.2.9;
+  import wasi:cli/stdout@0.2.9;
+  import wasi:cli/stderr@0.2.9;
+  import wasi:cli/stdin@0.2.9;
+  import wasi:cli/environment@0.2.9;
+  import wasi:cli/exit@0.2.9;
+  import wasi:cli/terminal-input@0.2.9;
+  import wasi:cli/terminal-output@0.2.9;
+  import wasi:cli/terminal-stdin@0.2.9;
+  import wasi:cli/terminal-stdout@0.2.9;
+  import wasi:cli/terminal-stderr@0.2.9;
+
+  export z:trading-risk-gate/contracts@0.1.0;
+}
+package host:tenant@1.0.0 {
+  interface tenant-context {
+    tenant-did: func() -> list<u8>;
+
+    calling-user-did: func() -> option<list<u8>>;
+
+    cluster-timestamp-secs: func() -> u64;
+
+    seq-no: func() -> u64;
+  }
+}
+
+
+package host:interfaces@2.1.0 {
+  interface logging {
+    info: func(message: string) -> result<_, string>;
+
+    error: func(message: string) -> result<_, string>;
+  }
+  interface kv-store {
+    get: func(map-name: string, key: list<u8>) -> result<option<list<u8>>, string>;
+
+    put: func(map-name: string, key: list<u8>, value: list<u8>) -> result<_, string>;
+  }
+}
+
+
+package wasi:io@0.2.9 {
+  interface poll {
+    resource pollable {
+      block: func();
+    }
+
+    poll: func(in: list<borrow<pollable>>) -> list<u32>;
+  }
+  interface error {
+    resource error;
+  }
+  interface streams {
+    use error.{error};
+    use poll.{pollable};
+
+    resource input-stream;
+
+    resource output-stream {
+      check-write: func() -> result<u64, stream-error>;
+      write: func(contents: list<u8>) -> result<_, stream-error>;
+      blocking-flush: func() -> result<_, stream-error>;
+      subscribe: func() -> pollable;
+    }
+
+    variant stream-error {
+      last-operation-failed(error),
+      closed,
+    }
+  }
+}
+
+
+package wasi:clocks@0.2.9 {
+  interface monotonic-clock {
+    use wasi:io/poll@0.2.9.{pollable};
+
+    type duration = u64;
+
+    subscribe-duration: func(when: duration) -> pollable;
+  }
+}
+
+
+package wasi:cli@0.2.9 {
+  interface stdout {
+    use wasi:io/streams@0.2.9.{output-stream};
+
+    get-stdout: func() -> output-stream;
+  }
+  interface stderr {
+    use wasi:io/streams@0.2.9.{output-stream};
+
+    get-stderr: func() -> output-stream;
+  }
+  interface stdin {
+    use wasi:io/streams@0.2.9.{input-stream};
+
+    get-stdin: func() -> input-stream;
+  }
+  interface environment {
+    get-environment: func() -> list<tuple<string, string>>;
+  }
+  interface exit {
+    exit: func(status: result);
+  }
+  interface terminal-input {
+    resource terminal-input;
+  }
+  interface terminal-output {
+    resource terminal-output;
+  }
+  interface terminal-stdin {
+    use terminal-input.{terminal-input};
+
+    get-terminal-stdin: func() -> option<terminal-input>;
+  }
+  interface terminal-stdout {
+    use terminal-output.{terminal-output};
+
+    get-terminal-stdout: func() -> option<terminal-output>;
+  }
+  interface terminal-stderr {
+    use terminal-output.{terminal-output};
+
+    get-terminal-stderr: func() -> option<terminal-output>;
+  }
+}
+
+
+package z:trading-risk-gate@0.1.0 {
+  interface contracts {
+    record generic-input {
+      input: option<list<u8>>,
+      user-profile: option<list<u8>>,
+      context: option<list<u8>>,
+    }
+
+    validate-trade: func(req: generic-input) -> result<list<u8>, string>;
+
+    log-decision: func(req: generic-input) -> result<list<u8>, string>;
+
+    get-risk-params: func(req: generic-input) -> result<list<u8>, string>;
+
+    get-daily-stats: func(req: generic-input) -> result<list<u8>, string>;
+
+    set-mandate: func(req: generic-input) -> result<list<u8>, string>;
+
+    get-mandate: func(req: generic-input) -> result<list<u8>, string>;
+
+    evaluate-mandate: func(req: generic-input) -> result<list<u8>, string>;
+
+    resolve-escalation: func(req: generic-input) -> result<list<u8>, string>;
+
+    list-escalations: func(req: generic-input) -> result<list<u8>, string>;
+
+    compute-size: func(req: generic-input) -> result<list<u8>, string>;
+
+    ml-predict: func(req: generic-input) -> result<list<u8>, string>;
+
+    execute-plan: func(req: generic-input) -> result<list<u8>, string>;
+  }
+}

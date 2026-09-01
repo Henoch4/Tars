@@ -1,0 +1,14 @@
+# TARS Scheduler Log Rotation
+/opt/tars/logs/*.log {
+    daily
+    missingok
+    rotate 14
+    compress
+    delaycompress
+    notifempty
+    create 0640 tars tars
+    sharedscripts
+    postrotate
+        systemctl reload tars-scheduler > /dev/null 2>&1 || true
+    endscript
+}

@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="420" height="440" viewBox="0 0 420 440">
+  <defs>
+    <filter id="cardShadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#15171A" flood-opacity="0.16"/>
+    </filter>
+    <filter id="eyeGlow" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur stdDeviation="2" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <g transform="translate(210,220) rotate(9)">
+    <rect x="-118" y="-148" width="236" height="296" rx="28" fill="#245C8C" filter="url(#cardShadow)"/>
+  </g>
+  <g transform="translate(196,214) rotate(-6)">
+    <rect x="-118" y="-148" width="236" height="296" rx="28" fill="#EEE2C8" filter="url(#cardShadow)"/>
+  </g>
+  <g transform="translate(206,220) rotate(2)">
+    <rect x="-118" y="-148" width="236" height="296" rx="28" fill="#FFFFFF" stroke="#E3E0D6" stroke-width="1.5" filter="url(#cardShadow)"/>
+    <g transform="translate(-122,-118) scale(7.6)">
+  <g transform="translate(1.3,1.1)">
+  <rect x="12.5" y="5.5" width="7" height="7" rx="2.1" fill="#DAD6C8"/>
+  <rect x="11.7" y="13.1" width="8.6" height="10.5" rx="1.8" fill="#DAD6C8"/>
+  <rect x="12.4" y="23.6" width="2.6" height="2.6" rx="1" fill="#DAD6C8"/>
+  <rect x="17.0" y="23.6" width="2.6" height="2.6" rx="1" fill="#DAD6C8"/>
+  </g>
+  <rect x="12.5" y="5.5" width="7" height="7" rx="2.1" fill="#15171A"/>
+  <rect x="11.7" y="13.1" width="8.6" height="10.5" rx="1.8" fill="#15171A"/>
+  <rect x="12.4" y="23.6" width="2.6" height="2.6" rx="1" fill="#15171A"/>
+  <rect x="17.0" y="23.6" width="2.6" height="2.6" rx="1" fill="#15171A"/>
+  <rect x="11.7" y="17.9" width="8.6" height="0.8" fill="#DAD6C8" opacity="0.7"/>
+  <rect x="13.8" y="8.3" width="4.4" height="1.6" rx="0.8" fill="#3B5FE0" filter="url(#eyeGlow)"/>
+  </g>
+    <text x="0" y="122" text-anchor="middle" font-family="Geist Mono Regular" font-size="12" fill="#8B8D91" letter-spacing="0.06em">RULES IT CANNOT BREAK</text>
+  </g>
+</svg>

@@ -1,0 +1,941 @@
+"""
+Risk gate + durable daily counters.
+
+RiskGate: non-overridable pre-trade checks (position/loss/trade limits, kill
+switch, freshness, fat-finger, reduce-only, confidence floor). The gate is the
+"boring, deterministic, non-negotiable" layer — see execution.py docstring.
+
+DurableDailyCounters: atomic JSON store backing the daily accumulators so a
+process restart cannot reset per-day limits mid-day (Block F safety invariant).
+
+Split out of execution.py (Block G): the risk layer is the authority boundary
+you point a reviewer at to answer "where can an order be approved?"
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+import os
+import tempfile
+import threading
+import time
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+
+from .models import OrderRequest
+
+logger = logging.getLogger(__name__)
+
+class DurableDailyCounters:
+    """Atomic JSON-backed store for (agent_id, utc_day) -> accumulators.
+
+    File path is taken from RISK_STATE_PATH (env) if set, else a tempfile dir
+    location. Pass an explicit path in tests. Each instance owns the file;
+    concurrent RiskGate instances in the same process are guarded by a class-
+    level lock keyed by path.
+    """
+
+    _LOCKS: dict[str, threading.Lock] = {}
+    _LOCKS_GUARD = threading.Lock()
+
+    def __init__(self, path: str | None = None, enabled: bool = True):
+        self.enabled = enabled
+        if not enabled:
+            self.path = None
+            self._data: dict[str, dict] = {}
+            self._lock = None
+            return
+        if path is None:
+            path = os.environ.get("RISK_STATE_PATH", "").strip()
+        if not path:
+            path = os.path.join(tempfile.gettempdir(), "audittrailtrader_risk_state.json")
+        self.path = path
+        self._data = self._load()
+        with self._LOCKS_GUARD:
+            self._lock = self._LOCKS.setdefault(path, threading.Lock())
+        # Load persisted kill switch state from durable counters
+        self._kill_switch_active = False
+        self._kill_switch_reason = None
+        self._kill_switch_activated_at = None
+        if self.enabled:
+            ks_active = self.get("__kill_switch__", "active", False)
+            self._kill_switch_active = bool(ks_active)
+            self._kill_switch_reason = self.get("__kill_switch__", "reason", None)
+            self._kill_switch_activated_at = self.get("__kill_switch__", "timestamp", None)
+
+    @classmethod
+    def _for_path(cls, path: str) -> threading.Lock:
+        with cls._LOCKS_GUARD:
+            return cls._LOCKS.setdefault(path, threading.Lock())
+
+    def _load(self) -> dict[str, dict]:
+        if not self.path:
+            return {}
+        try:
+            with open(self.path, "r") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                return data
+        except FileNotFoundError:
+            return {}
+        except (json.JSONDecodeError, OSError) as e:
+            # Corrupt or unreadable state must NOT be trusted silently — a
+            # stale or half-written store could zero the counters and reopen
+            # a breached limit. Refuse to load and start clean rather than
+            # launder a bad file into a passing state.
+            logger.warning(f"DurableDailyCounters: discarding unreadable store {self.path}: {e}")
+        return {}
+
+    def _persist(self) -> None:
+        if not self.enabled or not self.path or not self._lock:
+            return
+        parent = os.path.dirname(self.path) or "."
+        try:
+            os.makedirs(parent, exist_ok=True)
+            # write-then-rename so a crash never leaves a half-written file.
+            fd, tmp = tempfile.mkstemp(dir=parent, prefix=".risk_state_")
+            try:
+                with os.fdopen(fd, "w") as f:
+                    json.dump(self._data, f)
+                os.replace(tmp, self.path)
+            finally:
+                try:
+                    if os.path.exists(tmp):
+                        os.remove(tmp)
+                except OSError:
+                    pass
+        except OSError as e:
+            # Persistence failure is surfaced, not swallowed: if we can't write
+            # the state file, the gate must not pretend the counters are saved.
+            logger.error(f"DurableDailyCounters: failed to persist to {self.path}: {e}")
+            from ..alerting import send_alert
+
+            send_alert(
+                "RISK_STATE_WRITE_FAILED",
+                "critical",
+                f"Daily counters NOT persisted to {self.path}: {e}. "
+                "A process restart now resets today's loss/trade totals.",
+            )
+
+    def get(self, key: str, field: str, default):
+        if not self.enabled or not self._lock:
+            return default
+        with self._lock:
+            return self._data.get(key, {}).get(field, default)
+    
+    def set(self, key: str, active: bool | None = None, reason: str | None = None, timestamp: float | None = None) -> None:
+        if not self.enabled or not self._lock:
+            return
+        with self._lock:
+            entry = self._data.setdefault(key, {})
+            if active is not None:
+                entry["active"] = active
+            if reason is not None:
+                entry["reason"] = reason
+            if timestamp is not None:
+                entry["timestamp"] = timestamp
+            self._persist()
+
+    def increment(self, key: str, field: str, amount) -> None:
+        if not self.enabled or not self._lock:
+            return
+        with self._lock:
+            entry = self._data.setdefault(key, {})
+            entry[field] = entry.get(field, 0 if isinstance(amount, (int, float)) else 0) + amount
+            self._persist()
+
+    def keys_with_prefix(self, prefix: str) -> list[str]:
+        if not self.enabled or not self._lock:
+            return []
+        with self._lock:
+            return sorted(k for k in self._data if k.startswith(prefix))
+
+    def snapshot(self, key: str) -> dict:
+        if not self.enabled or not self._lock:
+            return {}
+        with self._lock:
+            return dict(self._data.get(key, {}))
+
+@dataclass
+class RiskCheckResult:
+    approved: bool
+    code: str
+    reason: str
+
+
+
+class RiskGate:
+    """
+    Non-overridable pre-trade risk gate.
+    
+    This is the Wall Street principle: "The strategy is allowed to be creative.
+    The risk and control layer must be boring, deterministic, and non-negotiable."
+    
+    All thresholds are set at construction time and cannot be bypassed
+    by the trading agent.
+    """
+
+    def __init__(
+        self,
+        max_position_usd: float = 5000,
+        max_daily_loss_usd: float = 500,
+        max_daily_trades: int = 10,
+        max_daily_volume_usd: float = 50000,
+        max_leverage: float = 5.0,
+        max_slippage_pct: float = 1.0,
+        min_confidence_bps: int = 7000,
+        allowed_assets: list[str] | None = None,
+        allowed_companions: list[str] | None = None,
+        # --- Max price age: how old a market price can be before it stops
+        # being trustworthy. Ported from the oracle trust pattern in
+        # liquid-protocol-v1 (oracle.sol): the strategy layer is free to look
+        # ahead, but the gate refuses to trade against a price feed it cannot
+        # trust. A missing OR stale price rejects the order — there is no
+        # "skip the freshness check" path, only a configurable threshold.
+        max_price_age_seconds: float = 60.0,
+        # --- Regime throttle (high-volatility governor) ---
+        # Borrowed from trading engines that auto-scale exposure ahead of a
+        # crash instead of waiting for the kill switch. When recent price
+        # moves exceed `regime_band_pct`, the effective position cap for new
+        # orders is scaled down by `regime_size_scale` (e.g. 0.8 = 20% less
+        # room). This is a *sizing* control, not a halt: it shrinks the next
+        # order without stopping the strategy, and the kill switch remains the
+        # only full-halt control. Deterministic and testable — no ML, no state
+        # beyond the ring buffer below.
+         regime_throttle: bool = False,
+         regime_band_pct: float = 5.0,
+         regime_size_scale: float = 0.8,
+         regime_buffer: int = 20,
+         # --- Crash-safe daily counters (see safety invariant at the top of ---
+         # When enabled (default off here; main.py opts in), in-memory daily
+         # trade/loss/volume accumulators are persisted to a JSON file and
+         # reloaded at construction so a restart does not zero the counters
+         # mid-day. Off by default so unit tests stay isolated from one another
+         # (they share agent_id="default" on the same UTC day); pass
+         # counter_store=an explicit DurableDailyCounters (or enabled=False) in
+         # tests, or counters_durable=True at the application entry point.
+         counter_store: DurableDailyCounters | None = None,
+        counter_store_path: str | None = None,
+        counters_durable: bool = False,
+         # --- Onchain source-of-truth hook (optional) ---
+         # When an OnchainLogger is supplied, the gate reconciles its in-memory
+         # daily accumulators against TradeAuditTrail.getAgentDailyStats at boot
+         # and cross-checks on every counter write: the contract is authoritative
+         # for the *halt* and the *loss floor*; the file is authoritative for the
+         # in-process running totals between restarts.
+         onchain_logger=None,
+    ):
+        self.max_position_usd = max_position_usd
+        self.max_daily_loss_usd = max_daily_loss_usd
+        self.max_daily_trades = max_daily_trades
+        self.max_daily_volume_usd = max_daily_volume_usd
+        self.max_leverage = max_leverage
+        self.max_slippage_pct = max_slippage_pct
+        self.min_confidence_bps = min_confidence_bps
+        self.max_price_age_seconds = max_price_age_seconds
+        self.allowed_assets = allowed_assets or [
+            "BTC-USDT-SWAP",
+            "ETH-USDT-SWAP",
+            "SOL-USDT-SWAP",
+            "BNB-USDT-SWAP",
+        ]
+        self.allowed_companions = allowed_companions or []
+        self.regime_throttle = regime_throttle
+        self.regime_band_pct = regime_band_pct
+        self.regime_size_scale = regime_size_scale
+        self.regime_buffer = regime_buffer
+
+        # Allowlist is now exact match only: allowed_assets + allowed_companions.
+        # Base-asset family matching is removed — the operator must explicitly
+        # declare every instrument the agent may trade (including funding-arb
+        # spot legs as companions). This makes the allowlist auditable and
+        # prevents implicit authorization of dated futures or other quote-ccy
+        # variants.
+        self._allowed_set: set[str] = set(self.allowed_assets) | set(self.allowed_companions)
+
+        # Daily tracking — persisted so a restart does not reset per-day limits
+        # mid-UTC-day (safety invariant / README "in-memory only" gap). The
+        # onchain contract is the non-overridable authority for the *limits*
+        # and the *halt*; these in-process accumulators track risk-approved-
+        # but-not-yet-recorded volume/loss/trades, and the file store is
+        # authoritative for them between restarts. _daily_* are kept as
+        # in-process caches for the hot path; every mutation writes through to
+        # the store.
+        self._daily_volume: dict[str, float] = {}
+        self._daily_loss: dict[str, float] = {}
+        self._daily_trade_count: dict[str, int] = {}
+        if counter_store is None:
+            counter_store = DurableDailyCounters(
+                path=counter_store_path, enabled=counters_durable
+            )
+        self._counters = counter_store
+        self._onchain_logger = onchain_logger
+
+        # --- Kill switch: global halt, independent of per-agent limits ---
+        # Initialised BEFORE onchain sync below — sync_with_onchain() may need
+        # to trip it from the contract's authoritative halt state, so the flag
+        # must exist before that runs.
+        # This is the one control nothing else in this file can substitute for —
+        # every other check runs per-order; this one halts the gate entirely,
+        # for every agent, until explicitly cleared.
+        self._kill_switch_active: bool = False
+        self._kill_switch_reason: str | None = None
+        self._kill_switch_activated_at: float | None = None
+
+        # --- Regime throttle state: per-asset ring buffer of recent prices ---
+        # Registers every market price we observe so the gate can detect a
+        # volatility regime change without needing any external feed. Fed by
+        # RiskGate.observe_price() from the trading loop.
+        self._price_buffer: dict[str, list[float]] = {}  # inst_id -> [prices]
+
+        # Bootstrap in-memory caches from the persistent store so a restart
+        # recovers yesterday's (and the current day's, if we crashed mid-day)
+        # accumulators.
+        self._rehydrate_store()
+        # Then reconcile against the contract if one is wired up: the onchain
+        # kill switch is authoritative and must be mirrored locally even when
+        # the local flag was (necessarily, at cold start) unset. See
+        # sync_with_onchain() for the source-of-truth map.
+        if self._onchain_logger is not None:
+            self.sync_with_onchain()
+
+    def _rehydrate_store(self) -> None:
+        """Reload the current day's accumulators from the persistent store.
+
+        Only the *current* UTC day is loaded — every prior day's counters have
+        already rolled over (day rollover = new key), so there is nothing to
+        recover from previous days. This is what a restart calls to avoid
+        treating a mid-day crash as a fresh start.
+        """
+        if not self._counters.enabled:
+            return
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        loaded = False
+        for raw_key in self._counters.keys_with_prefix(""):
+            if not raw_key.endswith(f":{today}"):
+                continue
+            snap = self._counters.snapshot(raw_key)
+            # raw_key is already the (agent_id, utc_day) day-key that the
+            # rest of the gate uses as the _daily_* dict key — store under
+            # that exact key so get_daily_stats / check_order read it back.
+            self._daily_volume[raw_key] = snap.get("volume", 0.0)
+            self._daily_loss[raw_key] = snap.get("loss", 0.0)
+            self._daily_trade_count[raw_key] = snap.get("trade_count", 0)
+            loaded = True
+        if loaded:
+            logger.info("RiskGate rehydrated daily counters from store for the current UTC day")
+
+    def sync_with_onchain(self) -> None:
+        """Cross-check the local state against TradeAuditTrail.
+
+        Source-of-truth map (see Block F):
+        * daily LIMITS (max position/confidence/etc.) — onchain, tightening-only
+          (TradeAuditTrail.setRiskParams). The gate re-derives thresholds from
+          config at construction; onchain is the non-overridable authority.
+        * daily ACCUMULATORS (today's P&L, trade count, volume) — the Python
+          gate's pre-execution accounting, persisted to the file store so a
+          restart recovers them mid-day. The contract ALSO tracks accumulators
+          (`dailyLoss`/`dailyTrades`/`dailyVolume`) and is the authoritative
+          execution-side record; it resets them at UTC-day rollover. We do NOT
+          use the contract as a seed for the local accumulators because the
+          contract keys by wallet address while the gate keys by agent_id
+          (string) — seeding would require that mapping, which this single-
+          agent deployment does not yet define. The contract's accumulators
+          are instead used for the one unambiguous, address-keyed sync below:
+          the kill switch.
+        """
+        logger_obj = self._onchain_logger
+        if logger_obj is None:
+            return
+        contract = getattr(logger_obj, "contract", None)
+        if contract is None:
+            return
+        agent_address = getattr(logger_obj, "agent_address", None)
+        if not agent_address:
+            return
+        try:
+            onchain_ks = bool(contract.functions.killSwitchActive(agent_address).call())
+            # Onchain kill switch is non-overridable authority for the halt.
+            # If it's active here, the local gate MUST reflect it even though
+            # the local switch was cleared — a stale/cleared local gate must
+            # never under-report an onchain halt.
+            if onchain_ks and not self._kill_switch_active:
+                reason = "onchain kill switch active for agent " + agent_address
+                logger.warning(f"sync_with_onchain: tripping gate kill switch — {reason}")
+                self.activate_kill_switch(reason)
+        except Exception as e:
+            # Reconciliation is a safety cross-check, not a blocking read. A
+            # chain outage must never *lower* protection; log and proceed with
+            # the last known-good local state (file-backed counters).
+            logger.warning(f"sync_with_onchain: unable to read kill switch from contract: {e}")
+
+    @staticmethod
+    def _day_key(agent_id: str) -> str:
+        """UTC-day-scoped storage key for daily counters. Rolling over at
+        midnight UTC is deliberate: "daily" is defined against a fixed clock,
+        not elapsed uptime, so a restart or 23h-long process cannot reset or
+        freeze the limit mid-day."""
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        return f"{agent_id}:{today}"
+
+    def _day_keys(self, agent_id: str) -> list[str]:
+        """All storage keys currently held for an agent across days (for
+        stats/history); the agent's current-day key is always last."""
+        prefix = f"{agent_id}:"
+        return sorted(k for k in self._daily_volume if k.startswith(prefix))
+
+    def current_day_key(self, agent_id: str) -> str:
+        """Public accessor so a caller can pin loss/volume attribution to the
+        UTC day its cycle STARTED in (see report_loss's day_key param) —
+        otherwise a cycle straddling midnight books its losses to the fresh
+        day and the prior day's limit never registers the breach."""
+        return self._day_key(agent_id)
+
+    def activate_kill_switch(self, reason: str) -> None:
+        """Halt all order approval immediately. Requires explicit deactivation to resume."""
+        self._kill_switch_active = True
+        self._kill_switch_reason = reason
+        self._kill_switch_activated_at = time.time()
+        # Persist to durable counters
+        self._counters.set(
+            key="__kill_switch__",
+            active=True,
+            reason=reason,
+            timestamp=self._kill_switch_activated_at,
+        )
+        from ..alerting import send_alert
+
+        send_alert(
+            "KILL_SWITCH_ACTIVATED",
+            "critical",
+            f"Trading halted. Reason: {reason}",
+        )
+
+    def deactivate_kill_switch(self) -> None:
+        """Resume order approval. This is a deliberate, separate action — never automatic."""
+        self._kill_switch_active = False
+        self._kill_switch_reason = None
+        self._kill_switch_activated_at = None
+        # Persist to durable counters
+        self._counters.set(
+            key="__kill_switch__",
+            active=False,
+            reason=None,
+            timestamp=None,
+        )
+        from ..alerting import send_alert
+
+        send_alert(
+            "KILL_SWITCH_DEACTIVATED",
+            "warning",
+            "Trading resumed by explicit deactivation.",
+        )
+
+    def kill_switch_status(self) -> dict:
+        return {
+            "active": self._kill_switch_active,
+            "reason": self._kill_switch_reason,
+            "activated_at": self._kill_switch_activated_at,
+        }
+
+    def observe_price(self, inst_id: str, price: float) -> None:
+        """Feed a market price into the regime-throttle ring buffer.
+
+        Call this once per observed tick per asset (e.g. at the top of each
+        trading cycle from the market-data step). Prices are kept in a bounded
+        ring buffer (regime_buffer) so old regimes decay naturally.
+        """
+        buf = self._price_buffer.setdefault(inst_id, [])
+        buf.append(price)
+        if len(buf) > self.regime_buffer:
+            buf.pop(0)
+
+    def reset_price_buffer(self, inst_id: str | None = None) -> None:
+        """Clear the regime ring buffer (e.g. after a regime-model change)."""
+        if inst_id is None:
+            self._price_buffer.clear()
+        else:
+            self._price_buffer.pop(inst_id, None)
+
+    def regime_scale(self, inst_id: str) -> float:
+        """Return the position-cap multiplier for the current regime.
+
+        1.0 in a calm regime; regime_size_scale when the observed price range
+        over the window exceeds regime_band_pct. A step function, not a taper:
+        the risk layer is deliberately boring and binary — either the regime
+        is calm (full size) or it is stressed (fixed smaller size) — so the
+        scaling is trivial to reason about and audit.
+
+        Only active when regime_throttle is enabled; otherwise always 1.0.
+
+        Fail-closed on missing data: an empty price buffer means the gate has
+        never observed a trustworthy price for this instrument, so the
+        stressed (`regime_size_scale`) cap applies — defaulting to full size
+        on no data is exactly the fail-open behavior the design doc's
+        fail-safe-defaults principle forbids (uncertainty must reduce risk,
+        not keep it unchanged).
+        """
+        if not self.regime_throttle:
+            return 1.0
+        buf = self._price_buffer.get(inst_id)
+        if not buf:
+            return self.regime_size_scale
+        mean = sum(buf) / len(buf)
+        if mean <= 0:
+            return 1.0
+        spread = (max(buf) - min(buf)) / mean * 100.0
+        if spread <= self.regime_band_pct:
+            return 1.0
+        return self.regime_size_scale
+
+    def regime_status(self, inst_id: str | None = None) -> dict:
+        """Report the current regime state for dashboards/tests."""
+        if inst_id is not None:
+            return {
+                "enabled": self.regime_throttle,
+                "band_pct": self.regime_band_pct,
+                "scale": self.regime_scale(inst_id),
+                "window_size": len(self._price_buffer.get(inst_id, [])),
+                "window_capacity": self.regime_buffer,
+            }
+        return {"enabled": self.regime_throttle, "band_pct": self.regime_band_pct}
+
+    def _is_asset_allowed(self, inst_id: str) -> bool:
+        """Authorize an instrument by exact allowlist match only.
+
+        The allowlist now consists of `allowed_assets` (primary instruments)
+        plus `allowed_companions` (explicitly declared companion legs like
+        spot for funding-arb). No base-asset family matching — every
+        instrument must be explicitly listed. This makes the allowlist
+        auditable and prevents implicit authorization of dated futures or
+        other quote-ccy variants.
+        """
+        return inst_id in self._allowed_set
+
+    def check_order(
+        self,
+        order: OrderRequest,
+        agent_id: str = "default",
+        current_price: float | None = None,
+        current_price_timestamp: float | None = None,
+        current_position_side: str | None = None,
+        unwind: bool = False,
+        count_trade: bool = True,
+    ) -> RiskCheckResult:
+        """
+        Check an order against all risk parameters.
+        Returns approved=True only if ALL checks pass.
+
+        current_price: latest market price, used to enforce the slippage/price-collar
+            check on limit orders and the price-freshness gate (check 8) on every
+            order. Without it, an order is rejected — never silently passed.
+        current_price_timestamp: epoch seconds when `current_price` was observed.
+            The freshness gate (check 8) rejects any order whose reference price
+            is older than `max_price_age_seconds`; a missing timestamp means the
+            age cannot be verified and is treated as stale (fail-safe-defaults).
+        current_position_side: "long" | "short" | None, used to enforce reduce-only
+            semantics on sell orders — see check 7 below.
+        unwind: True for a closing leg of a multi-leg package (sent by the
+            resolvers when unwinding a partial fill or slippage breach). An
+            unwind order ADMITS the kill switch — the exact event that trips it
+            (a hard-collar fill) is the event that makes the unwind mandatory.
+            All other checks still run; only the halt is lifted, and the
+            admission is logged.
+        """
+        # 0. Kill switch — checked first, before anything else, no exceptions.
+        # Unwind orders are the sole exception: a hard-collar breach trips the
+        # kill switch inside the very fill that created naked exposure, so the
+        # unwind that must flatten it may not be blocked by the halt it caused.
+        if self._kill_switch_active and not unwind:
+            return RiskCheckResult(
+                approved=False,
+                code="KILL_SWITCH_ACTIVE",
+                reason=f"Kill switch is active: {self._kill_switch_reason}",
+            )
+        if self._kill_switch_active and unwind:
+            logger.warning(
+                "KILL_SWITCH_BYPASS: admitting unwind order %s (%s) while kill "
+                "switch is active (%s) — closing leg required to flatten exposure.",
+                order.client_oid, order.inst_id, self._kill_switch_reason,
+            )
+
+        # 1. Asset allowlist — exact match OR same base asset (the spot leg
+        #    of a funding-arb package, e.g. BTC-USDT when BTC-USDT-SWAP is
+        #    allowed).
+        if not self._is_asset_allowed(order.inst_id):
+            return RiskCheckResult(
+                approved=False,
+                code="ASSET_NOT_ALLOWED",
+                reason=f"{order.inst_id} not in allowlist: {self.allowed_assets}",
+            )
+
+        # 2. Confidence floor — the gate enforces it even if the strategy layer
+        # forgets. Skipped only when the caller provides no confidence at all
+        # (the gate cannot second-guess what it was never told). That omission
+        # is intentionally not a rejection, but it is LOGGED — a caller that
+        # routinely ships confidence-less orders is a signal worth surfacing,
+        # not a silent pass.
+        if order.confidence_bps is None:
+            logger.warning(
+                "CONFIDENCE_MISSING: order %s (%s %s %s) has no confidence_bps; "
+                "the %d bps floor is not being enforced on it.",
+                order.client_oid, order.side, order.order_type, order.inst_id,
+                self.min_confidence_bps,
+            )
+        elif order.confidence_bps < self.min_confidence_bps:
+            return RiskCheckResult(
+                approved=False,
+                code="CONFIDENCE_TOO_LOW",
+                reason=(
+                    f"Signal confidence {order.confidence_bps} bps below the "
+                    f"{self.min_confidence_bps} bps floor — the risk gate does "
+                    f"not trade on weak signals."
+                ),
+            )
+
+        # 3. Position size limit (scaled by regime throttle when active).
+        # A malformed size is REJECTED, never laundered into a passing 0 —
+        # silently approving an order whose size we can't parse is how a
+        # bad input becomes a fat trade instead of a loud failure.
+        try:
+            size_usd = float(order.size)
+        except (ValueError, TypeError):
+            return RiskCheckResult(
+                approved=False,
+                code="INVALID_ORDER_SIZE",
+                reason=f"Order size {order.size!r} is not a valid number.",
+            )
+        if size_usd < 0:
+            return RiskCheckResult(
+                approved=False,
+                code="INVALID_ORDER_SIZE",
+                reason=f"Order size {order.size!r} cannot be negative.",
+            )
+
+        effective_max = self.max_position_usd * self.regime_scale(order.inst_id)
+        if size_usd > effective_max:
+            if effective_max < self.max_position_usd:
+                return RiskCheckResult(
+                    approved=False,
+                    code="REGIME_SIZE_CAP",
+                    reason=(
+                        f"Position ${size_usd:.2f} exceeds regime-scaled cap "
+                        f"${effective_max:.2f} (max ${self.max_position_usd:.2f} "
+                        f"x regime scale {self.regime_scale(order.inst_id):.2f}). "
+                        f"High-volatility regime — throttle is active."
+                    ),
+                )
+            return RiskCheckResult(
+                approved=False,
+                code="POSITION_TOO_LARGE",
+                reason=(
+                    f"Position ${size_usd:.2f} exceeds max "
+                    f"${self.max_position_usd:.2f}"
+                ),
+            )
+
+        # 4. Daily trade count. Closing legs of a multi-leg package (unwind,
+        # sent by the resolvers to flatten a partial fill or slippage breach)
+        # are ADMITTED past the daily limit — same principle as the kill-switch
+        # admission below. By the time a package needs to unwind, the fill that
+        # created the exposure has already consumed a daily slot; refusing the
+        # unwind at the limit would strand a naked leg.
+        key = self._day_key(agent_id)
+        if not unwind and self._daily_trade_count.get(key, 0) >= self.max_daily_trades:
+            return RiskCheckResult(
+                approved=False,
+                code="DAILY_TRADE_LIMIT_EXCEEDED",
+                reason=(
+                    f"Agent has already placed "
+                    f"{self._daily_trade_count.get(key, 0)} "
+                    f"trades today (max {self.max_daily_trades})"
+                ),
+            )
+
+        # 4b. Daily volume limit — independent gate from trade count.
+        # Volume and count bound different failure modes (many small mispriced
+        # orders vs. one huge one); collapsing them would let a strategy trade
+        # the full volume budget in one order without tripping a count-based
+        # expectation, or vice versa. Unwind legs are admitted past the limit
+        # (same principle as trade count: the fill that created the exposure
+        # already consumed volume).
+        if not unwind:
+            current_volume = self._daily_volume.get(key, 0.0)
+            if current_volume + size_usd > self.max_daily_volume_usd:
+                return RiskCheckResult(
+                    approved=False,
+                    code="DAILY_VOLUME_LIMIT_EXCEEDED",
+                    reason=(
+                        f"Daily volume ${current_volume:.2f} + order ${size_usd:.2f} "
+                        f"would exceed limit ${self.max_daily_volume_usd:.2f}"
+                    ),
+                )
+
+        # 5. Daily loss limit
+        current_loss = self._daily_loss.get(key, 0.0)
+        if current_loss >= self.max_daily_loss_usd:
+            return RiskCheckResult(
+                approved=False,
+                code="DAILY_LOSS_LIMIT_EXCEEDED",
+                reason=(
+                    f"Daily loss ${current_loss:.2f} >= "
+                    f"limit ${self.max_daily_loss_usd:.2f}"
+                ),
+            )
+
+        # 6. Fat-finger / price sanity check (independent of slippage, always runs)
+        try:
+            limit_px = float(order.px) if order.px else None
+        except (ValueError, TypeError):
+            limit_px = None
+
+        if limit_px is not None and current_price is not None and current_price > 0:
+            deviation_pct = abs(limit_px - current_price) / current_price * 100
+            if deviation_pct > 20.0:
+                return RiskCheckResult(
+                    approved=False,
+                    code="FAT_FINGER_REJECTED",
+                    reason=(
+                        f"Limit price {limit_px:.2f} deviates {deviation_pct:.1f}% "
+                        f"from current price {current_price:.2f} — rejected as a "
+                        f"likely input error, not a normal slippage case."
+                    ),
+                )
+
+        # 6b. Fat-finger check for market orders using intended_price.
+        # Reuses max_slippage_pct as the threshold (same guardrail at two moments:
+        # agent's view vs reality at signal gen vs. at execution).
+        if order.order_type == "market" and order.intended_price is not None:
+            if current_price is None or current_price <= 0:
+                return RiskCheckResult(
+                    approved=False,
+                    code="NO_PRICE_REFERENCE",
+                    reason=(
+                        "Market order submitted with intended_price but no current "
+                        "market price to check against — cannot verify fat-finger."
+                    ),
+                )
+            deviation_pct = abs(order.intended_price - current_price) / current_price * 100
+            if deviation_pct > self.max_slippage_pct:
+                return RiskCheckResult(
+                    approved=False,
+                    code="FAT_FINGER_REJECTED",
+                    reason=(
+                        f"Intended price {order.intended_price:.2f} deviates "
+                        f"{deviation_pct:.2f}% from current price {current_price:.2f}, "
+                        f"exceeding the {self.max_slippage_pct:.2f}% collar."
+                    ),
+                )
+
+        # 6c. Leverage cap — enforced, not stubbed. A declared leverage above
+        # max_leverage is rejected outright. Like confidence, leverage is
+        # caller-declared: None means the caller provided no leverage
+        # information (SPOT, or an instrument the caller could not read), and
+        # the gate cannot invent it — but a declared value over the cap never
+        # passes. Malformed values are rejected, never laundered into a pass.
+        if order.leverage is not None:
+            try:
+                declared_leverage = float(order.leverage)
+            except (ValueError, TypeError):
+                return RiskCheckResult(
+                    approved=False,
+                    code="INVALID_LEVERAGE",
+                    reason=f"Order leverage {order.leverage!r} is not a valid number.",
+                )
+            if declared_leverage <= 0:
+                return RiskCheckResult(
+                    approved=False,
+                    code="INVALID_LEVERAGE",
+                    reason=f"Order leverage {declared_leverage} must be positive.",
+                )
+            if declared_leverage > self.max_leverage:
+                return RiskCheckResult(
+                    approved=False,
+                    code="LEVERAGE_EXCEEDED",
+                    reason=(
+                        f"Declared leverage {declared_leverage:.2f}x exceeds the "
+                        f"{self.max_leverage:.2f}x cap — this gate does not "
+                        f"lever past its configured maximum."
+                    ),
+                )
+
+        # 7. Slippage / price collar (for limit orders) — enforced, not stubbed.
+        # If we don't have a current market price to compare against, we reject
+        # rather than silently approve: an unenforceable check is not a check.
+        if order.order_type == "limit" and limit_px is not None:
+            if current_price is None or current_price <= 0:
+                return RiskCheckResult(
+                    approved=False,
+                    code="NO_PRICE_REFERENCE",
+                    reason=(
+                        "Limit order submitted without a current market price to "
+                        "check slippage against — cannot verify the price collar."
+                    ),
+                )
+            slippage_pct = abs(limit_px - current_price) / current_price * 100
+            if slippage_pct > self.max_slippage_pct:
+                return RiskCheckResult(
+                    approved=False,
+                    code="SLIPPAGE_EXCEEDED",
+                    reason=(
+                        f"Limit price {limit_px:.2f} is {slippage_pct:.2f}% away "
+                        f"from current price {current_price:.2f}, exceeding the "
+                        f"{self.max_slippage_pct:.2f}% collar."
+                    ),
+                )
+
+        # 8. Reduce-only enforcement — enforced, not stubbed.
+        # A sell that flips a long into a short, or a buy that flips a short
+        # into a long, must be explicitly marked reduce_only=True and is
+        # otherwise rejected here. Symmetric — this gate does not allow
+        # flipping a position in either direction in a single unmarked order.
+        if current_position_side == "long" and order.side == "sell" and not order.reduce_only:
+            return RiskCheckResult(
+                approved=False,
+                code="REDUCE_ONLY_VIOLATION",
+                reason=(
+                    "Sell order against an existing long position must set "
+                    "reduce_only=True — this gate does not allow flipping a "
+                    "position from long to short in a single unmarked order."
+                ),
+            )
+        if current_position_side == "short" and order.side == "buy" and not order.reduce_only:
+            return RiskCheckResult(
+                approved=False,
+                code="REDUCE_ONLY_VIOLATION",
+                reason=(
+                    "Buy order against an existing short position must set "
+                    "reduce_only=True — this gate does not allow flipping a "
+                    "position from short to long in a single unmarked order."
+                ),
+            )
+
+        # 9. Price-freshness gate — applies to EVERY order type (market, limit),
+        # not just limit orders. Ported from the oracle trust pattern in
+        # liquid-protocol-v1 (oracle.sol): the strategy is free to look ahead,
+        # but the gate refuses to trade against a price feed it cannot trust.
+        # A missing, non-positive, or stale price rejects the order. There is
+        # no "skip the freshness check" path — an unverifiable age is stale.
+        if current_price is None or current_price <= 0:
+            return RiskCheckResult(
+                approved=False,
+                code="NO_PRICE_REFERENCE",
+                reason=(
+                    "Order submitted without a current market price to verify "
+                    "against — cannot check the price collar or freshness."
+                ),
+            )
+        now = time.time()
+        price_age = (
+            now - current_price_timestamp
+            if current_price_timestamp is not None
+            else float("inf")
+        )
+        if price_age > self.max_price_age_seconds:
+            return RiskCheckResult(
+                approved=False,
+                code="STALE_PRICE",
+                reason=(
+                    f"Reference price {current_price} is "
+                    f"{price_age:.1f}s old (cap {self.max_price_age_seconds:.0f}s). "
+                    f"Price feed is not fresh — refusing to trade on stale data."
+                ),
+            )
+
+        # 10. Daily trade count — persisted so a restart mid-day does not
+        #     reset this agent's tally against max_daily_trades. The store write
+        #     is atomic (temp+replace); a crash between the in-memory bump and
+        #     the store write is harmless because recovery reads the store first.
+        #
+        # count_trade=False marks a PRE-flight gate check (an agent re-checking
+        # the same order it will hand to the executor). One logical order is
+        # checked twice — once by the agent's cycle (agent.py Phase 3, funding
+        # arb proposal) and once inside OrderExecutor.place_order just before
+        # submission. Before count_trade existed, every approved check
+        # incremented a daily counter: the agent's pre-flights charged the
+        # agent's OWN quota for orders that might never execute (onchain log
+        # failure, rejected submission, aborted arb package — and a funding-arb
+        # proposal charged 2 slots at proposal time), while the executor's
+        # re-check wrote a separate "default" bucket that is never reported or
+        # enforced. Only the final pre-submission check — the one inside
+        # OrderExecutor.place_order — counts the trade, once. Closing legs
+        # (unwind) are never entry activity: they do not consume the daily
+        # trade quota at all.
+        if count_trade and not unwind:
+            count = self._daily_trade_count.get(key, 0) + 1
+            self._daily_trade_count[key] = count
+            self._counters.increment(key, "trade_count", 1)
+        return RiskCheckResult(
+            approved=True,
+            code="APPROVED",
+            reason="All checks passed",
+        )
+
+    def report_loss(self, agent_id: str, loss_usd: float, day_key: str | None = None):
+        """Report a loss to the daily loss tracker.
+
+        Auto-trips the kill switch if this loss pushes the agent over its daily
+        loss limit — the design doc's fail-safe-defaults principle (Section 4)
+        says the system should default to reducing risk under uncertainty, not
+        just reject the next single order and otherwise carry on.
+
+        day_key: pin attribution to the UTC day the trading cycle STARTED in
+        (capture via current_day_key() at cycle start). Without it, a cycle
+        straddling midnight UTC books post-midnight fills to the fresh day —
+        the prior day's limit never sees the breach.
+        """
+        key = day_key or self._day_key(agent_id)
+        loss = self._daily_loss.get(key, 0.0) + loss_usd
+        self._daily_loss[key] = loss
+        self._counters.increment(key, "loss", loss_usd)
+        if loss >= self.max_daily_loss_usd and not self._kill_switch_active:
+            self.activate_kill_switch(
+                reason=(
+                    f"Auto-triggered: agent {agent_id} daily loss "
+                    f"${loss:.2f} reached limit "
+                    f"${self.max_daily_loss_usd:.2f}"
+                )
+            )
+
+    def report_volume(self, agent_id: str, volume_usd: float, day_key: str | None = None):
+        """Report executed volume to the daily tracker (same day_key pinning
+        semantics as report_loss)."""
+        key = day_key or self._day_key(agent_id)
+        vol = self._daily_volume.get(key, 0.0) + volume_usd
+        self._daily_volume[key] = vol
+        self._counters.increment(key, "volume", volume_usd)
+
+    def get_daily_stats(self, agent_id: str) -> dict:
+        key = self._day_key(agent_id)
+        return {
+            "volume": self._daily_volume.get(key, 0.0),
+            "loss": self._daily_loss.get(key, 0.0),
+            "trade_count": self._daily_trade_count.get(key, 0),
+            # Informational projection only — NOT an enforced control. No code
+            # path in check_order sums volume against this; it exists so a
+            # dashboard can show "worst case gross volume" for context.
+            "volume_limit": self.max_position_usd * self.max_daily_trades,
+            "loss_limit": self.max_daily_loss_usd,
+            "trade_count_limit": self.max_daily_trades,
+        }
+
+    def compute_risk_hash(self) -> str:
+        """Compute a deterministic hash of the risk parameters for onchain logging."""
+        params = {
+            "max_position_usd": self.max_position_usd,
+            "max_daily_loss_usd": self.max_daily_loss_usd,
+            "max_daily_trades": self.max_daily_trades,
+            "max_daily_volume_usd": self.max_daily_volume_usd,
+            "max_leverage": self.max_leverage,
+            "max_slippage_pct": self.max_slippage_pct,
+            "min_confidence_bps": self.min_confidence_bps,
+            "max_price_age_seconds": self.max_price_age_seconds,
+            "allowed_assets": sorted(self.allowed_assets),
+            "allowed_companions": sorted(self.allowed_companions),
+            "regime_throttle": self.regime_throttle,
+            "regime_band_pct": self.regime_band_pct,
+            "regime_size_scale": self.regime_size_scale,
+        }
+        serialized = json.dumps(params, sort_keys=True)
+        return hashlib.sha256(serialized.encode()).hexdigest()
