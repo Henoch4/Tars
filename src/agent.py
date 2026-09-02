@@ -147,6 +147,11 @@ class AutonomousTradingAgent:
         self.funding_arb_min_rate = funding_arb_min_rate
         self.use_ml_carry_gate = use_ml_carry_gate
         self._ml_carry_client = None
+        # Rolling history for ML features: per-asset funding rates and perp prices
+        # across cycles. Max 672 entries = 8 entries/day * 7 days * 3 cycles/day.
+        # Sufficient for 7-day mean and z-score computation without unbounded growth.
+        self._ml_history: dict[str, dict] = {}
+        self._ML_HISTORY_MAX = 672
         if use_ml_carry_gate:
             try:
                 from .ml_inference import get_tars_lora_client
@@ -288,6 +293,24 @@ class AutonomousTradingAgent:
         # the caller skips the strategy instead (see _generate_signals).
         return price_data
 
+    def _get_ml_history(self, asset: str) -> dict:
+        """Get rolling ML history for an asset. Creates if missing."""
+        if asset not in self._ml_history:
+            self._ml_history[asset] = {"funding": [], "prices": []}
+        return self._ml_history[asset]
+
+    def _update_ml_history(self, asset: str, funding_rate: float, perp_price: float | None) -> None:
+        """Append to rolling history, evicting oldest if over max size."""
+        hist = self._get_ml_history(asset)
+        hist["funding"].append(funding_rate)
+        if perp_price is not None:
+            hist["prices"].append(perp_price)
+        # Trim to max size
+        if len(hist["funding"]) > self._ML_HISTORY_MAX:
+            hist["funding"] = hist["funding"][-self._ML_HISTORY_MAX:]
+        if len(hist["prices"]) > self._ML_HISTORY_MAX:
+            hist["prices"] = hist["prices"][-self._ML_HISTORY_MAX:]
+
     def _resolve_curator_profile(self) -> dict | None:
         """Resolve the active curator profile for this cycle.
 
@@ -394,14 +417,18 @@ class AutonomousTradingAgent:
         # ML-enhanced funding carry signal (delta-neutral)
         if spot_price and prices:
             perp_price = prices[-1]
+            # Use rolling history for 7-day mean and z-score features
+            hist = self._get_ml_history(asset)
+            funding_history = hist["funding"] if hist["funding"] else [funding_rate]
+            price_history = hist["prices"] if hist["prices"] else (prices[-20:] if len(prices) >= 20 else prices)
             signals.append(
                 ml_funding_carry_signal(
                     asset=asset,
                     spot_price=spot_price,
                     perp_price=perp_price,
                     funding_rate=funding_rate,
-                    funding_history=[funding_rate],  # Placeholder - would use cached history
-                    price_history=prices[-20:] if len(prices) >= 20 else prices,
+                    funding_history=funding_history,
+                    price_history=price_history,
                 )
             )
 
@@ -521,11 +548,10 @@ class AutonomousTradingAgent:
         # ML-enhanced gate: use tars-lora model decision
         if self.use_ml_carry_gate and self._ml_carry_client:
             if spot_price and perp_price:
-                # Build funding history from recent cycles (simplified)
-                # In production, this would come from a persisted cache
-                perp_prices = self._extract_prices(market_data)
-                funding_history = [funding_rate]  # placeholder
-                price_history = perp_prices[-20:] if len(perp_prices) >= 20 else perp_prices
+                # Use rolling history for 7-day mean and z-score features
+                hist = self._get_ml_history(asset)
+                funding_history = hist["funding"] if hist["funding"] else [funding_rate]
+                price_history = hist["prices"] if hist["prices"] else self._extract_prices(market_data)
 
                 # Use the ML signal function directly
                 from .signals import ml_funding_carry_signal
@@ -988,6 +1014,11 @@ class AutonomousTradingAgent:
                 spot_price = spot_prices[-1] if spot_prices else None
             except Exception:
                 pass
+
+        # Update rolling ML history for 7-day rolling features
+        if self.use_ml_carry_gate:
+            funding_rate = float(md.get("funding_rate", 0.0))
+            self._update_ml_history(asset, funding_rate, perp_price)
 
         if self._funding_arb_opportunity(asset, md, spot_price, perp_price):
             return await self._run_funding_arb_package(asset, md, cycle_id, out)
