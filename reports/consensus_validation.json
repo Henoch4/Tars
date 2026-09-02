@@ -1,4 +1,86 @@
 {
-  "ensemble": {},
-  "consensus": {}
+  "ensemble": {
+    "BTC-USDT-SWAP": {
+      "name": "ensemble_BTC-USDT-SWAP",
+      "total_return_bps": 0,
+      "sharpe_ratio": 0,
+      "max_drawdown_bps": 0,
+      "calmar_ratio": 0,
+      "num_trades": 0,
+      "win_rate": 0,
+      "consensus_reached_pct": 0.0
+    },
+    "ETH-USDT-SWAP": {
+      "name": "ensemble_ETH-USDT-SWAP",
+      "total_return_bps": 0,
+      "sharpe_ratio": 0,
+      "max_drawdown_bps": 0,
+      "calmar_ratio": 0,
+      "num_trades": 0,
+      "win_rate": 0,
+      "consensus_reached_pct": 0.0
+    },
+    "SOL-USDT-SWAP": {
+      "name": "ensemble_SOL-USDT-SWAP",
+      "total_return_bps": 0,
+      "sharpe_ratio": 0,
+      "max_drawdown_bps": 0,
+      "calmar_ratio": 0,
+      "num_trades": 0,
+      "win_rate": 0,
+      "consensus_reached_pct": 0.0
+    },
+    "BNB-USDT-SWAP": {
+      "name": "ensemble_BNB-USDT-SWAP",
+      "total_return_bps": 0,
+      "sharpe_ratio": 0,
+      "max_drawdown_bps": 0,
+      "calmar_ratio": 0,
+      "num_trades": 0,
+      "win_rate": 0,
+      "consensus_reached_pct": 0.0
+    }
+  },
+  "consensus": {
+    "BTC-USDT-SWAP": {
+      "name": "consensus_BTC-USDT-SWAP",
+      "total_return_bps": -8356,
+      "sharpe_ratio": -0.2107869918710335,
+      "max_drawdown_bps": 8412,
+      "calmar_ratio": -0.4958224108010129,
+      "num_trades": 1147,
+      "win_rate": 0.32519616390584133,
+      "consensus_reached_pct": 6.535612535612535
+    },
+    "ETH-USDT-SWAP": {
+      "name": "consensus_ETH-USDT-SWAP",
+      "total_return_bps": -8912,
+      "sharpe_ratio": -0.1329953876142014,
+      "max_drawdown_bps": 8939,
+      "calmar_ratio": -0.49763764470107463,
+      "num_trades": 1476,
+      "win_rate": 0.3814363143631436,
+      "consensus_reached_pct": 8.41025641025641
+    },
+    "SOL-USDT-SWAP": {
+      "name": "consensus_SOL-USDT-SWAP",
+      "total_return_bps": -9021,
+      "sharpe_ratio": -0.10120134935022118,
+      "max_drawdown_bps": 9037,
+      "calmar_ratio": -0.4982615628626474,
+      "num_trades": 1517,
+      "win_rate": 0.3770599868160844,
+      "consensus_reached_pct": 8.643874643874645
+    },
+    "BNB-USDT-SWAP": {
+      "name": "consensus_BNB-USDT-SWAP",
+      "total_return_bps": -8441,
+      "sharpe_ratio": -0.17222656794491015,
+      "max_drawdown_bps": 8441,
+      "calmar_ratio": -0.49914529914529915,
+      "num_trades": 1176,
+      "win_rate": 0.3520408163265306,
+      "consensus_reached_pct": 6.700854700854701
+    }
+  }
 }
