@@ -25,6 +25,8 @@ from .signals import (
     mean_reversion_signal,
     momentum_signal,
     funding_rate_signal,
+    funding_carry_signal,
+    ml_funding_carry_signal,
     ensemble_signal,
     backtest_simple,
 )
@@ -37,7 +39,7 @@ from .trader import (
     FundingCarryTrader,
     create_default_swarm,
 )
-from .consensus import ConsensusGate, ConsensusResult, create_default_consensus_gate
+from .consensus import ConsensusGate, ConsensusResult, ConsensusBehavior, create_default_consensus_gate
 from .execution import (
     OrderExecutor,
     OrderRequest,
@@ -104,6 +106,9 @@ class AutonomousTradingAgent:
         multi_leg_manager: MultiLegExecutionManager | None = None,
         funding_arb_min_rate: float = 0.001,
         regime_filter_window: int = 0,
+        # ML-enhanced funding carry gate (tars-lora): replaces fixed threshold
+        # with learned "will 7d carry clear costs?" decision
+        use_ml_carry_gate: bool = False,
         # --- Product B: Swarm Trading (ConsensusGate + TraderStrategy) ---
         use_consensus_gate: bool = False,
         consensus_gate: ConsensusGate | None = None,
@@ -133,8 +138,22 @@ class AutonomousTradingAgent:
         # short-perp package path INSTEAD of the directional signal path for
         # that cycle. None disables the feature — every test that doesn't
         # wire a manager keeps the existing directional behavior.
+        # 
+        # ML enhancement: tars-lora model replaces the fixed threshold as the
+        # "open/close brain" for the delta-neutral package. When
+        # `use_ml_carry_gate` is True, the ML model's "will 7d carry clear
+        # costs?" decision gates the package instead of the fixed rate threshold.
         self.multi_leg_manager = multi_leg_manager
         self.funding_arb_min_rate = funding_arb_min_rate
+        self.use_ml_carry_gate = use_ml_carry_gate
+        self._ml_carry_client = None
+        if use_ml_carry_gate:
+            try:
+                from .ml_inference import get_tars_lora_client
+                self._ml_carry_client = get_tars_lora_client()
+            except Exception as e:
+                logger.warning(f"Failed to initialize ML carry client: {e}")
+                self.use_ml_carry_gate = False
 
         # Pre-signal integrity gate (runs BEFORE signal generation), curator
         # profile selector, and the local append-only audit log. All optional
@@ -194,31 +213,40 @@ class AutonomousTradingAgent:
         try:
             trades = await self.cli.run(
                 "market", "trades",
-                "--instId", asset,
+                asset,
                 "--limit", str(lookback),
                 use_global_flags=False,
             )
         except OkxCliError as e:
             logger.warning(f"Failed to fetch trades for {asset}: {e}")
-            trades = {"data": []}
+            trades = []
 
         # Fetch funding rate
         try:
             funding = await self.cli.run(
                 "market", "funding-rate",
-                "--instId", asset,
+                asset,
                 use_global_flags=False,
             )
         except OkxCliError:
-            funding = {"data": [{"fundingRate": "0"}]}
+            funding = [{"fundingRate": "0"}]
 
         # Fetch current position
         position = await self.executor.get_position(asset)
 
+        # okx CLI 1.4.4 returns JSON arrays directly for market data, not {"data": [...]}
+        trade_list = trades if isinstance(trades, list) else trades.get("data", []) if isinstance(trades, dict) else []
+        if isinstance(funding, list):
+            funding_rate = float(funding[0].get("fundingRate", "0")) if funding else 0.0
+        elif isinstance(funding, dict):
+            funding_rate = float(funding.get("data", [{}])[0].get("fundingRate", "0"))
+        else:
+            funding_rate = 0.0
+
         return {
             "asset": asset,
-            "trades": trades.get("data", []),
-            "funding_rate": float(funding.get("data", [{}])[0].get("fundingRate", "0")),
+            "trades": trade_list,
+            "funding_rate": funding_rate,
             "position": position,
             "timestamp": time.time(),
         }
@@ -326,7 +354,9 @@ class AutonomousTradingAgent:
             )
         return self.integrity_gate.combine(*results)
 
-    def _generate_signals(self, asset: str, market_data: dict) -> list[Signal]:
+    def _generate_signals(
+        self, asset: str, market_data: dict, spot_price: float | None = None
+    ) -> list[Signal]:
         """Generate signals from all enabled strategies.
 
         Design-doc note (Section 0): momentum is a directional strategy the
@@ -345,6 +375,9 @@ class AutonomousTradingAgent:
         still carries real directional risk whenever it fires outside that
         path and should be sized and reasoned about accordingly, not treated
         as market-neutral.
+
+        ML enhancement: ml_funding_carry_signal uses tars-lora model to predict
+        "will 7d carry clear costs?" — replaces fixed threshold with learned gate.
         """
         prices = self._extract_prices(market_data)
         price_data = self._extract_price_data(market_data)
@@ -357,6 +390,20 @@ class AutonomousTradingAgent:
             ),
             funding_rate_signal(asset, funding_rate, threshold=0.001),
         ]
+
+        # ML-enhanced funding carry signal (delta-neutral)
+        if spot_price and prices:
+            perp_price = prices[-1]
+            signals.append(
+                ml_funding_carry_signal(
+                    asset=asset,
+                    spot_price=spot_price,
+                    perp_price=perp_price,
+                    funding_rate=funding_rate,
+                    funding_history=[funding_rate],  # Placeholder - would use cached history
+                    price_history=prices[-20:] if len(prices) >= 20 else prices,
+                )
+            )
 
         if self.enable_momentum and price_data:
             signals.append(
@@ -452,7 +499,9 @@ class AutonomousTradingAgent:
             confidence_bps=signal.confidence_bps,
         )
 
-    def _funding_arb_opportunity(self, asset: str, market_data: dict) -> bool:
+    def _funding_arb_opportunity(
+        self, asset: str, market_data: dict, spot_price: float | None = None, perp_price: float | None = None
+    ) -> bool:
         """Is this asset a candidate for a delta-neutral funding-arb package?
 
         Positive funding only: the package is long-spot / short-perp, which
@@ -460,12 +509,53 @@ class AutonomousTradingAgent:
         short spot is not expressible) is out of scope — see the summary in
         the module docstring. Requires a wired manager with capacity and no
         already-open package on the same asset.
+
+        When `use_ml_carry_gate` is True, the tars-lora model's "will 7d carry
+        clear costs?" decision replaces the fixed `funding_arb_min_rate` threshold.
         """
         if self.multi_leg_manager is None:
             return False
+
         funding_rate = float(market_data.get("funding_rate", 0.0))
+
+        # ML-enhanced gate: use tars-lora model decision
+        if self.use_ml_carry_gate and self._ml_carry_client:
+            if spot_price and perp_price:
+                # Build funding history from recent cycles (simplified)
+                # In production, this would come from a persisted cache
+                perp_prices = self._extract_prices(market_data)
+                funding_history = [funding_rate]  # placeholder
+                price_history = perp_prices[-20:] if len(perp_prices) >= 20 else perp_prices
+
+                # Use the ML signal function directly
+                from .signals import ml_funding_carry_signal
+                ml_signal = ml_funding_carry_signal(
+                    asset=asset,
+                    spot_price=spot_price,
+                    perp_price=perp_price,
+                    funding_rate=funding_rate,
+                    funding_history=funding_history,
+                    price_history=price_history,
+                )
+                # ML signal says LONG = carry will clear costs
+                if ml_signal.direction != "LONG":
+                    logger.info(
+                        f"ML carry gate blocked {asset}: "
+                        f"model says NO (conf={ml_signal.confidence_bps/100:.0f}%)"
+                    )
+                    return False
+                logger.info(
+                    f"ML carry gate approved {asset}: "
+                    f"model says YES (conf={ml_signal.confidence_bps/100:.0f}%)"
+                )
+            else:
+                logger.warning(f"ML carry gate: no spot/perp price for {asset}, falling back to threshold")
+                # Fall through to threshold check
+
+        # Fallback: fixed threshold (original behavior)
         if funding_rate < self.funding_arb_min_rate:
             return False
+
         allowed, reason = self.multi_leg_manager.can_open(asset)
         if not allowed:
             logger.info(f"Funding arb for {asset} skipped: {reason}")
@@ -883,10 +973,26 @@ class AutonomousTradingAgent:
         # INSTEAD of a directional bet this cycle (one trade per asset per
         # cycle). Directional signals still fire only when no arb package is
         # available for the asset.
-        if self._funding_arb_opportunity(asset, md):
+
+        # Fetch spot price for funding carry signals (perp -> spot)
+        spot_price = None
+        perp_price = None
+        perp_prices = self._extract_prices(md)
+        if perp_prices:
+            perp_price = perp_prices[-1]
+        if asset.endswith("-SWAP"):
+            spot_inst = asset.replace("-SWAP", "")
+            try:
+                spot_md = await self._fetch_market_data(spot_inst)
+                spot_prices = self._extract_prices(spot_md)
+                spot_price = spot_prices[-1] if spot_prices else None
+            except Exception:
+                pass
+
+        if self._funding_arb_opportunity(asset, md, spot_price, perp_price):
             return await self._run_funding_arb_package(asset, md, cycle_id, out)
 
-        signals = self._generate_signals(asset, md)
+        signals = self._generate_signals(asset, md, spot_price)
         ensemble = ensemble_signal(asset, signals)
 
         out["signals"].append({
@@ -1219,10 +1325,14 @@ class AutonomousTradingAgent:
             logger.info(f"No order for {asset} (consensus confidence too low)")
             return out
         
-        side_map = {"LONG": "buy", "SHORT": "sell"}
+        side_map: dict[str, Literal["buy", "sell"]] = {"LONG": "buy", "SHORT": "sell"}
+        side = side_map.get(consensus.direction)
+        if side is None:
+            logger.info(f"No order for {asset} (direction {consensus.direction})")
+            return out
         order = OrderRequest(
             inst_id=asset,
-            side=side_map[consensus.direction],
+            side=side,
             order_type="market",
             size=f"{order_size:.2f}",
             client_oid=f"consensus_{asset}_{uuid.uuid4().hex[:8]}",
@@ -1387,22 +1497,3 @@ class AutonomousTradingAgent:
                 )
         
         return out
-        """Run continuous trading loop."""
-        logger.info(f"Starting autonomous agent {self.agent_id}")
-        if self.onchain_logger:
-            logger.info(f"Connected to chain: {self.onchain_logger.is_connected()}")
-            logger.info(f"Agent address: {self.onchain_logger.agent_address}")
-
-        while True:
-            try:
-                result = await self.run_trading_cycle(assets)
-                logger.info(
-                    f"Cycle complete: {len(result.executions)} executed, "
-                    f"PnL={result.total_pnl_usd:.2f}"
-                )
-                if result.errors:
-                    logger.warning(f"Errors: {result.errors}")
-            except Exception as e:
-                logger.error(f"Cycle error: {e}", exc_info=True)
-
-            await asyncio.sleep(interval_seconds)

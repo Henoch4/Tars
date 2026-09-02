@@ -10,7 +10,7 @@ profiles:
   conservative:
     position_size_multiplier: 0.35
     confidence_floor_bps: 7500
-    enabled_signals: ["funding_rate"]
+    enabled_signals: ["funding_rate", "ml_funding_carry"]
     max_leverage: 1.5
     # Product B: Consensus thresholds per asset-class cohort
     consensus_thresholds:
@@ -24,7 +24,7 @@ profiles:
   standard:
     position_size_multiplier: 0.65
     confidence_floor_bps: 6000
-    enabled_signals: ["funding_rate"]
+    enabled_signals: ["funding_rate", "ml_funding_carry"]
     max_leverage: 2.0
     consensus_thresholds:
       majors: 0.65
@@ -36,7 +36,7 @@ profiles:
   defensive:
     position_size_multiplier: 0.10
     confidence_floor_bps: 9000
-    enabled_signals: []          # no new trades opened, only unwinds
+    enabled_signals: []
     max_leverage: 1.0
     consensus_thresholds:
       majors: 0.75

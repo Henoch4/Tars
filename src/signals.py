@@ -16,11 +16,15 @@ The risk engine then gates these before any execution.
 """
 from __future__ import annotations
 
+import logging
 import math
 import statistics
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Literal, Optional
+
+
+logger = logging.getLogger(__name__)
 
 
 SignalDirection = Literal["LONG", "SHORT", "NEUTRAL"]
@@ -945,6 +949,167 @@ def volume_weighted_signal(
             ),
             metadata={"vwap": vwap, "deviation_pct": deviation_pct, "vol_trend": vol_trend, "volatility": volatility},
         )
+
+
+def ml_funding_carry_signal(
+    asset: str,
+    spot_price: float,
+    perp_price: float,
+    funding_rate: float,
+    funding_history: list[float] | None = None,
+    price_history: list[float] | None = None,
+    min_basis_bps: float = 5.0,
+    min_annualized_apr: float = 10.0,
+) -> Signal:
+    """
+    ML-enhanced funding carry signal using tars-lora.
+
+    Replaces the fixed `funding_arb_min_rate` threshold with a learned
+    decision: "will 7-day carry clear costs?"
+
+    Features computed from market data:
+    - funding_rate: current funding rate
+    - basis_bps: perp-spot basis in basis points
+    - vol: realized volatility from price history
+    - ret: recent return from price history
+    - funding_7d_mean: 7-day mean funding rate from funding history
+    - funding_z_score: z-score of current funding vs 7-day history
+
+    Falls back to rule-based logic if ML model unavailable.
+    """
+    from .ml_inference import CarryFeatures, predict_carry_clear
+
+    basis = perp_price - spot_price
+    basis_bps = (basis / spot_price) * 10000 if spot_price > 0 else 0
+
+    # Annualized funding (8 funding periods/day = 365*8 = 2920 periods/year)
+    annualized_funding = funding_rate * 2920 * 100  # as percentage
+
+    # Compute features for ML model
+    vol = 0.0
+    ret = 0.0
+    funding_7d_mean = funding_rate
+    funding_z_score = 0.0
+
+    if price_history and len(price_history) >= 2:
+        returns = [
+            (price_history[i] - price_history[i-1]) / price_history[i-1]
+            for i in range(1, len(price_history))
+        ]
+        if returns:
+            ret = returns[-1]
+            vol = statistics.pstdev(returns) if len(returns) > 1 else 0.0
+
+    if funding_history and len(funding_history) >= 2:
+        funding_7d_mean = statistics.mean(funding_history)
+        funding_std = statistics.pstdev(funding_history) if len(funding_history) > 1 else 0.0
+        if funding_std > 0:
+            funding_z_score = (funding_rate - funding_7d_mean) / funding_std
+
+    # Rule-based gate first (fast path)
+    rule_passes = basis_bps >= min_basis_bps and annualized_funding >= min_annualized_apr
+
+    # Try ML model
+    ml_decision = None
+    ml_confidence = 0.0
+    try:
+        features = CarryFeatures(
+            funding_rate=funding_rate,
+            basis_bps=basis_bps,
+            vol=vol,
+            ret=ret,
+            funding_7d_mean=funding_7d_mean,
+            funding_z_score=funding_z_score,
+        )
+        ml_decision = predict_carry_clear(features)
+        ml_confidence = ml_decision.confidence
+    except Exception as e:
+        logger.warning(f"ML carry model unavailable, using rule-based fallback: {e}")
+
+    # Combine rule-based + ML: both must agree for HIGH confidence
+    # If ML unavailable, fall back to rule-based with moderate confidence
+    direction: SignalDirection = "NEUTRAL"
+    if ml_decision is not None:
+        if ml_decision.will_clear and rule_passes:
+            # Both agree: strong signal
+            confidence = min(0.85 + ml_confidence * 0.1, 0.95)
+            direction = "LONG"
+            rationale = (
+                f"ML carry model: YES (conf={ml_confidence:.2f}). "
+                f"Rule gate: basis {basis_bps:.1f}bps, funding {annualized_funding:.1f}% APR. "
+                f"Long spot + short perp to collect carry."
+            )
+        elif not ml_decision.will_clear and not rule_passes:
+            # Both agree: no trade
+            confidence = 0.3
+            direction = "NEUTRAL"
+            rationale = (
+                f"ML carry model: NO (conf={ml_confidence:.2f}). "
+                f"Rule gate: basis {basis_bps:.1f}bps, funding {annualized_funding:.1f}% APR. "
+                f"No carry opportunity."
+            )
+        elif ml_decision.will_clear and not rule_passes:
+            # ML says yes but rules say no: cautious
+            confidence = 0.4
+            direction = "NEUTRAL"
+            rationale = (
+                f"ML carry model: YES (conf={ml_confidence:.2f}) but rule gate failed: "
+                f"basis {basis_bps:.1f}bps (< {min_basis_bps}) or "
+                f"funding {annualized_funding:.1f}% (< {min_annualized_apr}%). "
+                f"Waiting for rule confirmation."
+            )
+        else:  # ML says no but rules pass
+            confidence = 0.3
+            direction = "NEUTRAL"
+            rationale = (
+                f"Rule gate passed (basis {basis_bps:.1f}bps, funding {annualized_funding:.1f}%) "
+                f"but ML carry model: NO (conf={ml_confidence:.2f}). "
+                f"Model predicts carry won't clear costs."
+            )
+    else:
+        # Fallback to pure rule-based
+        if rule_passes:
+            confidence = min(0.7 + basis_bps / 200 + annualized_funding / 200, 0.9)
+            direction = "LONG"
+            rationale = (
+                f"Carry trade (rule-based fallback): basis {basis_bps:.1f}bps, "
+                f"funding {funding_rate:.6f} ({annualized_funding:.1f}% APR). "
+                f"Long spot + short perp to collect carry."
+            )
+        else:
+            confidence = 0.3
+            direction = "NEUTRAL"
+            rationale = (
+                f"Basis {basis_bps:.1f}bps (< {min_basis_bps}) or "
+                f"annualized funding {annualized_funding:.1f}% (< {min_annualized_apr}%). "
+                f"No carry opportunity (rule-based)."
+            )
+
+    return Signal(
+        strategy="ml_funding_carry",
+        asset=asset,
+        direction=direction,
+        confidence_bps=int(confidence * 10000),
+        entry_price=spot_price,
+        rationale=rationale,
+        metadata={
+            "spot_price": spot_price,
+            "perp_price": perp_price,
+            "basis_bps": basis_bps,
+            "funding_rate": funding_rate,
+            "annualized_funding_pct": annualized_funding,
+            "vol": vol,
+            "ret": ret,
+            "funding_7d_mean": funding_7d_mean,
+            "funding_z_score": funding_z_score,
+            "ml_will_clear": ml_decision.will_clear if ml_decision else None,
+            "ml_confidence": ml_confidence if ml_decision else None,
+            "ml_raw_answer": ml_decision.raw_answer if ml_decision else None,
+            "rule_passes": rule_passes,
+            "next_funding_ts": 0,
+            "legs": {"spot": "LONG", "perp": "SHORT"},
+        },
+    )
 
 
 def funding_carry_signal(
