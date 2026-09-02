@@ -15,7 +15,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-REPO = Path(__file__).resolve().parent.parent
+# In Colab notebooks, __file__ is not defined — fall back to cwd
+try:
+    REPO = Path(__file__).resolve().parent.parent
+except NameError:
+    REPO = Path.cwd()
 sys.path.insert(0, str(REPO))
 
 from src.validation import (
@@ -253,6 +257,7 @@ def main():
     print("=" * 80)
     print("TARS-LORA VALIDATION GATE")
     print("=" * 80)
+    print(f"REPO = {REPO}")
 
     # Check if model exists
     adapter_path = REPO / "tars-lora-repo" / "lora_model"
