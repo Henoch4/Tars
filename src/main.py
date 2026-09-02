@@ -506,8 +506,13 @@ async def funding_arb_status():
     if _FUNDING_CACHE["data"] is None or (now - _FUNDING_CACHE["ts"]) > _FUNDING_TTL:
         async def _funding_rate(inst_id: str) -> tuple[str, float | None]:
             try:
-                funding = await _cli.run("market", "funding-rate", "--instId", inst_id, use_global_flags=False)
-                raw = funding.get("data", [{}])[0].get("fundingRate", None)
+                funding = await _cli.run("market", "funding-rate", inst_id, use_global_flags=False)
+                if isinstance(funding, list):
+                    raw = funding[0].get("fundingRate", None) if funding else None
+                elif isinstance(funding, dict):
+                    raw = funding.get("data", [{}])[0].get("fundingRate", None)
+                else:
+                    raw = None
                 return inst_id, (float(raw) if raw is not None else None)
             except Exception:
                 return inst_id, None

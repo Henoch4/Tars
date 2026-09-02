@@ -443,7 +443,12 @@ class OrderExecutor:
                 "--instId", inst_id,
                 use_global_flags=True,
             )
-            positions = result.get("data", []) if result else []
+            if isinstance(result, list):
+                positions = result
+            elif isinstance(result, dict):
+                positions = result.get("data", []) if result else []
+            else:
+                positions = []
             return positions[0] if positions else None
         except OkxCliError:
             return None

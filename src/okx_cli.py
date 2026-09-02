@@ -114,15 +114,14 @@ class OkxCli:
         #   API-key user: --profile <name>   (selects a demo or live profile)
         #   OAuth user:   --demo             (live is the default with no flag)
         # These are mutually exclusive.
+        # On Windows, --profile triggers keychain CredRead which fails for
+        # `account positions` (see `okx --profile okx-demo account positions`
+        # → Keychain access failed), while `--demo` correctly reads
+        # C:\Users\Henoch\.okx\config.toml and works for both market and
+        # account calls. Prefer --demo for demo mode.
         if self.config.profile:
             return ["--profile", self.config.profile]
         if self.config.demo:
-            # --demo flag doesn't carry API keys; we need --profile <name>
-            # so the CLI picks up credentials from config.toml. Detect the
-            # default profile name from the config file.
-            profile = self._detect_default_profile()
-            if profile:
-                return ["--profile", profile]
             return ["--demo"]
         return []
 

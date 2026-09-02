@@ -228,7 +228,7 @@ class VerifyClient:
                 agent_verified=False,
                 tx_confirmed=False,
                 block_number=None,
-                errors=[decision.get("error", "Decision not found")],
+                errors=[(decision or {}).get("error", "Decision not found")],
             )
         
         # Verify signature
@@ -263,7 +263,8 @@ class VerifyClient:
                     sig = bytes.fromhex(sig)
                 
                 payload_hash = compute_payload_hash(payload)
-                signable = encode_defunct(primitive=payload_hash)
+                payload_hash_bytes = bytes.fromhex(payload_hash.removeprefix("0x"))
+                signable = encode_defunct(primitive=payload_hash_bytes)
                 recovered = Account.recover_message(signable, signature=sig)
                 signature_valid = True
                 agent_verified = (recovered.lower() == decision["agent"].lower())
