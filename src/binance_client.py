@@ -404,12 +404,12 @@ class BinanceClient:
             elif sub == "funding-rate":
                 return await self._market_funding_rate(symbol)
             elif sub == "instruments":
-                return await self._market_instruments(args)
+                return await self._market_instruments(list(args))
         elif command == "trade" and len(args) >= 2:
             if args[1] == "order":
-                return await self._trade_order(args)
+                return await self._trade_order(list(args))
             elif args[1] == "cancel":
-                return await self._trade_cancel(args)
+                return await self._trade_cancel(list(args))
         elif command == "account" and len(args) >= 2:
             if args[1] == "balance-all":
                 return await self.balance_all()
@@ -456,7 +456,10 @@ class BinanceClient:
         }
 
     async def _trade_order(self, args: list[str]) -> dict:
-        params = {}
+        # Mixed value types (str flags plus a bool reduceOnly), so the dict
+        # needs an explicit annotation — otherwise mypy infers dict[str, str]
+        # from the first assignments and rejects the bool write below.
+        params: dict[str, Any] = {}
         i = 2
         while i < len(args):
             if args[i] == "--instId" and i + 1 < len(args):

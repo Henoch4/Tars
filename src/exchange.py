@@ -52,7 +52,10 @@ def create_exchange_client(exchange: str | None = None):
 
     EXCHANGE env var: "okx" (default) or "binance".
     """
-    exchange = (exchange or os.getenv("EXCHANGE", "okx")).lower().strip()
+    # Chained `or` with a final literal keeps this str under every mypy
+    # version (single-arg getenv is str | None; the literal closes it).
+    name = exchange or os.getenv("EXCHANGE") or "okx"
+    exchange = name.lower().strip()
 
     if exchange == "binance":
         from .binance_client import BinanceClient, BinanceConfig
@@ -73,9 +76,11 @@ def create_exchange_client(exchange: str | None = None):
     # Default: OKX
     from .okx_cli import OkxCli, OkxCliConfig
 
-    config = OkxCliConfig(
+    # Distinct name from the BinanceConfig above — reusing `config` makes
+    # mypy pin the variable to BinanceConfig and reject this branch.
+    okx_config = OkxCliConfig(
         demo=os.getenv("OKX_DEMO", "true").lower() == "true",
         profile=os.getenv("OKX_PROFILE"),
     )
-    logger.info(f"Using OKX client (demo={config.demo})")
-    return OkxCli(config)
+    logger.info(f"Using OKX client (demo={okx_config.demo})")
+    return OkxCli(okx_config)
