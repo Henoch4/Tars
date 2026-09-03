@@ -45,6 +45,7 @@ except ImportError:
 
 from .auditor import run_audit, run_audit_from_data, AuditReport
 from .okx_cli import OkxCli, OkxCliConfig, OkxCliError
+from .exchange import create_exchange_client
 from .execution import RiskGate
 from .agent import AutonomousTradingAgent
 from .audit_logger import OnchainLogger
@@ -298,7 +299,8 @@ _dry_run = os.getenv("DRY_RUN", "true").lower() == "true"
 # so the gate can boot-strap daily counters against TradeAuditTrail at import.
 _onchain_logger = _make_onchain_logger()
 _risk_gate = _make_risk_gate(onchain_logger=_onchain_logger)
-_cli = OkxCli(OkxCliConfig(demo=not _dry_run))
+_exchange = os.getenv("EXCHANGE", "okx").lower()
+_cli = create_exchange_client(_exchange)
 _audit_log = AuditLog(path=os.getenv("AUDIT_LOG_PATH", "audit_log.jsonl"))
 _curator = _make_curator()
 _integrity_gate = DataIntegrityGate(

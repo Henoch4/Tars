@@ -25,7 +25,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from .agent import AutonomousTradingAgent, TradingCycleResult
-from .okx_cli import OkxCli, OkxCliConfig
+from .exchange import create_exchange_client
 from .execution import RiskGate
 
 logging.basicConfig(
@@ -56,19 +56,18 @@ class TradingScheduler:
         self._error_count = 0
 
     async def initialize(self) -> None:
-        """Initialize the trading agent and OKX client."""
+        """Initialize the trading agent and exchange client."""
         logger.info("Initializing trading scheduler...")
 
-        # OKX CLI
-        cli_config = OkxCliConfig(
-            demo=self.config.dry_run,
-        )
-        cli = OkxCli(cli_config)
+        # Exchange client (OKX or Binance, based on EXCHANGE env var)
+        exchange = os.getenv("EXCHANGE", "okx").lower()
+        cli = create_exchange_client(exchange)
+        logger.info(f"Using exchange: {exchange}")
 
         # Risk gate
         risk_gate = RiskGate()
 
-# Agent
+        # Agent
         self.agent = AutonomousTradingAgent(
             okx_cli=cli,
             risk_gate=risk_gate,
