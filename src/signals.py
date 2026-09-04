@@ -27,6 +27,21 @@ from typing import Literal, Optional
 logger = logging.getLogger(__name__)
 
 
+# S5/W3: counted, typed ML degradations. Every skip of the ML path records
+# a reason here (and in logs) instead of silently substituting a default.
+# Structured as a plain mapping so the S3 metrics surface can scrape it.
+ML_DEGRADATIONS: dict[str, int] = {}
+
+
+def record_ml_degradation(reason: str) -> int:
+    """Count one ML-path skip under a typed reason. Returns the new count."""
+    ML_DEGRADATIONS[reason] = ML_DEGRADATIONS.get(reason, 0) + 1
+    logger.warning(
+        f"ML carry degraded [{reason}] (count={ML_DEGRADATIONS[reason]})"
+    )
+    return ML_DEGRADATIONS[reason]
+
+
 SignalDirection = Literal["LONG", "SHORT", "NEUTRAL"]
 
 
@@ -975,7 +990,11 @@ def ml_funding_carry_signal(
     - funding_7d_mean: 7-day mean funding rate from funding history
     - funding_z_score: z-score of current funding vs 7-day history
 
-    Falls back to rule-based logic if ML model unavailable.
+    S5/W3 fail-closed: if the ML model produces no prediction, this returns
+    NEUTRAL with degraded=True and a typed degradation_reason — never LONG.
+    A degraded output must not masquerade as the full-fidelity signal, and
+    the skip is counted (see ML_DEGRADATIONS) instead of silently defaulted
+    into a tradeable value.
     """
     from .ml_inference import CarryFeatures, predict_carry_clear
 
@@ -1009,9 +1028,11 @@ def ml_funding_carry_signal(
     # Rule-based gate first (fast path)
     rule_passes = basis_bps >= min_basis_bps and annualized_funding >= min_annualized_apr
 
-    # Try ML model
+    # Try ML model. Any failure (missing weights, inference error,
+    # malformed output) yields a TYPED degradation, not a silent default.
     ml_decision = None
     ml_confidence = 0.0
+    ml_degradation: str | None = None
     try:
         features = CarryFeatures(
             funding_rate=funding_rate,
@@ -1024,7 +1045,8 @@ def ml_funding_carry_signal(
         ml_decision = predict_carry_clear(features)
         ml_confidence = ml_decision.confidence
     except Exception as e:
-        logger.warning(f"ML carry model unavailable, using rule-based fallback: {e}")
+        ml_degradation = f"ml_unavailable:{type(e).__name__}"
+        record_ml_degradation(f"{asset}:{ml_degradation}")
 
     # Combine rule-based + ML: both must agree for HIGH confidence
     # If ML unavailable, fall back to rule-based with moderate confidence
@@ -1067,23 +1089,16 @@ def ml_funding_carry_signal(
                 f"Model predicts carry won't clear costs."
             )
     else:
-        # Fallback to pure rule-based
-        if rule_passes:
-            confidence = min(0.7 + basis_bps / 200 + annualized_funding / 200, 0.9)
-            direction = "LONG"
-            rationale = (
-                f"Carry trade (rule-based fallback): basis {basis_bps:.1f}bps, "
-                f"funding {funding_rate:.6f} ({annualized_funding:.1f}% APR). "
-                f"Long spot + short perp to collect carry."
-            )
-        else:
-            confidence = 0.3
-            direction = "NEUTRAL"
-            rationale = (
-                f"Basis {basis_bps:.1f}bps (< {min_basis_bps}) or "
-                f"annualized funding {annualized_funding:.1f}% (< {min_annualized_apr}%). "
-                f"No carry opportunity (rule-based)."
-            )
+        # S5/W3: ML produced no prediction — fail closed. NEUTRAL with a
+        # typed reason; the rule gate's status is reported for diagnosis
+        # but never converted into a LONG under this strategy's name.
+        confidence = 0.2
+        direction = "NEUTRAL"
+        rationale = (
+            f"ML carry model unavailable ({ml_degradation}); no ML input. "
+            f"Rule gate: basis {basis_bps:.1f}bps, funding "
+            f"{annualized_funding:.1f}% APR — signal withheld, not confirmed."
+        )
 
     return Signal(
         strategy="ml_funding_carry",
@@ -1106,6 +1121,8 @@ def ml_funding_carry_signal(
             "ml_confidence": ml_confidence if ml_decision else None,
             "ml_raw_answer": ml_decision.raw_answer if ml_decision else None,
             "rule_passes": rule_passes,
+            "degraded": ml_decision is None,
+            "degradation_reason": ml_degradation,
             "next_funding_ts": 0,
             "legs": {"spot": "LONG", "perp": "SHORT"},
         },

@@ -27,6 +27,7 @@ from .signals import (
     funding_rate_signal,
     funding_carry_signal,
     ml_funding_carry_signal,
+    record_ml_degradation,
     ensemble_signal,
     backtest_simple,
 )
@@ -147,6 +148,10 @@ class AutonomousTradingAgent:
         self.funding_arb_min_rate = funding_arb_min_rate
         self.use_ml_carry_gate = use_ml_carry_gate
         self._ml_carry_client = None
+        # S5/W3: if the gate was requested but the client failed to build,
+        # the flag STAYS on and the gate BLOCKS (counted) — it never silently
+        # degrades to the fixed threshold the operator explicitly replaced.
+        self._ml_carry_init_error: str | None = None
         # Rolling history for ML features: per-asset funding rates and perp prices
         # across cycles. Max 672 entries = 8 entries/day * 7 days * 3 cycles/day.
         # Sufficient for 7-day mean and z-score computation without unbounded growth.
@@ -157,8 +162,12 @@ class AutonomousTradingAgent:
                 from .ml_inference import get_tars_lora_client
                 self._ml_carry_client = get_tars_lora_client()
             except Exception as e:
-                logger.warning(f"Failed to initialize ML carry client: {e}")
-                self.use_ml_carry_gate = False
+                self._ml_carry_init_error = f"ml_client_init:{type(e).__name__}"
+                record_ml_degradation(self._ml_carry_init_error)
+                logger.warning(
+                    "ML carry gate requested but client failed to initialize "
+                    f"({e}); gate will BLOCK, threshold fallback disabled."
+                )
 
         # Pre-signal integrity gate (runs BEFORE signal generation), curator
         # profile selector, and the local append-only audit log. All optional
@@ -539,6 +548,11 @@ class AutonomousTradingAgent:
 
         When `use_ml_carry_gate` is True, the tars-lora model's "will 7d carry
         clear costs?" decision replaces the fixed `funding_arb_min_rate` threshold.
+
+        S5/W3: with the gate on, every ML-unavailable condition (client init
+        failure, missing spot/perp prices, degraded signal) BLOCKS the package
+        with a counted, typed reason. It never falls through to the threshold
+        the operator explicitly replaced — that would defeat the gate silently.
         """
         if self.multi_leg_manager is None:
             return False
@@ -546,39 +560,62 @@ class AutonomousTradingAgent:
         funding_rate = float(market_data.get("funding_rate", 0.0))
 
         # ML-enhanced gate: use tars-lora model decision
-        if self.use_ml_carry_gate and self._ml_carry_client:
-            if spot_price and perp_price:
-                # Use rolling history for 7-day mean and z-score features
-                hist = self._get_ml_history(asset)
-                funding_history = hist["funding"] if hist["funding"] else [funding_rate]
-                price_history = hist["prices"] if hist["prices"] else self._extract_prices(market_data)
-
-                # Use the ML signal function directly
-                from .signals import ml_funding_carry_signal
-                ml_signal = ml_funding_carry_signal(
-                    asset=asset,
-                    spot_price=spot_price,
-                    perp_price=perp_price,
-                    funding_rate=funding_rate,
-                    funding_history=funding_history,
-                    price_history=price_history,
+        if self.use_ml_carry_gate:
+            if self._ml_carry_client is None:
+                record_ml_degradation(
+                    f"{asset}:{self._ml_carry_init_error or 'ml_client_missing'}"
                 )
-                # ML signal says LONG = carry will clear costs
-                if ml_signal.direction != "LONG":
-                    logger.info(
-                        f"ML carry gate blocked {asset}: "
-                        f"model says NO (conf={ml_signal.confidence_bps/100:.0f}%)"
-                    )
-                    return False
+                logger.info(f"ML carry gate blocked {asset}: client unavailable")
+                return False
+            if not (spot_price and perp_price):
+                record_ml_degradation(f"{asset}:ml_missing_prices")
                 logger.info(
-                    f"ML carry gate approved {asset}: "
-                    f"model says YES (conf={ml_signal.confidence_bps/100:.0f}%)"
+                    f"ML carry gate blocked {asset}: no spot/perp price "
+                    "(threshold fallback disabled while gate is on)"
                 )
-            else:
-                logger.warning(f"ML carry gate: no spot/perp price for {asset}, falling back to threshold")
-                # Fall through to threshold check
+                return False
+            # Use rolling history for 7-day mean and z-score features
+            hist = self._get_ml_history(asset)
+            funding_history = hist["funding"] if hist["funding"] else [funding_rate]
+            price_history = hist["prices"] if hist["prices"] else self._extract_prices(market_data)
 
-        # Fallback: fixed threshold (original behavior)
+            # Use the ML signal function directly
+            from .signals import ml_funding_carry_signal
+            ml_signal = ml_funding_carry_signal(
+                asset=asset,
+                spot_price=spot_price,
+                perp_price=perp_price,
+                funding_rate=funding_rate,
+                funding_history=funding_history,
+                price_history=price_history,
+            )
+            # A degraded signal (no ML prediction) blocks, explicitly —
+            # the direction check below would also block it, but the
+            # reason must name the degradation, not "model says NO".
+            if ml_signal.metadata.get("degraded"):
+                record_ml_degradation(
+                    f"{asset}:{ml_signal.metadata.get('degradation_reason', 'ml_degraded')}"
+                )
+                logger.info(
+                    f"ML carry gate blocked {asset}: "
+                    f"degraded ({ml_signal.metadata.get('degradation_reason')})"
+                )
+                return False
+            # ML signal says LONG = carry will clear costs
+            if ml_signal.direction != "LONG":
+                logger.info(
+                    f"ML carry gate blocked {asset}: "
+                    f"model says NO (conf={ml_signal.confidence_bps/100:.0f}%)"
+                )
+                return False
+            logger.info(
+                f"ML carry gate approved {asset}: "
+                f"model says YES (conf={ml_signal.confidence_bps/100:.0f}%)"
+            )
+        # Fixed threshold still applies on the approval path (unchanged
+        # original semantics: ML approval is necessary but not sufficient).
+        # It is never reached as a silent fallback for a failed ML gate —
+        # every failure above returns False first.
         if funding_rate < self.funding_arb_min_rate:
             return False
 
