@@ -17,7 +17,7 @@ from collections import defaultdict
 from dataclasses import asdict
 from typing import Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -120,6 +120,110 @@ def _check_rate_limit(client_ip: str = "global") -> bool:
     return True
 
 
+# --- x402 pricing tiers + per-tier rate limits (I3/I6) ---
+# Single source for what each route costs. Tiers:
+#   free: trust-building reads (health, manifest, kill-switch read,
+#         risk-stats, curator-profile, metrics, pricing itself).
+#   micro: data reads with real backend cost (positions, funding status,
+#          single audit reads, operator reconciliation).
+#   premium: value actions (hire, trade, vault attest).
+# Prices are USDC-decimal strings. Unlisted routes are free ($0.00) —
+# asking the price is always free, and the card never advertises a fee
+# the middleware does not enforce (same table builds both).
+PRICED_ROUTES: dict[str, dict] = {
+    "/hire": {"tier": "premium", "price_usdc": "0.50",
+              "description": "Run a portfolio audit"},
+    "/trade": {"tier": "premium", "price_usdc": "0.50",
+               "description": "Run a trading cycle"},
+    "/api/v1/vault/attest": {"tier": "premium", "price_usdc": "0.50",
+                             "description": "Attest vault totalAssets onchain"},
+    "/positions": {"tier": "micro", "price_usdc": "0.01",
+                   "description": "Live OKX positions snapshot"},
+    "/funding-arb-status": {"tier": "micro", "price_usdc": "0.01",
+                            "description": "Funding rates + arb package status"},
+    "/audit-stats": {"tier": "micro", "price_usdc": "0.01",
+                     "description": "Single audit-trail read"},
+    "/api/v1/vault/reconciliation": {"tier": "micro", "price_usdc": "0.01",
+                                     "description": "Operator reconciliation snapshot"},
+    "/api/v1/vault/audit-recent": {"tier": "micro", "price_usdc": "0.01",
+                                   "description": "Recent onchain decisions"},
+}
+
+# Server-side spend guardrail: a priced route above this is a
+# misconfiguration — it is left UNGATED (free) rather than overcharging,
+# and the refusal is logged. Callers protect themselves via /estimate.
+X402_MAX_USD_PER_CALL = float(os.getenv("X402_MAX_USD_PER_CALL", "5.00"))
+
+# Per-tier per-IP budgets (token buckets, 60s window). Env-overridable;
+# premium is deliberately tight (runaway-LLM protection on value actions).
+_TIER_PER_MIN = {
+    "premium": int(os.getenv("X402_PREMIUM_PER_MIN", "10")),
+    "micro": int(os.getenv("X402_MICRO_PER_MIN", "120")),
+}
+_tier_buckets: dict[str, list[float]] = defaultdict(list)
+
+
+def _check_tier_limit(client_ip: str, tier: str) -> bool:
+    """Per-IP token bucket for a pricing tier. Unknown tiers fail closed."""
+    budget = _TIER_PER_MIN.get(tier)
+    if budget is None:
+        return False
+    now = time.time()
+    key = f"{tier}:{client_ip}"
+    _tier_buckets[key] = [t for t in _tier_buckets[key] if now - t < 60.0]
+    if len(_tier_buckets[key]) >= budget:
+        return False
+    _tier_buckets[key].append(now)
+    return True
+
+
+def price_of(route: str) -> dict:
+    """Price lookup for one route; unlisted routes are free."""
+    entry = PRICED_ROUTES.get(route)
+    if entry is None:
+        return {"route": route, "tier": "free", "price_usdc": "0.00"}
+    return {"route": route, "tier": entry["tier"],
+            "price_usdc": entry["price_usdc"]}
+
+
+def _build_paid_routes() -> dict:
+    """Build the SDK RouteConfig table from PRICED_ROUTES.
+
+    Pure function of (table, cap, pay_to) so tests can pin the cap
+    behavior without credentials. Routes priced above the cap are
+    SKIPPED (left free) — fail-closed against overcharging.
+    """
+    priced = PRICED_ROUTES
+    cap = X402_MAX_USD_PER_CALL
+    pay_to = os.getenv("PAY_TO_ADDRESS", "")
+    routes: dict = {}
+    for path, entry in priced.items():
+        try:
+            price = float(entry["price_usdc"])
+        except (ValueError, TypeError):
+            logger.error(f"x402 pricing: {path} has non-numeric price — skipped")
+            continue
+        if price <= 0:
+            continue
+        if price > cap:
+            logger.error(
+                f"x402 pricing: {path} at ${price:.2f} exceeds "
+                f"X402_MAX_USD_PER_CALL=${cap:.2f} — left ungated"
+            )
+            continue
+        routes[path] = {
+            "accepts": [{
+                "scheme": "exact",
+                "pay_to": pay_to,
+                "price": f"${price:.2f}",
+                "network": "eip155:196",
+            }],
+            "description": entry.get("description", ""),
+            "mime_type": "application/json",
+        }
+    return routes
+
+
 # --- Auth for mutating, money-path endpoints ---
 # /trade and /kill-switch/* were previously unauthenticated: anyone who
 # found the URL could trigger live trades or toggle the kill switch. This
@@ -154,7 +258,9 @@ if _pay_to and _x402_available:
     )
     _x402_server = x402ResourceServer(_facilitator)
     _x402_server.register("eip155:196", ExactEvmScheme())  # type: ignore[arg-type]
-    _PAID_ROUTES: dict = {}
+    # Priced routes from the single pricing table (I3) — the card and the
+    # middleware can never disagree because both read PRICED_ROUTES.
+    _PAID_ROUTES: dict = _build_paid_routes()
     app.add_middleware(PaymentMiddlewareASGI, routes=_PAID_ROUTES, server=_x402_server)
 
 
@@ -207,11 +313,17 @@ def agent_card():
     paid = _paid_routes()
     tools = []
     for ep in manifest.get("endpoints", []):
+        # I3: price comes from the single pricing table (the model); the
+        # top-level `enabled` flag says whether anything is enforced.
+        # `paid` therefore means "priced", not "currently gated".
+        price = price_of(ep["path"])
         tools.append({
             "path": ep["path"],
             "method": ep["method"],
             "description": ep.get("description", ""),
-            "paid": ep["path"] in paid,
+            "paid": price["price_usdc"] != "0.00",
+            "price_usdc": price["price_usdc"],
+            "tier": price["tier"],
         })
     return {
         "name": manifest.get("name"),
@@ -278,8 +390,41 @@ def api_metrics():
     return snapshot()
 
 
+@app.get("/api/v1/pricing")
+def api_pricing():
+    """Full x402 price card (I3): every priced route with tier and USDC
+    price, the spend cap, and whether the paywall currently enforces.
+    Asking the price is always free."""
+    paid = _paid_routes()
+    return {
+        "tiers": {
+            "free": "Trust-building reads. Always $0.00, never gated.",
+            "micro": "Data reads with backend cost. Gated when enforced.",
+            "premium": "Value actions. Gated when enforced.",
+        },
+        "routes": [
+            {**price_of(path),
+             "description": entry.get("description", ""),
+             "enforced": path in paid}
+            for path, entry in PRICED_ROUTES.items()
+        ],
+        "cap_usdc": f"{X402_MAX_USD_PER_CALL:.2f}",
+        "enforced": bool(paid),
+    }
+
+
+@app.get("/api/v1/estimate")
+def api_estimate(route: str):
+    """Cost estimate before a value action (I6): show price before asking
+    for payment. Unlisted routes are free. Always free to call."""
+    quote = price_of(route)
+    quote["enforced"] = route in _paid_routes()
+    quote["cap_usdc"] = f"{X402_MAX_USD_PER_CALL:.2f}"
+    return quote
+
+
 @app.post("/hire")
-async def hire(req: HireRequest):
+async def hire(req: HireRequest, request: Request):
     """Run a portfolio audit: analyze holdings, score risk, log the decision trail."""
     if req.profile_mode == "live" and not ALLOW_LIVE:
         raise HTTPException(
@@ -288,9 +433,13 @@ async def hire(req: HireRequest):
             "Set ALLOW_LIVE=true in the environment to enable.",
         )
 
-    # Rate limiting
+    # Rate limiting: existing global budget plus the premium per-IP bucket
+    # (I6 runaway-caller protection on the value action).
     if not _check_rate_limit():
         raise HTTPException(429, "Rate limit exceeded. Try again later.")
+    client_ip = request.client.host if request.client else "unknown"
+    if not _check_tier_limit(client_ip, "premium"):
+        raise HTTPException(429, "Premium rate limit exceeded. Try again later.")
 
     # Mode detection: data-forwarding vs CLI
     if req.balance_data is not None:
@@ -436,14 +585,19 @@ class AuditStatsRequest(BaseModel):
 
 
 @app.post("/trade")
-async def trade(req: TradeRequest, _auth: None = Depends(_require_agent_token)):
+async def trade(req: TradeRequest, request: Request,
+                _auth: None = Depends(_require_agent_token)):
     """
     Run a trading cycle: generate signals → pass risk checks → log onchain → execute.
-    
+
     In dry-run mode (default), no real trades are placed and no onchain
     transactions are sent. Set DRY_RUN=false and provide wallet credentials
     to enable live trading.
     """
+    # I6: premium per-IP bucket on the highest-cost endpoint.
+    client_ip = request.client.host if request.client else "unknown"
+    if not _check_tier_limit(client_ip, "premium"):
+        raise HTTPException(429, "Premium rate limit exceeded. Try again later.")
     # Short-circuit the whole cycle if the kill switch is active — every
     # individual order would be rejected by risk_gate.check_order anyway,
     # but there's no reason to spend a cycle generating signals and calling

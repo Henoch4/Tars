@@ -135,6 +135,52 @@
         }
       }
     },
+    "/api/v1/pricing": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Full x402 price card (I3): every priced route with tier and USDC",
+        "operationId": "api_pricing",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/estimate": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Cost estimate before a value action (I6): show price before asking",
+        "operationId": "api_estimate",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
     "/hire": {
       "post": {
         "tags": [

@@ -20,9 +20,19 @@
       "description": "Read-only: active curator profile with the resolve knobs for the next"
     },
     {
+      "path": "/api/v1/estimate",
+      "method": "GET",
+      "description": "Cost estimate before a value action (I6): show price before asking"
+    },
+    {
       "path": "/api/v1/metrics",
       "method": "GET",
       "description": "Structured metrics snapshot (S3): counters, gauges, heartbeat, and"
+    },
+    {
+      "path": "/api/v1/pricing",
+      "method": "GET",
+      "description": "Full x402 price card (I3): every priced route with tier and USDC"
     },
     {
       "path": "/api/v1/validation",
@@ -108,5 +118,5 @@
     "onchain_logging"
   ],
   "chain": "xlayer",
-  "openapi_generated": "2026-09-04T10:05:57.960804Z"
+  "openapi_generated": "2026-09-04T10:15:13.391639Z"
 }

@@ -77,12 +77,17 @@ class TestAgentDiscovery:
         assert all(t["description"] for t in card["tools"])
 
     def test_agent_card_payment_honest_when_paywall_off(self):
-        # Phase 1: PAY_TO_ADDRESS unset -> must report disabled, never
-        # advertise fees that don't exist.
+        # Phase 1: PAY_TO_ADDRESS unset -> enforcement disabled, but the
+        # PRICE MODEL is still advertised (paid = priced in the table).
+        # The card must never claim enforcement that doesn't exist.
         card = self._client().get("/.well-known/agent-card.json").json()
         assert card["payment"]["protocol"] == "x402"
         assert card["payment"]["enabled"] is False
-        assert all(t["paid"] is False for t in card["tools"])
+        by_path = {t["path"]: t for t in card["tools"]}
+        assert by_path["/hire"]["paid"] is True
+        assert by_path["/hire"]["price_usdc"] == "0.50"
+        assert by_path["/health"]["paid"] is False
+        assert by_path["/health"]["price_usdc"] == "0.00"
 
     def test_x402_well_known_shape(self):
         body = self._client().get("/.well-known/x402")
