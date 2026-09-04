@@ -24,7 +24,6 @@ from pathlib import Path
 
 from web3 import Web3 as Web
 from eth_account import Account
-from eth_account.messages import encode_defunct
 
 from .governance import canonical_decision_hash
 
@@ -186,6 +185,7 @@ class OnchainLogger:
         contract_address: str,
         private_key: str,
         chain_id: int = 1952,
+        signer=None,
     ):
         # Endpoint failover (roadmap Phase 1): the explicit primary first, then
         # any independently configured fallback. First endpoint that answers
@@ -216,10 +216,17 @@ class OnchainLogger:
             )
         self.w3 = w3
         self.contract_address = Web.to_checksum_address(contract_address)
+        # D10/ika-CAPTURE-1: attestation signing goes through the backend so
+        # custodial -> connect-wallet is a swap, not a rewrite. private_key
+        # and account stay for transaction broadcast + backward compat
+        # (tests construct loggers manually); the signer is the authority
+        # for what address we attest as.
+        from .signer import EnvKeySigner
         self.private_key = private_key
         self.account = Account.from_key(private_key)
+        self.signer = signer or EnvKeySigner(private_key)
         self.chain_id = chain_id
-        self.agent_address = self.account.address
+        self.agent_address = self.signer.address
         self.contract = self.w3.eth.contract(address=self.contract_address, abi=_ABI)
         # Thread-safe local nonce counter. Seeded lazily from the node on the
         # first send, then incremented locally so concurrent sends (kill
@@ -458,11 +465,26 @@ class OnchainLogger:
         every call. It never reached the network; the on-chain audit trail
         couldn't run at all. Fixed by building the EIP-191 SignableMessage
         with encode_defunct, which is the actual API for this.
+
+        Signs through the pluggable backend (D10): the digest is the single
+        canonical hash (S8) either way — swapping custodial for a session
+        backend changes WHO signs, never WHAT bytes get signed.
         """
         payload_hash = self._compute_payload_hash(payload)
-        signable_message = encode_defunct(primitive=payload_hash)
-        signed_msg = self.account.sign_message(signable_message)
-        return signed_msg.signature
+        return self._get_signer().sign_message_digest(payload_hash)
+
+    def _get_signer(self):
+        """Return the attestation backend, deriving it if necessary.
+
+        Production loggers get theirs in __init__. Manually-constructed
+        loggers (tests via __new__) carry `account` but no signer — derive
+        the custodial backend from the SAME key so signatures are identical.
+        """
+        signer = getattr(self, "signer", None)
+        if signer is not None:
+            return signer
+        from .signer import EnvKeySigner
+        return EnvKeySigner(self.account.key.hex())
 
     def log_decision(self, payload: DecisionPayload) -> str:
         """Log a trade decision to the blockchain. Returns tx hash.
