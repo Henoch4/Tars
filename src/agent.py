@@ -106,6 +106,14 @@ class AutonomousTradingAgent:
         expected_equity: float | None = None,
         multi_leg_manager: MultiLegExecutionManager | None = None,
         funding_arb_min_rate: float = 0.001,
+        # Z1 fee schedule for the carry break-even gate (per-leg taker
+        # fees in bps, slippage per leg per side in bps, expected hold in
+        # funding periods). The package requires funding above BOTH the
+        # flat floor above and the computed break-even.
+        carry_taker_fee_bps_spot: float = 5.0,
+        carry_taker_fee_bps_perp: float = 5.0,
+        carry_slippage_bps: float = 3.0,
+        carry_hold_periods: float = 21.0,
         regime_filter_window: int = 0,
         # ML-enhanced funding carry gate (tars-lora): replaces fixed threshold
         # with learned "will 7d carry clear costs?" decision
@@ -146,6 +154,10 @@ class AutonomousTradingAgent:
         # costs?" decision gates the package instead of the fixed rate threshold.
         self.multi_leg_manager = multi_leg_manager
         self.funding_arb_min_rate = funding_arb_min_rate
+        self.carry_taker_fee_bps_spot = carry_taker_fee_bps_spot
+        self.carry_taker_fee_bps_perp = carry_taker_fee_bps_perp
+        self.carry_slippage_bps = carry_slippage_bps
+        self.carry_hold_periods = carry_hold_periods
         self.use_ml_carry_gate = use_ml_carry_gate
         self._ml_carry_client = None
         # S5/W3: if the gate was requested but the client failed to build,
@@ -616,7 +628,25 @@ class AutonomousTradingAgent:
         # original semantics: ML approval is necessary but not sufficient).
         # It is never reached as a silent fallback for a failed ML gate —
         # every failure above returns False first.
-        if funding_rate < self.funding_arb_min_rate:
+        # Z1: the package must ALSO clear the fee-derived break-even. The
+        # binding bound is the max of the flat floor and the computed edge,
+        # so the gate only ever tightens, never loosens.
+        from .signals import carry_break_even_rate
+        break_even = carry_break_even_rate(
+            taker_fee_bps_spot=self.carry_taker_fee_bps_spot,
+            taker_fee_bps_perp=self.carry_taker_fee_bps_perp,
+            slippage_bps_per_leg=self.carry_slippage_bps,
+            hold_periods=self.carry_hold_periods,
+        )
+        required = max(self.funding_arb_min_rate, break_even)
+        if funding_rate < required:
+            bound = "break-even" if break_even >= self.funding_arb_min_rate else "floor"
+            logger.info(
+                f"Funding arb for {asset} blocked: funding {funding_rate:.6f} "
+                f"below {bound} {required:.6f} "
+                f"(floor={self.funding_arb_min_rate:.6f}, "
+                f"break-even={break_even:.6f})"
+            )
             return False
 
         allowed, reason = self.multi_leg_manager.can_open(asset)

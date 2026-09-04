@@ -1129,6 +1129,43 @@ def ml_funding_carry_signal(
     )
 
 
+# Z1: 7-day-hold EV margin — carry must clear this multiple of round-trip
+# costs. Same concept as EV_MARGIN in scripts/build_carry_dataset.py.
+CARRY_EV_MARGIN = 2.0
+
+
+def carry_break_even_rate(
+    taker_fee_bps_spot: float = 5.0,
+    taker_fee_bps_perp: float = 5.0,
+    slippage_bps_per_leg: float = 3.0,
+    hold_periods: float = 21.0,
+) -> float:
+    """Minimum per-period funding rate for delta-neutral carry to clear costs.
+
+    Z1: a flat threshold is wrong in both directions — too loose when fees
+    are high or the hold is short (books that lose money slip through),
+    too strict when costs are low (profitable carry refused). Derive the
+    break-even from the actual fee/slippage schedule instead:
+
+    - Round trip per leg = entry fee + exit fee + entry slip + exit slip.
+    - Two legs (long spot + short perp).
+    - total_cost_bps = 2 * (fee_spot + fee_perp + 2 * slip).
+    - Per-period break-even = total_cost_bps / 1e4 * CARRY_EV_MARGIN / hold.
+
+    With defaults (5/5bps fees, 3bps slip, 21 periods = 7d at 8h cadence):
+    2*(5+5+6) = 32bps * 2.0 / 21 ≈ 0.000305/period. Returns a per-period
+    rate in the same units as funding_rate (e.g. 0.001 = 0.1%/8h).
+    """
+    if hold_periods <= 0:
+        raise ValueError(f"hold_periods must be positive, got {hold_periods}")
+    if min(taker_fee_bps_spot, taker_fee_bps_perp, slippage_bps_per_leg) < 0:
+        raise ValueError("fee/slippage inputs must be non-negative")
+    total_cost_bps = 2.0 * (
+        taker_fee_bps_spot + taker_fee_bps_perp + 2.0 * slippage_bps_per_leg
+    )
+    return total_cost_bps / 10000.0 * CARRY_EV_MARGIN / hold_periods
+
+
 def funding_carry_signal(
     asset: str,
     spot_price: float,
