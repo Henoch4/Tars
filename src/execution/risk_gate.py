@@ -234,12 +234,13 @@ class RiskGate:
         self.max_slippage_pct = max_slippage_pct
         self.min_confidence_bps = min_confidence_bps
         self.max_price_age_seconds = max_price_age_seconds
-        self.allowed_assets = allowed_assets or [
-            "BTC-USDT-SWAP",
-            "ETH-USDT-SWAP",
-            "SOL-USDT-SWAP",
-            "BNB-USDT-SWAP",
-        ]
+        # W2/S9: the assets default comes from the single asset registry,
+        # never a second copy of the list. Companions default to EMPTY on
+        # purpose (D5(a)): a spot leg is admitted only when explicitly
+        # declared — main.py passes the registry companions explicitly, and
+        # a bare gate must not silently admit spot legs nobody listed.
+        from ..assets import trade_assets
+        self.allowed_assets = allowed_assets or trade_assets()
         self.allowed_companions = allowed_companions or []
         self.regime_throttle = regime_throttle
         self.regime_band_pct = regime_band_pct

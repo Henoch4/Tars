@@ -25,6 +25,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from .agent import AutonomousTradingAgent, TradingCycleResult
+from .assets import TRADE_ASSETS
 from .exchange import create_exchange_client
 from .execution import RiskGate
 
@@ -39,7 +40,8 @@ logger = logging.getLogger(__name__)
 @dataclass
 class SchedulerConfig:
     interval_minutes: int = 15
-    assets: tuple[str, ...] = ("BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP", "BNB-USDT-SWAP")
+    # W2: default universe from the single asset registry.
+    assets: tuple[str, ...] = TRADE_ASSETS
     dry_run: bool = True
     agent_id: str = "tars-scheduler"
     log_level: str = "INFO"
@@ -280,7 +282,7 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--assets", "-a", nargs="+",
-        default=["BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP", "BNB-USDT-SWAP"],
+        default=list(TRADE_ASSETS),
         help="Assets to trade"
     )
     parser.add_argument(

@@ -43,6 +43,7 @@ except ImportError:
     ExactEvmScheme = None  # type: ignore[assignment,misc]
     x402ResourceServer = None  # type: ignore[assignment,misc]
 
+from .assets import spot_companions as _companions, trade_assets as _trade_assets
 from .auditor import run_audit, run_audit_from_data, AuditReport
 from .okx_cli import OkxCli, OkxCliConfig, OkxCliError
 from .exchange import create_exchange_client
@@ -270,9 +271,11 @@ if _STATIC_DIR.exists():
 
 
 # --- Trading Agent Setup ---
-_ALLOWED_ASSETS = ["BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP", "BNB-USDT-SWAP"]
+# W2/S9: the trade universe lives in src/assets.py — this module iterates
+# it, never re-declares it. (Kept as names for the call sites below.)
+_ALLOWED_ASSETS = _trade_assets()
 # Spot companions for delta-neutral funding-arb packages (explicit per D5).
-_ALLOWED_COMPANIONS = ["BTC-USDT", "ETH-USDT", "SOL-USDT", "BNB-USDT"]
+_ALLOWED_COMPANIONS = _companions()
 
 def _make_risk_gate(onchain_logger=None) -> RiskGate:
     return RiskGate(

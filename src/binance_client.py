@@ -373,9 +373,11 @@ class BinanceClient:
         }
 
     async def positions(self, inst_type: str | None = None) -> list[dict]:
-        common_swaps = ["BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP", "BNB-USDT-SWAP"]
+        # W2: probe the registry universe — a hardcoded list here would miss
+        # positions on any asset added to the registry (blind spot).
+        from .assets import trade_assets
         positions = []
-        for swap in common_swaps:
+        for swap in trade_assets():
             pos = await self.futures_position(_map_instrument(swap))
             if pos:
                 amt = float(pos.get("positionAmt", 0))
