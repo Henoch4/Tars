@@ -29,7 +29,9 @@ class TraderVote:
     cohort: str
     weight: float
     signal: Signal
-    vote_weight: float  # weight * confidence
+    vote_weight: float  # effective_weight * confidence
+    effective_weight: float = 0.0  # base weight, scaled down when quarantined
+    quarantined: bool = False
 
 
 @dataclass
@@ -48,6 +50,7 @@ class ConsensusResult:
     rationale: str
     behavior: ConsensusBehavior
     default_signal: Signal | None = None
+    quarantined: list[str] = field(default_factory=list)
 
 
 class ConsensusGate:
@@ -66,6 +69,18 @@ class ConsensusGate:
         thresholds: dict[str, float] | None = None,
         default_behavior: ConsensusBehavior = ConsensusBehavior.SKIP,
         default_trader_name: str | None = None,
+        # --- Divergence quarantine (resurrected ika BFT drop) ---
+        # Fault-detection principle, not network consensus: a trader that
+        # votes against the cohort majority for `divergence_window`
+        # consecutive observations, emits NaN confidences, or lock-steps
+        # another trader's votes gets its effective weight scaled by
+        # `quarantine_factor` (never excluded — a silenced trader can't be
+        # audited, and the cohort itself may be the wrong one). Release
+        # after `release_window` consecutive agreements. 0/False disables.
+        divergence_window: int = 8,
+        quarantine_factor: float = 0.25,
+        release_window: int = 8,
+        enable_quarantine: bool = True,
     ):
         """
         Args:
@@ -82,6 +97,15 @@ class ConsensusGate:
         }
         self.default_behavior = default_behavior
         self.default_trader_name = default_trader_name
+        self.divergence_window = divergence_window
+        self.quarantine_factor = quarantine_factor
+        self.release_window = release_window
+        self.enable_quarantine = enable_quarantine
+        # Per-trader health, keyed by trader name: against/agree streaks,
+        # quarantined flag + reason, last vote signature, NaN count.
+        # An observation = one compute_consensus call (≈ assets × cycles).
+        self._health: dict[str, dict] = {}
+        self._copy_streaks: dict[frozenset, int] = {}
     
     def get_threshold(self, cohort: str) -> float:
         return self.thresholds.get(cohort, 0.65)
@@ -109,7 +133,7 @@ class ConsensusGate:
             ConsensusResult with vote breakdown and decision
         """
         threshold = self.get_threshold(cohort)
-        
+
         # Collect votes from all traders in cohort
         votes: list[TraderVote] = []
         for trader in traders:
@@ -117,16 +141,35 @@ class ConsensusGate:
                 continue
             if trader.config.asset_class_cohort != cohort:
                 continue  # Trader not in this cohort
-            
+
             signal = trader.on_data(context)
-            vote_weight = trader.config.weight * (signal.confidence_bps / 10000.0)
-            
+            # NaN confidence poisons every downstream sum into NaN and
+            # silently kills the whole cohort's math — sanitize to 0 and
+            # count it as a degenerate event, never propagate it.
+            try:
+                confidence = float(signal.confidence_bps)
+            except (TypeError, ValueError):
+                confidence = float("nan")
+            nan_output = confidence != confidence  # NaN is the only != self
+            if nan_output:
+                confidence = 0.0
+                self._note_degenerate(trader.name, "nan_output")
+
+            health = self._health.get(trader.name)
+            quarantined = bool(health and health.get("quarantined"))
+            effective = (trader.config.weight * self.quarantine_factor
+                         if quarantined and self.enable_quarantine
+                         else trader.config.weight)
+            vote_weight = effective * (confidence / 10000.0)
+
             votes.append(TraderVote(
                 trader_name=trader.name,
                 cohort=cohort,
                 weight=trader.config.weight,
                 signal=signal,
                 vote_weight=vote_weight,
+                effective_weight=effective,
+                quarantined=quarantined and self.enable_quarantine,
             ))
         
         if not votes:
@@ -178,6 +221,9 @@ class ConsensusGate:
             winning_weight = 0.0
             winning_direction = "NEUTRAL"
         
+        # Divergence quarantine bookkeeping (fault detection, not ordering).
+        quarantined_now = self._update_health(votes, winning_direction)
+
         consensus_pct = winning_weight / total_weight if total_weight > 0 else 0.0
         consensus_reached = consensus_pct >= threshold
         
@@ -196,6 +242,8 @@ class ConsensusGate:
             f"LONG={long_weight:.2f} SHORT={short_weight:.2f} NEUTRAL={neutral_weight:.2f}. "
             f"Votes: {'; '.join(vote_details)}"
         )
+        if quarantined_now:
+            rationale += f" Quarantined: {', '.join(sorted(quarantined_now))}."
         
         # Determine behavior if no consensus
         behavior = ConsensusBehavior.SKIP
@@ -224,8 +272,131 @@ class ConsensusGate:
             rationale=rationale,
             behavior=behavior,
             default_signal=default_signal,
+            quarantined=sorted(quarantined_now),
         )
     
+    def _note_degenerate(self, trader_name: str, reason: str) -> None:
+        """Count a degenerate output (currently NaN confidence)."""
+        health = self._health.setdefault(
+            trader_name, {"against": 0, "agree": 0, "quarantined": False,
+                          "reason": None, "last_sig": None, "nan": 0})
+        health["nan"] += 1
+        if (self.enable_quarantine and self.divergence_window > 0
+                and health["nan"] >= self.divergence_window
+                and not health["quarantined"]):
+            self._quarantine(trader_name, reason)
+
+    def _quarantine(self, trader_name: str, reason: str) -> None:
+        """Down-weight a trader. Logs + counts; never excludes."""
+        import logging
+        health = self._health.setdefault(
+            trader_name, {"against": 0, "agree": 0, "quarantined": False,
+                          "reason": None, "last_sig": None, "nan": 0})
+        health["quarantined"] = True
+        health["reason"] = reason
+        health["agree"] = 0
+        logging.getLogger(__name__).warning(
+            f"Consensus quarantine: {trader_name} [{reason}] — effective "
+            f"weight x{self.quarantine_factor}")
+        try:
+            from .metrics import inc as _metrics_inc
+            _metrics_inc("tars_trader_quarantines_total",
+                         {"trader": trader_name, "reason": reason})
+        except Exception:
+            pass
+
+    def _release(self, trader_name: str) -> None:
+        import logging
+        health = self._health[trader_name]
+        health["quarantined"] = False
+        health["reason"] = None
+        health["against"] = 0
+        health["agree"] = 0
+        health["nan"] = 0
+        # Drop pair streaks containing this trader: without this, the
+        # still-counting streak would re-quarantine on the very next round
+        # and release could never stick.
+        for pair in list(self._copy_streaks):
+            if trader_name in pair:
+                del self._copy_streaks[pair]
+        logging.getLogger(__name__).warning(
+            f"Consensus release: {trader_name} voting with cohort again")
+
+    def _update_health(self, votes: list[TraderVote],
+                       winning_direction: SignalDirection) -> set[str]:
+        """Per-trader fault detection over this round's votes.
+
+        Tracks divergence streaks (voting against a decided majority),
+        lock-step copies (identical direction+confidence as another voter),
+        and releases on sustained agreement. All-NEUTRAL rounds count as
+        agreement for everyone — in a no-edge regime neutrality is the
+        honest vote, not a pathology. Returns currently-quarantined names.
+        """
+        if not self.enable_quarantine:
+            return set()
+        for v in votes:
+            h = self._health.setdefault(
+                v.trader_name, {"against": 0, "agree": 0, "quarantined": False,
+                                "reason": None, "last_sig": None, "nan": 0})
+            if winning_direction == "NEUTRAL":
+                h["agree"] += 1
+                h["against"] = 0
+            elif v.signal.direction == winning_direction:
+                h["agree"] += 1
+                h["against"] = 0
+            else:
+                h["against"] += 1
+                h["agree"] = 0
+            h["last_sig"] = (v.signal.direction, v.signal.confidence_bps)
+            if (not h["quarantined"] and self.divergence_window > 0
+                    and h["against"] >= self.divergence_window):
+                self._quarantine(v.trader_name, "diverged")
+            elif (h["quarantined"] and self.release_window > 0
+                    and h["agree"] >= self.release_window):
+                self._release(v.trader_name)
+
+        # Lock-step copies: identical (direction, confidence) as another
+        # voter for `divergence_window` straight observations. The lower
+        # base weight is quarantined (tiebreak: larger name) — one of the
+        # two is redundant or a copy bug. NEUTRAL pairs are exempt:
+        # joint abstention in a no-edge regime is the honest vote, not
+        # evidence of copying (directional conviction is what copies).
+        if self.divergence_window > 0:
+            by_sig: dict[tuple, list[TraderVote]] = {}
+            for v in votes:
+                if v.signal.direction == "NEUTRAL":
+                    continue
+                by_sig.setdefault(
+                    (v.signal.direction, v.signal.confidence_bps), []).append(v)
+            seen_pairs = set()
+            for sig_votes in by_sig.values():
+                names = sorted(v.trader_name for v in sig_votes)
+                for i in range(len(names)):
+                    for j in range(i + 1, len(names)):
+                        pair = frozenset((names[i], names[j]))
+                        seen_pairs.add(pair)
+                        self._copy_streaks[pair] = (
+                            self._copy_streaks.get(pair, 0) + 1)
+                        if self._copy_streaks[pair] >= self.divergence_window:
+                            weights = {v.trader_name: v.weight for v in votes
+                                       if v.trader_name in pair}
+                            lo, hi = min(pair), max(pair)
+                            # Lower base weight goes; ties quarantine the
+                            # larger name so the outcome is deterministic.
+                            target = lo if weights.get(lo, 0.0) < weights.get(hi, 0.0) else hi
+                            h = self._health[target]
+                            if not h["quarantined"]:
+                                self._quarantine(target, "lockstep")
+                            # Reset the streak: re-quarantine needs a fresh
+                            # full window of copying, or release can never
+                            # stick (the counter would re-fire next round).
+                            self._copy_streaks[pair] = 0
+            for pair in list(self._copy_streaks):
+                if pair not in seen_pairs:
+                    del self._copy_streaks[pair]
+
+        return {name for name, h in self._health.items() if h["quarantined"]}
+
     def compute_all_assets(
         self,
         contexts: dict[str, MarketContext],
