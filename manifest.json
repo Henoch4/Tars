@@ -5,6 +5,16 @@
   "category": "Finance",
   "endpoints": [
     {
+      "path": "/.well-known/agent-card.json",
+      "method": "GET",
+      "description": "A2A-compatible discovery card (I4): capabilities, tool catalog with"
+    },
+    {
+      "path": "/.well-known/x402",
+      "method": "GET",
+      "description": "x402 payment discovery (I4): which routes are paid and on what terms."
+    },
+    {
       "path": "/api/v1/curator-profile",
       "method": "GET",
       "description": "Read-only: active curator profile with the resolve knobs for the next"
@@ -98,5 +108,5 @@
     "onchain_logging"
   ],
   "chain": "xlayer",
-  "openapi_generated": "2026-09-04T09:58:05.481369Z"
+  "openapi_generated": "2026-09-04T10:05:57.960804Z"
 }

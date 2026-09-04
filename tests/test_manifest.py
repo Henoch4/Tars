@@ -47,3 +47,48 @@ class TestManifestDoctor:
         keys = {(e["path"], e["method"]) for e in _manifest()["endpoints"]}
         assert ("/api/v1/metrics", "GET") in keys
         assert ("/health", "GET") in keys
+
+
+class TestAgentDiscovery:
+    """I4: another AI agent can discover TARS, read the tool catalog and
+    payment posture, and find the entry points — without a human."""
+
+    def _client(self):
+        from fastapi.testclient import TestClient
+        import src.main as main
+        return TestClient(main.app)
+
+    def test_agent_card_shape(self):
+        card = self._client().get("/.well-known/agent-card.json")
+        assert card.status_code == 200
+        body = card.json()
+        for key in ("name", "description", "version", "chain",
+                    "capabilities", "entry_points", "payment", "tools"):
+            assert key in body, f"agent card missing {key}"
+        assert body["entry_points"]["hire"] == "/hire"
+        assert body["entry_points"]["docs"] == "/docs"
+
+    def test_agent_card_tools_match_manifest(self):
+        card = self._client().get("/.well-known/agent-card.json").json()
+        manifest_tools = {(e["path"], e["method"])
+                          for e in _manifest()["endpoints"]}
+        card_tools = {(t["path"], t["method"]) for t in card["tools"]}
+        assert card_tools == manifest_tools
+        assert all(t["description"] for t in card["tools"])
+
+    def test_agent_card_payment_honest_when_paywall_off(self):
+        # Phase 1: PAY_TO_ADDRESS unset -> must report disabled, never
+        # advertise fees that don't exist.
+        card = self._client().get("/.well-known/agent-card.json").json()
+        assert card["payment"]["protocol"] == "x402"
+        assert card["payment"]["enabled"] is False
+        assert all(t["paid"] is False for t in card["tools"])
+
+    def test_x402_well_known_shape(self):
+        body = self._client().get("/.well-known/x402")
+        assert body.status_code == 200
+        data = body.json()
+        assert data["protocol"] == "x402"
+        assert data["enabled"] is False
+        assert data["paid_routes"] == []
+        assert data["network"] == "eip155:196"

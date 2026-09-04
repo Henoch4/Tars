@@ -43,6 +43,52 @@
         }
       }
     },
+    "/.well-known/agent-card.json": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "A2A-compatible discovery card (I4): capabilities, tool catalog with",
+        "operationId": "agent_card",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/.well-known/x402": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "x402 payment discovery (I4): which routes are paid and on what terms.",
+        "operationId": "x402_well_known",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
         "tags": [

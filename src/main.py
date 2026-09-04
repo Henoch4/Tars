@@ -189,6 +189,70 @@ def manifest():
     return data
 
 
+def _paid_routes() -> dict:
+    """Paid-route table if the x402 paywall is live, else empty."""
+    return globals().get("_PAID_ROUTES", {})
+
+
+@app.get("/.well-known/agent-card.json")
+def agent_card():
+    """A2A-compatible discovery card (I4): capabilities, tool catalog with
+    per-tool descriptions, entry points, and payment posture — so another
+    AI agent can discover TARS, read what each tool does and costs, and
+    call /hire without a human. Built from manifest.json (single source);
+    pricing tiers land here with I3."""
+    if not _MANIFEST_PATH.exists():
+        raise HTTPException(500, "manifest.json missing from deployment")
+    manifest = json.loads(_MANIFEST_PATH.read_text())
+    paid = _paid_routes()
+    tools = []
+    for ep in manifest.get("endpoints", []):
+        tools.append({
+            "path": ep["path"],
+            "method": ep["method"],
+            "description": ep.get("description", ""),
+            "paid": ep["path"] in paid,
+        })
+    return {
+        "name": manifest.get("name"),
+        "description": manifest.get("description"),
+        "version": manifest.get("version"),
+        "chain": manifest.get("chain"),
+        "capabilities": manifest.get("capabilities", []),
+        "live_mode_enabled": ALLOW_LIVE,
+        "entry_points": {
+            "hire": "/hire",
+            "manifest": "/manifest",
+            "health": "/health",
+            "metrics": "/api/v1/metrics",
+            "docs": "/docs",
+            "openapi": "/openapi.json",
+        },
+        "payment": {
+            "protocol": "x402",
+            "enabled": bool(paid),
+            "well_known": "/.well-known/x402",
+        },
+        "tools": tools,
+    }
+
+
+@app.get("/.well-known/x402")
+def x402_well_known():
+    """x402 payment discovery (I4): which routes are paid and on what terms.
+    Honest when the paywall is inert (Phase 1: PAY_TO_ADDRESS unset) —
+    reports enabled=false instead of advertising fees that don't exist.
+    Per-route prices arrive with the I3 pricing tiers."""
+    paid = _paid_routes()
+    return {
+        "protocol": "x402",
+        "enabled": bool(paid),
+        "network": "eip155:196",
+        "pay_to": _pay_to or None,
+        "paid_routes": sorted(paid),
+    }
+
+
 @app.get("/health")
 def health():
     """Liveness + heartbeat (S2): distinguishes "no cycle ran" (heartbeat
