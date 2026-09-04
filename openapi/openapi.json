@@ -25,7 +25,7 @@
         "tags": [
           "System"
         ],
-        "summary": "manifest endpoint",
+        "summary": "Serve the ASP manifest for okx.ai agent registration.",
         "operationId": "manifest",
         "responses": {
           "200": {
@@ -48,8 +48,31 @@
         "tags": [
           "System"
         ],
-        "summary": "health endpoint",
+        "summary": "Liveness + heartbeat (S2): distinguishes \"no cycle ran\" (heartbeat",
         "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/metrics": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Structured metrics snapshot (S3): counters, gauges, heartbeat, and",
+        "operationId": "api_metrics",
         "responses": {
           "200": {
             "description": "Successful response"
@@ -71,7 +94,7 @@
         "tags": [
           "System"
         ],
-        "summary": "hire endpoint",
+        "summary": "Run a portfolio audit: analyze holdings, score risk, log the decision trail.",
         "operationId": "hire",
         "responses": {
           "200": {
@@ -94,81 +117,12 @@
         ]
       }
     },
-    "/": {
-      "get": {
-        "tags": [
-          "System"
-        ],
-        "summary": "unknown endpoint",
-        "operationId": "unknown",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Internal server error"
-          }
-        }
-      }
-    },
-    "/dashboard": {
-      "get": {
-        "tags": [
-          "System"
-        ],
-        "summary": "unknown endpoint",
-        "operationId": "unknown",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Internal server error"
-          }
-        }
-      }
-    },
-    "/depositor": {
-      "get": {
-        "tags": [
-          "System"
-        ],
-        "summary": "unknown endpoint",
-        "operationId": "unknown",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Internal server error"
-          }
-        }
-      }
-    },
     "/trade": {
       "post": {
         "tags": [
           "Trading"
         ],
-        "summary": "trade endpoint",
+        "summary": "Run a trading cycle: generate signals \u2192 pass risk checks \u2192 log onchain \u2192 execute.",
         "operationId": "trade",
         "responses": {
           "200": {
@@ -242,7 +196,7 @@
         "tags": [
           "System"
         ],
-        "summary": "Fetch live positions from OKX. Returns per-asset position data\n    including side, size, entry price, unrealized P&L, and leverage.",
+        "summary": "Fetch live positions from OKX. Returns per-asset position data",
         "operationId": "positions",
         "responses": {
           "200": {
@@ -265,7 +219,7 @@
         "tags": [
           "System"
         ],
-        "summary": "Return current funding rates and arb package status for all assets.\n    Funding rates are fetched live from the market (cached for 60s) and\n    package state comes from the multi-leg manager's open-package tracking.",
+        "summary": "Return current funding rates and arb package status for all assets.",
         "operationId": "funding_arb_status",
         "responses": {
           "200": {
@@ -288,7 +242,7 @@
         "tags": [
           "System"
         ],
-        "summary": "Read-only: the strategy-validation pipeline gate (walk-forward + PBO +\n    Calmar). When VALIDATION_RETURNS_PATH points at a CSV of historical returns\n    (columns: in_sample, out_of_sample), the real validation_report() is run and\n    its cleared_for_paper_trading boolean is returned. Without data, the gate\n    reports an honest null \u00e2\u20ac\u201d an unvalidated strategy is not the same as a failed\n    one, so it does not block the demo. CI blocks the deploy only when the gate\n    is configured AND clears=False (see scripts/check_validation_gate.py).",
+        "summary": "Read-only: the strategy-validation pipeline gate (walk-forward + PBO +",
         "operationId": "validation_status",
         "responses": {
           "200": {
@@ -311,7 +265,7 @@
         "tags": [
           "System"
         ],
-        "summary": "Read-only: active curator profile with the resolve knobs for the next\n    cycle (profile defaults, overridden per-knob by CURATOR_* env vars).",
+        "summary": "Read-only: active curator profile with the resolve knobs for the next",
         "operationId": "curator_profile",
         "responses": {
           "200": {
@@ -334,7 +288,7 @@
         "tags": [
           "Trading"
         ],
-        "summary": "Current kill switch status. Checks the off-chain gate; also checks the\n    onchain contract if configured, since either layer can independently halt\n    trading (see TradeAuditTrail.sol activateKillSwitch).",
+        "summary": "Current kill switch status. Checks the off-chain gate; also checks the",
         "operationId": "kill_switch_status",
         "responses": {
           "200": {
@@ -357,7 +311,7 @@
         "tags": [
           "Trading"
         ],
-        "summary": "activate_kill_switch endpoint",
+        "summary": "Halt all trading immediately. Always activates the off-chain gate;",
         "operationId": "activate_kill_switch",
         "responses": {
           "200": {
@@ -385,7 +339,7 @@
         "tags": [
           "Trading"
         ],
-        "summary": "deactivate_kill_switch endpoint",
+        "summary": "Resume trading. A deliberate, separate call \u2014 this is never triggered",
         "operationId": "deactivate_kill_switch",
         "responses": {
           "200": {
@@ -413,7 +367,7 @@
         "tags": [
           "Vault"
         ],
-        "summary": "vault_reconciliation endpoint",
+        "summary": "Operator-only reconciliation snapshot: vault totalAssets vs OKX balance.",
         "operationId": "vault_reconciliation",
         "responses": {
           "200": {
@@ -436,7 +390,7 @@
         "tags": [
           "Vault"
         ],
-        "summary": "vault_attest endpoint",
+        "summary": "Operator triggers attestTotalAssets on the vault contract.",
         "operationId": "vault_attest",
         "responses": {
           "200": {

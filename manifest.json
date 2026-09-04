@@ -5,94 +5,84 @@
   "category": "Finance",
   "endpoints": [
     {
-      "path": "/",
-      "method": "GET",
-      "description": "unknown endpoint"
-    },
-    {
       "path": "/api/v1/curator-profile",
       "method": "GET",
-      "description": "Read-only: active curator profile with the resolve knobs for the next\n    cycle (profile defaults, overridden per-knob by CURATOR_* env vars)."
+      "description": "Read-only: active curator profile with the resolve knobs for the next"
+    },
+    {
+      "path": "/api/v1/metrics",
+      "method": "GET",
+      "description": "Structured metrics snapshot (S3): counters, gauges, heartbeat, and"
     },
     {
       "path": "/api/v1/validation",
       "method": "GET",
-      "description": "Read-only: the strategy-validation pipeline gate (walk-forward + PBO +\n    Calmar). When VALIDATION_RETURNS_PATH points at a CSV of historical returns\n    (columns: in_sample, out_of_sample), the real validation_report() is run and\n    its cleared_for_paper_trading boolean is returned. Without data, the gate\n    reports an honest null \u00e2\u20ac\u201d an unvalidated strategy is not the same as a failed\n    one, so it does not block the demo. CI blocks the deploy only when the gate\n    is configured AND clears=False (see scripts/check_validation_gate.py)."
+      "description": "Read-only: the strategy-validation pipeline gate (walk-forward + PBO +"
     },
     {
       "path": "/api/v1/vault/attest",
       "method": "POST",
-      "description": "vault_attest endpoint"
+      "description": "Operator triggers attestTotalAssets on the vault contract."
     },
     {
       "path": "/api/v1/vault/reconciliation",
       "method": "GET",
-      "description": "vault_reconciliation endpoint"
+      "description": "Operator-only reconciliation snapshot: vault totalAssets vs OKX balance."
     },
     {
       "path": "/audit-stats",
       "method": "GET",
-      "description": "Query onchain audit trail for decisions and executions"
-    },
-    {
-      "path": "/dashboard",
-      "method": "GET",
-      "description": "unknown endpoint"
-    },
-    {
-      "path": "/depositor",
-      "method": "GET",
-      "description": "unknown endpoint"
+      "description": "Query onchain audit trail for recent decisions and executions."
     },
     {
       "path": "/funding-arb-status",
       "method": "GET",
-      "description": "Return current funding rates and arb package status for all assets.\n    Funding rates are fetched live from the market (cached for 60s) and\n    package state comes from the multi-leg manager's open-package tracking."
+      "description": "Return current funding rates and arb package status for all assets."
     },
     {
       "path": "/health",
       "method": "GET",
-      "description": "Health check"
+      "description": "Liveness + heartbeat (S2): distinguishes \"no cycle ran\" (heartbeat"
     },
     {
       "path": "/hire",
       "method": "POST",
-      "description": "Run a trading cycle: analyze market \u00e2\u2020\u2019 generate signal \u00e2\u2020\u2019 pass risk checks \u00e2\u2020\u2019 execute \u00e2\u2020\u2019 log onchain"
+      "description": "Run a portfolio audit: analyze holdings, score risk, log the decision trail."
     },
     {
       "path": "/kill-switch",
       "method": "GET",
-      "description": "Current kill switch status. Checks the off-chain gate; also checks the\n    onchain contract if configured, since either layer can independently halt\n    trading (see TradeAuditTrail.sol activateKillSwitch)."
+      "description": "Current kill switch status. Checks the off-chain gate; also checks the"
     },
     {
       "path": "/kill-switch/activate",
       "method": "POST",
-      "description": "activate_kill_switch endpoint"
+      "description": "Halt all trading immediately. Always activates the off-chain gate;"
     },
     {
       "path": "/kill-switch/deactivate",
       "method": "POST",
-      "description": "deactivate_kill_switch endpoint"
+      "description": "Resume trading. A deliberate, separate call \u2014 this is never triggered"
     },
     {
       "path": "/manifest",
       "method": "GET",
-      "description": "Return the ASP manifest for okx.ai registration"
+      "description": "Serve the ASP manifest for okx.ai agent registration."
     },
     {
       "path": "/positions",
       "method": "GET",
-      "description": "Fetch live positions from OKX. Returns per-asset position data\n    including side, size, entry price, unrealized P&L, and leverage."
+      "description": "Fetch live positions from OKX. Returns per-asset position data"
     },
     {
       "path": "/risk-stats",
       "method": "GET",
-      "description": "Current daily risk statistics and kill-switch status"
+      "description": "Get current daily risk statistics for the agent."
     },
     {
       "path": "/trade",
       "method": "POST",
-      "description": "trade endpoint"
+      "description": "Run a trading cycle: generate signals \u2192 pass risk checks \u2192 log onchain \u2192 execute."
     }
   ],
   "permissions": [
@@ -108,5 +98,5 @@
     "onchain_logging"
   ],
   "chain": "xlayer",
-  "openapi_generated": "2026-08-30T23:18:51.197151Z"
+  "openapi_generated": "2026-09-04T09:58:05.481369Z"
 }

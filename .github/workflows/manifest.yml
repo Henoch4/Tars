@@ -1,0 +1,22 @@
+name: manifest
+
+on:
+  push:
+    branches: [main, master]
+    paths: ["src/main.py", "manifest.json", "scripts/generate_openapi.py", "scripts/check_manifest.py"]
+  pull_request:
+    paths: ["src/main.py", "manifest.json", "scripts/generate_openapi.py", "scripts/check_manifest.py"]
+  workflow_dispatch:
+
+jobs:
+  doctor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Manifest doctor (schema + route drift)
+        run: python scripts/check_manifest.py

@@ -181,6 +181,7 @@ class HireRequest(BaseModel):
 
 @app.get("/manifest")
 def manifest():
+    """Serve the ASP manifest for okx.ai agent registration."""
     if not _MANIFEST_PATH.exists():
         raise HTTPException(500, "manifest.json missing from deployment")
     data = json.loads(_MANIFEST_PATH.read_text())
@@ -215,6 +216,7 @@ def api_metrics():
 
 @app.post("/hire")
 async def hire(req: HireRequest):
+    """Run a portfolio audit: analyze holdings, score risk, log the decision trail."""
     if req.profile_mode == "live" and not ALLOW_LIVE:
         raise HTTPException(
             403,

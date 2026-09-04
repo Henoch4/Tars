@@ -8,13 +8,15 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 MANIFEST_PATH = REPO / "manifest.json"
 OPENAPI_DIR = REPO / "openapi"
 OPENAPI_DIR.mkdir(exist_ok=True)
+
+sys.path.insert(0, str(REPO))
 
 
 def load_manifest() -> dict:
@@ -25,45 +27,46 @@ def load_manifest() -> dict:
 def save_manifest(manifest: dict) -> None:
     with open(MANIFEST_PATH, "w") as f:
         json.dump(manifest, f, indent=2)
+        f.write("\n")
 
 
 def extract_routes_from_main() -> list[dict]:
-    """Extract all FastAPI routes from main.py."""
-    main_path = REPO / "src" / "main.py"
-    if not main_path.exists():
-        return []
-    
-    content = main_path.read_text()
+    """Extract routes from the live FastAPI app object (I7).
+
+    Reads app.routes directly — the manifest can never drift from what
+    the server actually serves, unlike regex scraping of source text.
+    Descriptions come from endpoint docstrings (first line); routes
+    without a usable docstring are reported, not papered over.
+    """
+    from src.main import app
+
     routes = []
-    
-    # Simple regex-based extraction of @router.get/@app.get etc.
-    import re
-    
-    # Match route decorators
-    pattern = r'@(?:app|router|vault_router)\.(get|post|put|delete|patch)\(["\']([^"\']+)["\']'
-    matches = re.findall(pattern, content)
-    
-    for method, path in matches:
-        # Find the function name and docstring
-        func_pattern = rf'@(?:app|router|vault_router)\.{method}\(["\']{re.escape(path)}["\'][^)]*\)\s*\n(?:async\s+)?def\s+(\w+)'
-        func_match = re.search(func_pattern, content)
-        func_name = func_match.group(1) if func_match else "unknown"
-        
-        # Extract description from docstring
-        desc = ""
-        doc_pattern = rf'(?:async\s+)?def\s+{func_name}\s*\([^)]*\)\s*:\s*\n\s*"""([^"]+)"""'
-        doc_match = re.search(doc_pattern, content)
-        if doc_match:
-            desc = doc_match.group(1).strip()
-        
-        routes.append({
-            "path": path,
-            "method": method.upper(),
-            "description": desc or f"{func_name} endpoint",
-            "function": func_name,
-        })
-    
-    return routes
+    for route in app.routes:
+        methods = sorted(getattr(route, "methods", None) or ())
+        if not methods or getattr(route, "include_in_schema", True) is False:
+            continue
+        endpoint = getattr(route, "endpoint", None)
+        func_name = getattr(endpoint, "__name__", "unknown")
+        doc = (getattr(endpoint, "__doc__", "") or "").strip()
+        description = doc.split("\n")[0].strip() if doc else ""
+        for method in methods:
+            if method == "HEAD":
+                continue
+            routes.append({
+                "path": route.path,
+                "method": method,
+                "description": description,
+                "function": func_name,
+            })
+    # De-duplicate (same path+method registered twice keeps first).
+    seen = set()
+    unique = []
+    for r in routes:
+        key = (r["path"], r["method"])
+        if key not in seen:
+            seen.add(key)
+            unique.append(r)
+    return unique
 
 
 def generate_openapi_spec(manifest: dict, routes: list[dict]) -> dict:
@@ -138,29 +141,29 @@ def generate_openapi_spec(manifest: dict, routes: list[dict]) -> dict:
 
 
 def sync_manifest_endpoints(manifest: dict, routes: list[dict]) -> dict:
-    """Sync manifest endpoints with actual routes."""
-    # Keep existing manifest endpoints but add missing ones
-    existing_paths = {(e["path"], e["method"]) for e in manifest.get("endpoints", [])}
-    
-    for route in routes:
-        key = (route["path"], route["method"])
-        if key not in existing_paths:
-            manifest.setdefault("endpoints", []).append({
+    """Full sync of manifest endpoints with actual routes (I7).
+
+    Endpoints are GENERATED, not curated: missing routes are added,
+    removed routes are dropped, and descriptions refresh from docstrings.
+    Anything else (name, capabilities, permissions) stays hand-maintained.
+    """
+    manifest["endpoints"] = sorted(
+        [
+            {
                 "path": route["path"],
                 "method": route["method"],
-                "description": route["description"],
-            })
-            existing_paths.add(key)
-    
-    # Sort endpoints for consistent ordering
-    manifest["endpoints"] = sorted(
-        manifest.get("endpoints", []),
-        key=lambda x: (x["path"], x["method"])
+                "description": route["description"] or f"{route['function']} endpoint",
+            }
+            for route in routes
+        ],
+        key=lambda x: (x["path"], x["method"]),
     )
-    
+
     # Update version timestamp
-    manifest["openapi_generated"] = datetime.utcnow().isoformat() + "Z"
-    
+    manifest["openapi_generated"] = (
+        datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    )
+
     return manifest
 
 
