@@ -180,6 +180,9 @@ class TestRiskAndKillSwitch:
 class TestMlBridge:
     def test_assets_stripped_reasons_summed(self):
         from src.signals import ML_DEGRADATIONS
+        # Global counter: isolate from degradations other tests recorded
+        # (e.g. real inference attempts in cycle tests fail closed here).
+        ML_DEGRADATIONS.clear()
         ML_DEGRADATIONS["BTC-USDT-SWAP:ml_unavailable:RuntimeError"] = 2
         ML_DEGRADATIONS["ETH-USDT-SWAP:ml_unavailable:RuntimeError"] = 3
         ML_DEGRADATIONS["SOL-USDT-SWAP:ml_missing_prices"] = 1

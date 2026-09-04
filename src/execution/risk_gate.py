@@ -164,6 +164,16 @@ class RiskCheckResult:
     reason: str
 
 
+@dataclass
+class RiskScore:
+    """Graded, ADVISORY risk read (I8). Never gates: the binary check_order
+    verdict is the only hard stop. 0.0 = safe, 1.0 = maximum risk."""
+
+    score: float
+    recommendation: str  # PROCEED (<0.4) / WAIT (<0.7) / BLOCK (>=0.7)
+    reasons: list
+
+
 
 class RiskGate:
     """
@@ -194,6 +204,17 @@ class RiskGate:
         # trust. A missing OR stale price rejects the order — there is no
         # "skip the freshness check" path, only a configurable threshold.
         max_price_age_seconds: float = 60.0,
+        # --- I8 journal-driven dynamic risk (cooldown + trailing drawdown) ---
+        # Cooldown: block new entries for `loss_cooldown_minutes` after any
+        # reported loss (revenge-trading guard). 0 disables. Unwind orders
+        # are exempt — flattening exposure must never wait out a timer.
+        # Drawdown: when the trailing `drawdown_window_days` closed-day loss
+        # reaches `drawdown_loss_mult` x the daily limit, trip the kill
+        # switch (multi-day bleeding the intraday limit misses). Either 0
+        # disables. Both derive from reported losses, never from prices.
+        loss_cooldown_minutes: float = 30.0,
+        drawdown_window_days: int = 3,
+        drawdown_loss_mult: float = 2.0,
         # --- Regime throttle (high-volatility governor) ---
         # Borrowed from trading engines that auto-scale exposure ahead of a
         # crash instead of waiting for the kill switch. When recent price
@@ -203,7 +224,7 @@ class RiskGate:
         # order without stopping the strategy, and the kill switch remains the
         # only full-halt control. Deterministic and testable — no ML, no state
         # beyond the ring buffer below.
-         regime_throttle: bool = False,
+        regime_throttle: bool = False,
          regime_band_pct: float = 5.0,
          regime_size_scale: float = 0.8,
          regime_buffer: int = 20,
@@ -242,6 +263,13 @@ class RiskGate:
         from ..assets import trade_assets
         self.allowed_assets = allowed_assets or trade_assets()
         self.allowed_companions = allowed_companions or []
+        self.loss_cooldown_minutes = loss_cooldown_minutes
+        self.drawdown_window_days = drawdown_window_days
+        self.drawdown_loss_mult = drawdown_loss_mult
+        # Timestamp of the most recent reported loss (any amount > 0).
+        # Restored from the durable store so a restart does not silently
+        # clear an active cooldown (same durability argument as D2).
+        self._last_loss_ts: float | None = None
         self.regime_throttle = regime_throttle
         self.regime_band_pct = regime_band_pct
         self.regime_size_scale = regime_size_scale
@@ -294,6 +322,9 @@ class RiskGate:
         # recovers yesterday's (and the current day's, if we crashed mid-day)
         # accumulators.
         self._rehydrate_store()
+        restored_cd = self._counters.get("__cooldown__", "timestamp", None)
+        if isinstance(restored_cd, (int, float)) and restored_cd > 0:
+            self._last_loss_ts = float(restored_cd)
         # Then reconcile against the contract if one is wired up: the onchain
         # kill switch is authoritative and must be mirrored locally even when
         # the local flag was (necessarily, at cold start) unset. See
@@ -521,6 +552,116 @@ class RiskGate:
         """
         return inst_id in self._allowed_set
 
+    def cooldown_remaining_s(self) -> float:
+        """Seconds left on the post-loss entry cooldown (0 = none active)."""
+        if self.loss_cooldown_minutes <= 0 or not self._last_loss_ts:
+            return 0.0
+        return max(0.0, self.loss_cooldown_minutes * 60.0
+                   - (time.time() - self._last_loss_ts))
+
+    def trailing_loss_stats(self, agent_id: str,
+                            window_days: int | None = None) -> dict:
+        """Trailing closed-day loss, DERIVED from durable day entries (S9).
+
+        Sums this agent's day-keyed losses over the trailing window,
+        excluding today (still open), plus the consecutive-loss-day streak
+        counting back from yesterday. Days with no entry contribute 0 AND
+        break the streak (unknown is not evidence of safety). Pure read —
+        never mutates counters or trips anything; tripping lives in
+        check_order so there is exactly one enforcement point.
+        """
+        window = window_days or self.drawdown_window_days
+        prefix = f"{agent_id}:"
+        today = self.current_day_key(agent_id)
+        by_day: dict[str, float] = {}
+        # Durable store is authoritative when enabled; in-memory covers the
+        # disabled-store (test) path. Store wins on overlap (write-through).
+        for key, val in list(self._daily_loss.items()):
+            if isinstance(key, str) and key.startswith(prefix):
+                by_day[key] = float(val)
+        if self._counters.enabled:
+            for key in self._counters.keys_with_prefix(prefix):
+                day = key[len(prefix):]
+                if len(day) == 10 and day[4] == "-" and day[7] == "-":
+                    try:
+                        by_day[key] = float(
+                            self._counters.snapshot(key).get("loss", 0.0))
+                    except (ValueError, TypeError):
+                        continue
+        days = sorted(d for d in by_day if d != today)[-max(window, 0):]
+        window_loss = sum(by_day[d] for d in days)
+        streak = 0
+        for d in sorted(by_day):
+            if d >= today:
+                continue
+            streak = streak + 1 if by_day[d] > 0 else 0
+        return {"window_loss": window_loss,
+                "loss_days": sum(1 for d in days if by_day[d] > 0),
+                "streak_days": streak,
+                "window_days": window}
+
+    def score_order(self, order: OrderRequest,
+                    agent_id: str = "default") -> RiskScore:
+        """Graded advisory read over gate state + declared order fields.
+
+        Weights (renormalized over available inputs): daily loss 30%,
+        trailing drawdown 25%, cooldown 15%, declared leverage 15%,
+        confidence headroom 15% (SAP's collateral slot, honestly
+        substituted — we hold no collateral data, so distance above the
+        confidence floor stands in). Hard halt forces BLOCK.
+        """
+        reasons: list[str] = []
+        if self._kill_switch_active:
+            return RiskScore(score=1.0, recommendation="BLOCK",
+                             reasons=["kill switch active"])
+        lim = self.max_daily_loss_usd if self.max_daily_loss_usd > 0 else 1.0
+        today_loss = self._daily_loss.get(self.current_day_key(agent_id), 0.0)
+        loss_f = min(max(today_loss / lim, 0.0), 1.0)
+        if loss_f > 0:
+            reasons.append(f"daily loss ${today_loss:.2f} of ${lim:.2f} limit")
+
+        trailing = self.trailing_loss_stats(agent_id)
+        ceiling = self.drawdown_loss_mult * self.max_daily_loss_usd
+        if self.drawdown_window_days > 0 and ceiling > 0:
+            trail_f = min(max(trailing["window_loss"] / ceiling, 0.0), 1.0)
+        else:
+            trail_f = 0.0
+        if trail_f > 0:
+            reasons.append(
+                f"trailing {trailing['window_days']}d loss "
+                f"${trailing['window_loss']:.2f} "
+                f"({trailing['streak_days']}d streak)")
+
+        cool_f = 1.0 if self.cooldown_remaining_s() > 0 else 0.0
+        if cool_f:
+            reasons.append("post-loss cooldown active")
+
+        if order.leverage is not None and self.max_leverage > 0:
+            lev_f = min(max(order.leverage / self.max_leverage, 0.0), 1.0)
+            if lev_f > 0:
+                reasons.append(
+                    f"declared leverage {order.leverage}x of {self.max_leverage}x cap")
+        else:
+            lev_f = 0.0
+            reasons.append("leverage undeclared")
+
+        span = 10000 - self.min_confidence_bps
+        if order.confidence_bps is not None and span > 0:
+            conf_f = min(max(1.0 - (order.confidence_bps
+                                    - self.min_confidence_bps) / span, 0.0), 1.0)
+            if conf_f > 0:
+                reasons.append("confidence near floor")
+        else:
+            conf_f = 0.5
+            reasons.append("confidence undeclared")
+
+        score = (0.30 * loss_f + 0.25 * trail_f + 0.15 * cool_f
+                 + 0.15 * lev_f + 0.15 * conf_f)
+        recommendation = ("BLOCK" if score >= 0.7
+                          else "WAIT" if score >= 0.4 else "PROCEED")
+        return RiskScore(score=round(score, 4), recommendation=recommendation,
+                         reasons=reasons)
+
     def check_order(
         self,
         order: OrderRequest,
@@ -567,6 +708,53 @@ class RiskGate:
                 "switch is active (%s) — closing leg required to flatten exposure.",
                 order.client_oid, order.inst_id, self._kill_switch_reason,
             )
+
+        # 0b. Post-loss cooldown (I8) — new entries wait out the timer so a
+        # losing cycle cannot revenge-trade the next one. Unwind exempt:
+        # flattening exposure must never wait. Gauge cleared when expired.
+        from ..metrics import set_gauge as _metrics_gauge
+        remaining = self.cooldown_remaining_s()
+        _metrics_gauge("tars_cooldown_active", 1.0 if remaining > 0 else 0.0)
+        if remaining > 0 and not unwind:
+            from ..metrics import inc as _metrics_inc
+            _metrics_inc("tars_risk_rejections_total", {"code": "COOLDOWN_ACTIVE"})
+            return RiskCheckResult(
+                approved=False,
+                code="COOLDOWN_ACTIVE",
+                reason=(f"Post-loss cooldown active: "
+                        f"{remaining:.0f}s remaining — new entries blocked, "
+                        f"unwinds exempt."),
+            )
+
+        # 0c. Trailing drawdown (I8) — multi-day bleeding the intraday limit
+        # misses trips the kill switch like a daily breach. Evaluated here
+        # (not only in report_loss) so a bleed completed yesterday trips
+        # today's first order, including after a restart. Unwind exempt
+        # from the REJECT below via the same admission, but the trip itself
+        # always fires — the halt is the protection.
+        if (self.drawdown_window_days > 0 and self.drawdown_loss_mult > 0
+                and self.max_daily_loss_usd > 0):
+            stats = self.trailing_loss_stats(agent_id)
+            ceiling = self.drawdown_loss_mult * self.max_daily_loss_usd
+            if stats["window_loss"] >= ceiling and not self._kill_switch_active:
+                self.activate_kill_switch(
+                    reason=(f"Auto-triggered: trailing "
+                            f"{stats['window_days']}d loss "
+                            f"${stats['window_loss']:.2f} reached "
+                            f"{self.drawdown_loss_mult}x daily limit "
+                            f"(${ceiling:.2f})")
+                )
+            if stats["window_loss"] >= ceiling and not unwind:
+                from ..metrics import inc as _metrics_inc
+                _metrics_inc("tars_risk_rejections_total",
+                             {"code": "DRAWDOWN_BREACH"})
+                return RiskCheckResult(
+                    approved=False,
+                    code="DRAWDOWN_BREACH",
+                    reason=(f"Trailing {stats['window_days']}d loss "
+                            f"${stats['window_loss']:.2f} at drawdown bar "
+                            f"(${ceiling:.2f}) — kill switch tripped."),
+                )
 
         # 1. Asset allowlist — exact match OR same base asset (the spot leg
         #    of a funding-arb package, e.g. BTC-USDT when BTC-USDT-SWAP is
@@ -897,6 +1085,14 @@ class RiskGate:
         loss = self._daily_loss.get(key, 0.0) + loss_usd
         self._daily_loss[key] = loss
         self._counters.increment(key, "loss", loss_usd)
+        if loss_usd > 0:
+            # I8 cooldown anchor: any reported loss (re)starts the entry
+            # timer. Persisted like the kill switch so a restart does not
+            # silently clear an active cooldown (D2 durability argument).
+            self._last_loss_ts = time.time()
+            self._counters.set("__cooldown__", timestamp=self._last_loss_ts)
+            from ..metrics import set_gauge as _metrics_gauge
+            _metrics_gauge("tars_cooldown_active", 1.0)
         if loss >= self.max_daily_loss_usd and not self._kill_switch_active:
             self.activate_kill_switch(
                 reason=(
@@ -944,6 +1140,9 @@ class RiskGate:
             "regime_throttle": self.regime_throttle,
             "regime_band_pct": self.regime_band_pct,
             "regime_size_scale": self.regime_size_scale,
+            "loss_cooldown_minutes": self.loss_cooldown_minutes,
+            "drawdown_window_days": self.drawdown_window_days,
+            "drawdown_loss_mult": self.drawdown_loss_mult,
         }
         serialized = json.dumps(params, sort_keys=True)
         return hashlib.sha256(serialized.encode()).hexdigest()

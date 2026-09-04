@@ -1168,6 +1168,22 @@ class AutonomousTradingAgent:
             logger.info(f"No order for {asset} (no tradeable signal or already positioned)")
             return out
 
+        # I8 graded read: advisory only, logged + gauged, never gating.
+        # Funding-arb packages are deliberately unscored — two-leg economics
+        # don't fit a single-order score, and a misleading number is worse
+        # than none.
+        try:
+            risk_score = self.risk_gate.score_order(order, self.agent_id)
+            from .metrics import set_gauge as _metrics_gauge
+            _metrics_gauge("tars_risk_score", risk_score.score)
+            logger.info(
+                f"Risk score for {asset}: {risk_score.score:.2f} "
+                f"({risk_score.recommendation}) — "
+                f"{'; '.join(risk_score.reasons) or 'no concerns'}"
+            )
+        except Exception as e:  # noqa: BLE001 — scoring must never block trading
+            logger.warning(f"Risk scoring failed for {asset}: {e}")
+
         asset_prices = self._extract_prices(md)
         current_price = asset_prices[-1] if asset_prices else None
 

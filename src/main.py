@@ -501,6 +501,9 @@ def _make_risk_gate(onchain_logger=None) -> RiskGate:
         max_leverage=float(os.getenv("MAX_LEVERAGE", "5.0")),
         min_confidence_bps=int(os.getenv("MIN_CONFIDENCE_BPS", "7000")),
         max_price_age_seconds=float(os.getenv("MAX_PRICE_AGE_SECONDS", "60")),
+        loss_cooldown_minutes=float(os.getenv("LOSS_COOLDOWN_MINUTES", "30")),
+        drawdown_window_days=int(os.getenv("DRAWDOWN_WINDOW_DAYS", "3")),
+        drawdown_loss_mult=float(os.getenv("DRAWDOWN_LOSS_MULT", "2.0")),
         allowed_assets=_ALLOWED_ASSETS,
         allowed_companions=_ALLOWED_COMPANIONS,
         regime_throttle=os.getenv("REGIME_THROTTLE", "false").lower() in ("1", "true", "yes"),
@@ -678,6 +681,7 @@ async def audit_stats(days: int = 7):
 async def risk_stats():
     """Get current daily risk statistics for the agent."""
     stats = _risk_gate.get_daily_stats(_trading_agent.agent_id)
+    trailing = _risk_gate.trailing_loss_stats(_trading_agent.agent_id)
     # Include per-asset regime status if throttle is enabled
     regime_data = {}
     if _risk_gate.regime_throttle:
@@ -693,6 +697,11 @@ async def risk_stats():
         "max_daily_trades": _risk_gate.max_daily_trades,
         "max_leverage": _risk_gate.max_leverage,
         "min_confidence_bps": _risk_gate.min_confidence_bps,
+        "loss_cooldown_minutes": _risk_gate.loss_cooldown_minutes,
+        "cooldown_remaining_s": round(_risk_gate.cooldown_remaining_s(), 1),
+        "trailing_drawdown": trailing,
+        "drawdown_bar_usd": (_risk_gate.drawdown_loss_mult
+                             * _risk_gate.max_daily_loss_usd),
         "kill_switch": _risk_gate.kill_switch_status(),
         "dry_run": _dry_run,
         "regime": regime_data,
