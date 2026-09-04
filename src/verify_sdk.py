@@ -104,7 +104,6 @@ class VerifyClient:
                         {"indexed": True, "name": "agent", "type": "address"},
                         {"name": "asset", "type": "string"},
                         {"name": "signal", "type": "string"},
-                        {"name": "strategy", "type": "string"},
                         {"name": "confidence", "type": "int256"},
                         {"name": "sizeUsd", "type": "uint256"},
                         {"name": "riskHash", "type": "bytes32"},
@@ -234,7 +233,13 @@ class VerifyClient:
         # Verify signature
         from .audit_logger import OnchainLogger
         
-        # Reconstruct payload for verification
+        # Reconstruct payload for verification. packageId comes from the
+        # chain event as raw bytes32 (or hex) — canonical_decision_hash
+        # packs it directly; a missing packageId hashes as bytes32(0),
+        # which is exactly the single-leg layout the contract checked.
+        # risk_hash likewise accepts bytes or hex; empty/missing fails
+        # closed (signature_valid stays False) instead of verifying a
+        # zeroed digest.
         payload = GenericDecisionPayload(
             decision_id=decision["decision_id"],
             agent_id=decision["agent"],
@@ -247,14 +252,26 @@ class VerifyClient:
             },
             confidence_bps=decision.get("confidence_bps", decision.get("confidence", 0)),
             rationale=decision.get("strategy", ""),
-            risk_context_hash=decision.get("risk_hash", ""),
+            risk_context_hash=decision.get("risk_hash", decision.get("riskHash", "")),
             timestamp=decision.get("timestamp", 0),
+            metadata={"package_id": decision.get("packageId", decision.get("package_id"))},
         )
         
+        # The canonical digest needs every signed field. Event-sourced
+        # decisions lack entry_price/strategy/signature (the contract event
+        # doesn't emit them) — verifying a partial reconstruction would
+        # check the WRONG digest, so name the missing fields and refuse
+        # instead of failing silently (honesty invariant, S8).
+        has_risk = bool(decision.get("risk_hash", decision.get("riskHash")))
+        missing = [f for f in ("signature", "entry_price", "strategy")
+                   if not decision.get(f)]
+        if not has_risk:
+            missing.append("risk_hash")
         # Verify EIP-191 signature
         signature_valid = False
         agent_verified = False
-        if decision.get("signature"):
+        errors: list[str] = [f"cannot verify: missing {f}" for f in missing]
+        if not missing:
             try:
                 sig = decision["signature"]
                 if isinstance(sig, str) and sig.startswith("0x"):
@@ -275,13 +292,13 @@ class VerifyClient:
         
         return VerificationResult(
             decision_id=decision_id,
-            valid=signature_valid and agent_verified,
+            valid=signature_valid and agent_verified and not errors,
             payload=payload.__dict__,
             signature_valid=signature_valid,
             agent_verified=agent_verified,
             tx_confirmed=True,  # If we got it from contract, it's confirmed
             block_number=None,  # Would need event log to get this
-            errors=[],
+            errors=errors,
         )
     
     def get_recent_decisions(self, count: int = 20) -> list[dict]:

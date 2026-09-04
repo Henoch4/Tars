@@ -26,6 +26,8 @@ from web3 import Web3 as Web
 from eth_account import Account
 from eth_account.messages import encode_defunct
 
+from .governance import canonical_decision_hash
+
 logger = logging.getLogger(__name__)
 
 # Gas safety bounds. estimate_gas is capped so a pathological revert estimate
@@ -425,41 +427,23 @@ class OnchainLogger:
     def _compute_payload_hash(self, payload: DecisionPayload) -> bytes:
         """Compute the keccak256 hash of the decision payload (what the agent signs).
 
-        The contract computes: keccak256(abi.encodePacked(decisionId, packageId,
-        agent, asset, signal, strategy, confidence, entryPrice, sizeUsd, riskHash))
-        The agent signs this hash with personal_sign (EIP-191), which prepends
-        "\x19Ethereum Signed Message:\n32" + hash.
+        Thin wrapper over governance.canonical_decision_hash — the single
+        source of truth for the TradeAuditTrail.sol logDecision layout
+        (S8). The agent signs this hash with personal_sign (EIP-191), which
+        prepends "\x19Ethereum Signed Message:\n32" + hash.
         """
-        decision_id_hash = Web.keccak(text=payload.decision_id)
-        risk_hash_bytes = bytes.fromhex(
-            payload.risk_params_hash[2:] if payload.risk_params_hash.startswith("0x")
-            else payload.risk_params_hash
+        return canonical_decision_hash(
+            decision_id=payload.decision_id,
+            package_id=payload.package_id,
+            agent_address=payload.agent_address,
+            asset=payload.asset,
+            signal=payload.signal,
+            strategy=payload.strategy,
+            confidence_bps=payload.confidence_bps,
+            entry_price=payload.entry_price,
+            size_usd=payload.size_usd,
+            risk_hash=payload.risk_params_hash,
         )
-        # A single-leg decision has no package: hash as bytes32(0), matching
-        # what the agent submits to logDecision for a non-package trade.
-        package_id_hash = (
-            Web.keccak(text=payload.package_id)
-            if payload.package_id
-            else b"\x00" * 32
-        )
-
-        # abi.encodePacked equivalent in web3
-        # We need to pack the values the same way Solidity does
-        packed = (
-            decision_id_hash
-            + package_id_hash
-            + bytes.fromhex(payload.agent_address[2:])
-            + payload.asset.encode("utf-8")
-            + payload.signal.encode("utf-8")
-            + payload.strategy.encode("utf-8")
-        )
-        # Need to handle int256 and uint256 as 32-byte values
-        confidence_bytes = payload.confidence_bps.to_bytes(32, "big", signed=True)
-        entry_price_bytes = _to_fixed_point_1e8(payload.entry_price).to_bytes(32, "big")
-        size_usd_bytes = _to_fixed_point_1e8(payload.size_usd).to_bytes(32, "big")
-        packed += confidence_bytes + entry_price_bytes + size_usd_bytes + risk_hash_bytes
-
-        return Web.keccak(packed)
 
     def _sign_payload(self, payload: DecisionPayload) -> bytes:
         """Sign the payload hash using EIP-191 (personal_sign).
