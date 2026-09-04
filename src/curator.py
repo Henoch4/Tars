@@ -174,7 +174,10 @@ class CuratorAgent:
     def _record(self, log: dict):
         self.state.switch_history.append(log)
         if self.audit_log:
-            self.audit_log.write("curator_switch", log)
+            # A profile switch is learning (what the agent updated), not a
+            # trade decision — filed under evolution (I11).
+            from .audit_trail import PROOF_EVOLUTION
+            self.audit_log.write("curator_switch", log, proof=PROOF_EVOLUTION)
 
 
 def apply_env_overrides(profile: dict, overrides: dict[str, str | None],

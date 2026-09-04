@@ -74,6 +74,9 @@ class TradingCycleResult:
     status: str = "completed"
     errors: list[str] = field(default_factory=list)
     curator: dict | None = None
+    # I5+I11 seal over this cycle's audit records (root/count/domain).
+    # None when no audit log is wired — sealing needs records to commit.
+    seal: dict | None = None
 
 
 class AutonomousTradingAgent:
@@ -906,6 +909,7 @@ class AutonomousTradingAgent:
             )
 
         if self.audit_log:
+            from .audit_trail import PROOF_EXECUTION
             async with self._audit_lock:
                 self.audit_log.write("funding_arb_package", {
                     "cycle_id": cycle_id,
@@ -915,7 +919,7 @@ class AutonomousTradingAgent:
                     "notional_usd": notional,
                     "funding_rate": funding_rate,
                     "slippage_breached": pkg.slippage_breached,
-                })
+                }, proof=PROOF_EXECUTION)
         return out
 
     async def run_trading_cycle(self, assets: list[str]) -> TradingCycleResult:
@@ -949,6 +953,11 @@ class AutonomousTradingAgent:
             }
 
         logger.info(f"Starting trading cycle {cycle_id} for {len(assets)} assets")
+
+        # I5+I11: open the seal window so this cycle's audit records buffer
+        # for the end-of-cycle Merkle seal.
+        if self.audit_log:
+            self.audit_log.begin_cycle(cycle_id)
 
         # --- Phase 1: Market Data --- (parallel across assets)
         market_data_tasks = [self._fetch_market_data(asset) for asset in assets]
@@ -1023,6 +1032,18 @@ class AutonomousTradingAgent:
             },
             errors=len(result.errors),
         )
+        # I5+I11: seal the buffered cycle records. Sealing must never fail
+        # the cycle — an unsealed window just stays in the working tier.
+        if self.audit_log:
+            try:
+                async with self._audit_lock:
+                    result.seal = self.audit_log.seal_cycle()
+                logger.info(
+                    f"Cycle {cycle_id} sealed: root={result.seal['root'][:16]}… "
+                    f"({result.seal['count']} records)"
+                )
+            except Exception as e:  # noqa: BLE001 — seal is auxiliary
+                logger.warning(f"Cycle {cycle_id} seal failed: {e}")
         return result
 
     async def _report_cycle_loss(self, cycle_day_key: str) -> None:
@@ -1093,12 +1114,13 @@ class AutonomousTradingAgent:
             out["errors"].append(msg)
             logger.warning(f"Integrity gate blocked: {msg}")
             if self.audit_log:
+                from .audit_trail import PROOF_EVIDENCE
                 async with self._audit_lock:
                     self.audit_log.write("integrity_block", {
                         "cycle_id": cycle_id,
                         "asset": asset,
                         "reasons": integrity.reasons,
-                    })
+                    }, proof=PROOF_EVIDENCE)
             return out
 
         # --- Phase 2: Signal Generation ---
@@ -1153,13 +1175,14 @@ class AutonomousTradingAgent:
                    f"{asset} ({ensemble.confidence_bps}bps)")
             logger.info(msg)
             if self.audit_log:
+                from .audit_trail import PROOF_DECISION
                 async with self._audit_lock:
                     self.audit_log.write("curator_confidence_floor", {
                         "cycle_id": cycle_id,
                         "asset": asset,
                         "confidence_bps": ensemble.confidence_bps,
                         "floor_bps": self._confidence_floor_bps,
-                    })
+                    }, proof=PROOF_DECISION)
             return out
 
         # --- Phase 3: Risk Gate ---
@@ -1207,6 +1230,7 @@ class AutonomousTradingAgent:
             out["errors"].append(f"Risk gate rejected {asset}: {risk_result.reason}")
             logger.warning(f"Risk gate rejected: {risk_result.code}: {risk_result.reason}")
             if self.audit_log:
+                from .audit_trail import PROOF_DECISION
                 async with self._audit_lock:
                     self.audit_log.write("risk_rejection", {
                         "cycle_id": cycle_id,
@@ -1214,7 +1238,7 @@ class AutonomousTradingAgent:
                         "code": risk_result.code,
                         "reason": risk_result.reason,
                         "confidence_bps": ensemble.confidence_bps,
-                    })
+                    }, proof=PROOF_DECISION)
             return out
 
         # --- Phase 4: Onchain Decision Log ---
@@ -1422,6 +1446,7 @@ class AutonomousTradingAgent:
         logger.debug(f"Consensus rationale: {consensus.rationale}")
         
         if self.audit_log:
+            from .audit_trail import PROOF_DECISION
             async with self._audit_lock:
                 self.audit_log.write("consensus_result", {
                     "cycle_id": cycle_id,
@@ -1434,16 +1459,19 @@ class AutonomousTradingAgent:
                     "long_weight": consensus.long_weight,
                     "short_weight": consensus.short_weight,
                     "total_weight": consensus.total_weight,
+                    "quarantined": consensus.quarantined,
                     "votes": [
                         {
                             "trader": v.trader_name,
                             "direction": v.signal.direction,
                             "confidence_bps": v.signal.confidence_bps,
                             "weight": v.weight,
+                            "effective_weight": v.effective_weight,
+                            "quarantined": v.quarantined,
                         }
                         for v in consensus.votes
                     ],
-                })
+                }, proof=PROOF_DECISION)
         
         # Handle no consensus
         if not consensus.consensus_reached:
@@ -1465,13 +1493,14 @@ class AutonomousTradingAgent:
                    f"{asset} ({consensus.consensus_confidence_bps}bps)")
             logger.info(msg)
             if self.audit_log:
+                from .audit_trail import PROOF_DECISION
                 async with self._audit_lock:
                     self.audit_log.write("curator_confidence_floor", {
                         "cycle_id": cycle_id,
                         "asset": asset,
                         "confidence_bps": consensus.consensus_confidence_bps,
                         "floor_bps": self._confidence_floor_bps,
-                    })
+                    }, proof=PROOF_DECISION)
             return out
         
         # --- Phase 3: Risk Gate ---
@@ -1515,6 +1544,7 @@ class AutonomousTradingAgent:
             out["errors"].append(f"Risk gate rejected {asset}: {risk_result.reason}")
             logger.warning(f"Risk gate rejected: {risk_result.code}: {risk_result.reason}")
             if self.audit_log:
+                from .audit_trail import PROOF_DECISION
                 async with self._audit_lock:
                     self.audit_log.write("risk_rejection", {
                         "cycle_id": cycle_id,
@@ -1522,7 +1552,7 @@ class AutonomousTradingAgent:
                         "code": risk_result.code,
                         "reason": risk_result.reason,
                         "confidence_bps": consensus.consensus_confidence_bps,
-                    })
+                    }, proof=PROOF_DECISION)
             return out
         
         # --- Phase 4: Onchain Decision Log ---
