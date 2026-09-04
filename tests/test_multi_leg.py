@@ -338,6 +338,63 @@ def test_close_package_uses_symmetric_inverse():
     assert closing_actions == ["sell_spot", "cover_perp"]
 
 
+def test_z2_read_ok_not_truthiness_declined_leg_not_filled():
+    """Z2 regression: a declined/refused leg must be recorded as NOT filled,
+    never as filled due to truthiness of the result object.
+
+    Zinger's bug: `!!(await executeTrade(...))` treated a refusal object
+    `{ ok: false, error: '...' }` as truthy, so a declined leg was marked
+    filled and the package locked with naked exposure. Our code checks
+    explicit `filled` attribute — this test pins that a result object that
+    would be truthy in a boolean context but has `filled=False` is NEVER
+    treated as filled.
+    """
+    mgr = MultiLegExecutionManager()
+    pkg = mgr.propose_package(two_leg_steps(), notional=10_000)
+
+    # A "refusal object" that would be truthy in `if result:` but means failure.
+    # Our code MUST check `leg_result.filled`, not `if leg_result:`
+    def refusal_object_leg_1(step, notional):
+        # This object is truthy (has attrs, not None) but filled=False
+        return LegResult(
+            step=step,
+            filled=False,
+            fill_price=None,
+            slippage_pct=None,
+            fill_usd=None,
+        )
+
+    def normal_fill_leg_2(step, notional):
+        return LegResult(
+            step=step,
+            filled=True,
+            fill_price=notional,
+            slippage_pct=0.001,
+        )
+
+    # Dispatch: leg 1 returns a "truthy refusal", leg 2 fills normally
+    # If the code checked truthiness, leg 1 would count as filled and package LOCKED
+    pkg = mgr.dispatch_concurrent(pkg, lambda step, n: (
+        refusal_object_leg_1(step, n) if step.venue == "venue_a" else normal_fill_leg_2(step, n)
+    ))
+
+    # Must NOT lock: leg 1 explicitly filled=False
+    assert pkg.state == PackageState.PENDING_FILL
+    assert pkg.leg_results[0].filled is False  # explicitly not filled
+    assert pkg.leg_results[1].filled is True   # explicitly filled
+
+    # Unwind: only leg 2 (the actually filled one) gets unwound
+    unwind_calls = []
+    def unwind_sim(step, notional):
+        unwind_calls.append((step.action, notional))
+        return LegResult(step=step, filled=True, fill_price=notional, slippage_pct=0.001)
+
+    pkg = mgr.resolve_partial_fill(pkg, unwind_sim)
+    assert pkg.state == PackageState.ABORTED
+    assert len(unwind_calls) == 1  # ONLY the actually-filled leg unwound
+    assert unwind_calls[0][0] == "sell_spot"  # inverse of buy_spot
+
+
 def test_paper_fill_simulator_can_actually_breach_slippage():
     """Regression for the cap bug: the source clamped slippage with min(..., 
     max*1.5), so no fill could ever exceed max_slippage_pct and the breach path
