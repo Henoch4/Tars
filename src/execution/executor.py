@@ -16,9 +16,20 @@ from .models import (
     OrderStatus,
     ExecutionError,
 )
+from ..metrics import inc
 from ..okx_cli import OkxCli, OkxCliError
 
 logger = logging.getLogger(__name__)
+
+
+def _count_response_failure(method: str, kind: str) -> None:
+    """S4: HTTP-200-but-unusable responses (closed kind set)."""
+    inc("tars_exchange_response_errors_total", {"method": method, "kind": kind})
+
+
+def _count_risk_rejection(code: str) -> None:
+    """S3: risk-gate rejections by closed check code."""
+    inc("tars_risk_rejections_total", {"code": code})
 
 
 def _float_or(value: object, default: float) -> float:
@@ -115,6 +126,7 @@ class OrderExecutor:
         else:
             record = None
         if not isinstance(record, dict) or "instType" not in record:
+            _count_response_failure("market.instruments", "missing_data")
             raise ExecutionError(
                 f"No instrument metadata returned for {inst_id} — refusing to "
                 f"submit with unconverted size units"
@@ -292,6 +304,7 @@ class OrderExecutor:
             count_trade=not self.dry_run,
         )
         if not risk_check.approved:
+            _count_risk_rejection(risk_check.code)
             raise ExecutionError(
                 f"Risk gate rejected order: {risk_check.reason}. "
                 f"Code: {risk_check.code}"
@@ -336,6 +349,7 @@ class OrderExecutor:
             raise ExecutionError(f"OKX CLI order failed: {e}") from e
 
         if not result or "data" not in result:
+            _count_response_failure("trade.order", "missing_data")
             raise ExecutionError(f"Unexpected CLI response: {result}")
 
         order_data = result["data"][0] if isinstance(result.get("data"), list) else result["data"]

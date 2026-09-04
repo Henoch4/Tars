@@ -189,7 +189,27 @@ def manifest():
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    """Liveness + heartbeat (S2): distinguishes "no cycle ran" (heartbeat
+    None) from "ran, no trades" / "rejected" / "traded" (heartbeat outcome)
+    so a silent period is never mistaken for a healthy idle loop."""
+    from .metrics import get_gauge, get_heartbeat, snapshot
+    hb = get_heartbeat()
+    return {
+        "status": "ok",
+        "heartbeat": hb,
+        "kill_switch_active": get_gauge("tars_kill_switch_active"),
+        "loop_stalled": get_gauge(
+            "tars_loop_stopped_contributing_condition_active"),
+        "counters": snapshot()["counters"],
+    }
+
+
+@app.get("/api/v1/metrics")
+def api_metrics():
+    """Structured metrics snapshot (S3): counters, gauges, heartbeat, and
+    bridged ML degradations. Scrape-safe (pure reads, no side effects)."""
+    from .metrics import snapshot
+    return snapshot()
 
 
 @app.post("/hire")

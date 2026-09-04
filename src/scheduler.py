@@ -45,6 +45,41 @@ class SchedulerConfig:
     log_level: str = "INFO"
 
 
+class LoopWatchdog:
+    """External stall detector for the trading loop (S1).
+
+    The loop publishes progress (heartbeat after each completed cycle);
+    this object — running OUTSIDE the loop — compares it against the
+    expected cadence. A path that stops the loop also stops any check
+    placed inside it, so the check must live here, not in run_cycle.
+
+    Fires on TRANSITIONS into/out of the stalled condition, never per
+    tick. A None cursor means "never started" — distinct from stalled,
+    and silent (no alert for a loop that hasn't run yet).
+    """
+
+    def __init__(self, expected_interval_s: float, grace_s: float = 300.0):
+        self.bound_s = expected_interval_s * 2 + grace_s
+        self._stalled = False
+
+    @property
+    def stalled(self) -> bool:
+        return self._stalled
+
+    def check(self, now: float, last_completed_at: float | None) -> str | None:
+        """Return 'stalled' / 'recovered' on transition, else None."""
+        if last_completed_at is None:
+            return None
+        stalled = (now - last_completed_at) > self.bound_s
+        if stalled and not self._stalled:
+            self._stalled = True
+            return "stalled"
+        if not stalled and self._stalled:
+            self._stalled = False
+            return "recovered"
+        return None
+
+
 class TradingScheduler:
     def __init__(self, config: SchedulerConfig):
         self.config = config
@@ -54,6 +89,9 @@ class TradingScheduler:
         self._last_cycle: Optional[TradingCycleResult] = None
         self._cycle_count = 0
         self._error_count = 0
+        self.watchdog = LoopWatchdog(config.interval_minutes * 60.0)
+        self._heartbeat_path = os.getenv(
+            "LOOP_HEARTBEAT_PATH", "data/loop_heartbeat.json")
 
     async def initialize(self) -> None:
         """Initialize the trading agent and exchange client."""
@@ -77,18 +115,73 @@ class TradingScheduler:
 
         logger.info(f"Scheduler initialized (dry_run={self.config.dry_run}, interval={self.config.interval_minutes}min)")
 
+    def _write_heartbeat_file(self) -> None:
+        """Persist the latest heartbeat for external watchers (and post-
+        restart visibility). Best-effort: never fails the loop."""
+        try:
+            from .metrics import get_heartbeat
+            import json
+            import pathlib
+            hb = get_heartbeat()
+            if hb is None:
+                return
+            path = pathlib.Path(self._heartbeat_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(hb))
+            tmp.replace(path)
+        except Exception as e:  # noqa: BLE001 — heartbeat file is auxiliary
+            logger.warning(f"Heartbeat file write failed: {e}")
+
+    async def _watchdog_task(self) -> None:
+        """Own task, outside the trading loop: sample the published cursor
+        and fire on stalled/recovered transitions (S1)."""
+        from .metrics import get_heartbeat, set_gauge
+        from .alerting import send_alert
+        while not self._shutdown.is_set():
+            try:
+                hb = get_heartbeat()
+                last = hb["completed_at"] if hb else None
+                transition = self.watchdog.check(time.time(), last)
+                set_gauge("tars_loop_stopped_contributing_condition_active",
+                          1.0 if self.watchdog.stalled else 0.0)
+                if transition == "stalled":
+                    send_alert(
+                        "LOOP_STALLED", "critical",
+                        f"No completed cycle for >{self.watchdog.bound_s:.0f}s "
+                        f"(last: {hb['cycle_id'] if hb else 'never'}).",
+                    )
+                elif transition == "recovered":
+                    send_alert(
+                        "LOOP_RECOVERED", "warning",
+                        f"Cycle loop contributing again (last: {hb['cycle_id']}).",
+                    )
+            except Exception as e:  # noqa: BLE001 — watchdog never kills the loop
+                logger.warning(f"Watchdog check failed: {e}")
+            try:
+                await asyncio.wait_for(self._shutdown.wait(), timeout=60.0)
+            except asyncio.TimeoutError:
+                pass
+
     async def run_cycle(self) -> TradingCycleResult:
         """Execute a single trading cycle."""
         if not self.agent:
             raise RuntimeError("Agent not initialized. Call initialize() first.")
 
+        from .metrics import (
+            OUTCOME_ERROR,
+            beat as _metrics_beat,
+            inc as _metrics_inc,
+        )
         self._cycle_count += 1
         cycle_num = self._cycle_count
         logger.info(f"Starting cycle #{cycle_num} for assets: {self.config.assets}")
+        _metrics_inc("tars_cycles_total", {})
 
         try:
             result = await self.agent.run_trading_cycle(list(self.config.assets))
             self._last_cycle = result
+            self._write_heartbeat_file()
 
             # Log summary
             signals = len(result.signals)
@@ -109,6 +202,12 @@ class TradingScheduler:
 
         except Exception as e:
             self._error_count += 1
+            _metrics_inc("tars_cycle_errors_total", {})
+            # The agent never beat (it raised): record the error outcome here
+            # so "loop ran and failed" is distinguishable from silence.
+            _metrics_beat(f"cycle_{cycle_num}_failed", OUTCOME_ERROR,
+                          counts={}, errors=1)
+            self._write_heartbeat_file()
             logger.error(f"Cycle #{cycle_num} failed: {e}", exc_info=True)
             raise
 
@@ -135,8 +234,12 @@ class TradingScheduler:
         self.scheduler.start()
         logger.info(f"Scheduler started. Running every {self.config.interval_minutes} minutes.")
 
+        # S1: the stall check runs as its own task, outside the trading loop.
+        watchdog = asyncio.create_task(self._watchdog_task())
+
         # Wait for shutdown signal
         await self._shutdown.wait()
+        watchdog.cancel()
 
         logger.info("Shutdown signal received, stopping scheduler...")
         self.scheduler.shutdown(wait=True)
@@ -148,11 +251,14 @@ class TradingScheduler:
 
     def get_status(self) -> dict:
         """Get scheduler health status."""
+        from .metrics import get_heartbeat
         return {
             "running": self.scheduler.running if hasattr(self.scheduler, "running") else False,
             "cycle_count": self._cycle_count,
             "error_count": self._error_count,
             "last_cycle": asdict(self._last_cycle) if self._last_cycle else None,
+            "heartbeat": get_heartbeat(),
+            "watchdog_stalled": self.watchdog.stalled,
             "next_run": str(self.scheduler.get_job("trading_cycle").next_run_time)
             if self.scheduler.get_job("trading_cycle") else None,
         }

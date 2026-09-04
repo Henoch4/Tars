@@ -740,6 +740,8 @@ class AutonomousTradingAgent:
         ]
         for check in checks:
             if not check.approved:
+                from .metrics import inc as _metrics_inc
+                _metrics_inc("tars_risk_rejections_total", {"code": check.code})
                 out["errors"].append(f"Funding arb for {asset}: risk gate rejected: {check.reason}")
                 logger.warning(f"Funding arb risk gate rejected {asset}: {check.code}: {check.reason}")
                 return out
@@ -951,6 +953,46 @@ class AutonomousTradingAgent:
             result.errors.extend(out["errors"])
 
         await self._report_cycle_loss(cycle_day_key)
+
+        # S2/S3: classify the cycle outcome and publish the heartbeat.
+        # Distinct signals, never conflated: "ran, no trades" (no_trades)
+        # is not "rejected by risk gate" (rejected) is not "traded".
+        from .metrics import (
+            OUTCOME_ERROR,
+            OUTCOME_NO_TRADES,
+            OUTCOME_REJECTED,
+            OUTCOME_TRADED,
+            beat as _metrics_beat,
+            inc as _metrics_inc,
+        )
+        n_decisions = len(result.decisions)
+        n_executions = len(result.executions)
+        if result.errors and n_decisions == 0 and n_executions == 0:
+            outcome = OUTCOME_ERROR
+        elif n_executions > 0:
+            outcome = OUTCOME_TRADED
+        elif n_decisions > 0:
+            outcome = OUTCOME_REJECTED
+        else:
+            outcome = OUTCOME_NO_TRADES
+        for d in result.decisions:
+            sig = str(d.get("signal", "UNKNOWN"))
+            if sig not in ("LONG", "SHORT", "NEUTRAL"):
+                sig = "UNKNOWN"
+            _metrics_inc("tars_decisions_total", {"direction": sig})
+        for e in result.executions:
+            _metrics_inc("tars_orders_total",
+                         {"status": str(e.get("status", "unknown"))})
+        _metrics_beat(
+            cycle_id,
+            outcome,
+            counts={
+                "signals": len(result.signals),
+                "decisions": n_decisions,
+                "executions": n_executions,
+            },
+            errors=len(result.errors),
+        )
         return result
 
     async def _report_cycle_loss(self, cycle_day_key: str) -> None:

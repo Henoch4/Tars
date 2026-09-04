@@ -417,6 +417,9 @@ class MultiLegExecutionManager:
         pkg = Package(id=next(self._id_counter), steps=steps, notional=notional)
         self._open_packages[pkg.id] = pkg
         self._active_instruments.add(steps[0].asset)
+        # W6/S3: package lifecycle as transition counters (closed outcomes).
+        from .metrics import inc as _metrics_inc
+        _metrics_inc("tars_packages_total", {"outcome": "started"})
         return pkg
 
     def dispatch_concurrent(self, pkg: Package, fill_simulator) -> Package:
@@ -464,6 +467,8 @@ class MultiLegExecutionManager:
             pkg.state = PackageState.LOCKED
             pkg.last_fill_ts = time.time()
             self._save_package(pkg)
+            from .metrics import inc as _metrics_inc
+            _metrics_inc("tars_packages_total", {"outcome": "locked"})
         return pkg
 
     def resolve_partial_fill(self, pkg: Package, unwind_simulator) -> Package:
@@ -480,11 +485,16 @@ class MultiLegExecutionManager:
         if not unfilled_legs:
             pkg.state = PackageState.LOCKED
             self._save_package(pkg)
+            from .metrics import inc as _metrics_inc
+            _metrics_inc("tars_packages_total", {"outcome": "locked"})
             return pkg
 
         if not filled_legs:
             # nothing filled at all -- clean abort, no unwind needed
             pkg.state = PackageState.ABORTED
+            from .metrics import inc as _metrics_inc
+            _metrics_inc("tars_packages_total",
+                         {"outcome": "aborted", "reason": "no_fill"})
             self._delete_package(pkg.id)
             self._release(pkg)
             return pkg
@@ -502,6 +512,9 @@ class MultiLegExecutionManager:
         # fail-closed means we say so, never silently mark it unwound.
         pkg.unwound = bool(unwind_results) and all(r.filled for r in unwind_results)
         pkg.state = PackageState.ABORTED
+        from .metrics import inc as _metrics_inc
+        _metrics_inc("tars_packages_total",
+                     {"outcome": "aborted", "reason": "partial_fill"})
         self._delete_package(pkg.id)  # terminal: scratch file removed, audit trail is the record
         self._release(pkg)
         return pkg
@@ -539,6 +552,9 @@ class MultiLegExecutionManager:
         filled_legs = [r for r in pkg.leg_results if r.filled]
         if not filled_legs:
             pkg.state = PackageState.ABORTED
+            from .metrics import inc as _metrics_inc
+            _metrics_inc("tars_packages_total",
+                         {"outcome": "aborted", "reason": "no_fill"})
             self._delete_package(pkg.id)
             self._release(pkg)
             return pkg
@@ -552,6 +568,9 @@ class MultiLegExecutionManager:
             )
         pkg.unwound = bool(unwind_results) and all(r.filled for r in unwind_results)
         pkg.state = PackageState.ABORTED
+        from .metrics import inc as _metrics_inc
+        _metrics_inc("tars_packages_total",
+                     {"outcome": "aborted", "reason": "slippage_breach"})
         self._delete_package(pkg.id)  # terminal: scratch file removed, audit trail is the record
         self._release(pkg)
         return pkg
@@ -561,6 +580,8 @@ class MultiLegExecutionManager:
             raise RuntimeError(f"cannot settle package {pkg.id} in state {pkg.state}")
         pkg.state = PackageState.SETTLED
         self._save_package(pkg)
+        from .metrics import inc as _metrics_inc
+        _metrics_inc("tars_packages_total", {"outcome": "settled"})
         self._delete_package(pkg.id)  # cleanup persisted file for terminal state
         self._release(pkg)
         return pkg

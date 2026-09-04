@@ -397,6 +397,11 @@ class RiskGate:
         self._kill_switch_active = True
         self._kill_switch_reason = reason
         self._kill_switch_activated_at = time.time()
+        # S3: persistent halt state lives in a gauge (idempotent per tick);
+        # the transition itself is counted once here, not per check.
+        from ..metrics import inc as _metrics_inc, set_gauge as _metrics_gauge
+        _metrics_inc("tars_kill_switch_trips_total", {})
+        _metrics_gauge("tars_kill_switch_active", 1.0)
         # Persist to durable counters
         self._counters.set(
             key="__kill_switch__",
@@ -417,6 +422,8 @@ class RiskGate:
         self._kill_switch_active = False
         self._kill_switch_reason = None
         self._kill_switch_activated_at = None
+        from ..metrics import set_gauge as _metrics_gauge
+        _metrics_gauge("tars_kill_switch_active", 0.0)
         # Persist to durable counters
         self._counters.set(
             key="__kill_switch__",

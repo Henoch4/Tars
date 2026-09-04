@@ -30,15 +30,46 @@ from dataclasses import dataclass
 
 class OkxCliError(RuntimeError):
     """Raised when the `okx` CLI exits non-zero (exit code 1 per docs) or
-    when the binary itself isn't on PATH."""
+    when the binary itself isn't on PATH.
 
-    def __init__(self, args: list, returncode: int, stderr: str):
+    S4: every failure carries a `kind` separating TRANSPORT failures (the
+    exchange/CLI never answered: binary missing, launch failed, non-zero
+    exit — an operator/infra issue) from RESPONSE failures (it answered
+    but the bytes are unusable: empty, non-JSON — a TARS parsing bug).
+    They point at opposite owners; conflating them pages the wrong team.
+    Closed kind set: binary_missing, launch_failed, nonzero_exit,
+    empty_output, non_json.
+    """
+
+    TRANSPORT = "transport"
+    RESPONSE = "response"
+
+    def __init__(self, args: list, returncode: int, stderr: str,
+                 kind: str = TRANSPORT):
         self.args = tuple(args)
         self.returncode = returncode
         self.stderr = stderr
+        self.kind = kind
         super().__init__(
             f"okx {' '.join(args)} failed (exit {returncode}): {stderr.strip()}"
         )
+
+
+def _method_of(args: tuple | list) -> str:
+    """Closed method label from the command words (never raw user input)."""
+    words = [str(a) for a in args if not str(a).startswith("-")][:2]
+    return ".".join(words) if words else "unknown"
+
+
+def _count_exchange_failure(args: tuple | list, category: str, kind: str) -> None:
+    """S4 split counters. Import is lazy so this module stays light."""
+    from .metrics import inc
+    method = _method_of(args)
+    if category == OkxCliError.TRANSPORT:
+        inc("tars_exchange_errors_total", {"method": method})
+    else:
+        inc("tars_exchange_response_errors_total",
+            {"method": method, "kind": kind})
 
 
 @dataclass
@@ -150,10 +181,12 @@ class OkxCli:
         """
         okx_path = _find_okx_binary()
         if not okx_path:
+            _count_exchange_failure(args, OkxCliError.TRANSPORT, "binary_missing")
             raise OkxCliError(
                 list(args), -1,
                 "`okx` binary not found on PATH. Run "
                 "`npm install -g @okx_ai/okx-trade-cli` first (see README.md).",
+                kind="binary_missing",
             )
 
         flags = self._global_flags() if use_global_flags else []
@@ -172,13 +205,18 @@ class OkxCli:
             # between check and exec, etc). Without this, a raw OSError
             # would propagate uncaught past check_auth()'s `except
             # OkxCliError` and crash the whole request with a leaked 500.
-            raise OkxCliError(list(args), -1, f"failed to launch `okx`: {e}")
+            _count_exchange_failure(args, OkxCliError.TRANSPORT, "launch_failed")
+            raise OkxCliError(list(args), -1, f"failed to launch `okx`: {e}",
+                              kind="launch_failed")
 
         if proc.returncode != 0:
-            raise OkxCliError(list(args), proc.returncode or 0, err.decode())
+            _count_exchange_failure(args, OkxCliError.TRANSPORT, "nonzero_exit")
+            raise OkxCliError(list(args), proc.returncode or 0, err.decode(),
+                              kind="nonzero_exit")
 
         text = out.decode().strip()
         if not text:
+            _count_exchange_failure(args, OkxCliError.RESPONSE, "empty_output")
             return None
         try:
             return json.loads(text)
@@ -186,9 +224,11 @@ class OkxCli:
             # BUGFIX: same leak risk if the CLI ever prints a non-JSON
             # banner/warning to stdout before the JSON payload. Wrap it so
             # every caller only ever has to catch OkxCliError.
+            _count_exchange_failure(args, OkxCliError.RESPONSE, "non_json")
             raise OkxCliError(
                 list(args), proc.returncode,
                 f"CLI returned non-JSON output: {e}. Raw output: {text[:200]!r}",
+                kind="non_json",
             )
 
     # ------------------------------------------------------------------
