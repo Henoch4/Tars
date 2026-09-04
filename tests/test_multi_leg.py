@@ -395,6 +395,108 @@ def test_z2_read_ok_not_truthiness_declined_leg_not_filled():
     assert unwind_calls[0][0] == "sell_spot"  # inverse of buy_spot
 
 
+def test_amount_aware_unwind_scales_by_fill_ratio():
+    """D1(a) regression: the unwind must scale to the ACTUAL filled amount,
+    not the full leg notional. Old code unwound the other legs at full
+    notional while only a fraction of the broken leg existed — over-closing
+    the hedge and leaving reverse exposure."""
+    import tempfile
+
+    mgr = MultiLegExecutionManager(persist_dir=tempfile.mkdtemp(prefix="ml_d1a_"))
+    pkg = mgr.propose_package(two_leg_steps(), notional=10_000)
+
+    def half_fill_first_leg(step, notional):
+        if step.venue == "venue_a":
+            # Half fill: 2500 of 5000 leg notional
+            return LegResult(step=step, filled=True, fill_price=notional,
+                             slippage_pct=0.001, fill_usd=2500.0)
+        return LegResult(step=step, filled=False, fill_price=None, slippage_pct=None)
+
+    pkg = mgr.dispatch_concurrent(pkg, half_fill_first_leg)
+    assert pkg.state == PackageState.PENDING_FILL
+    assert pkg.leg_results[0].fill_ratio == pytest.approx(0.5)
+
+    unwind_calls = []
+
+    def unwind_sim(step, notional):
+        unwind_calls.append((step.action, notional))
+        return LegResult(step=step, filled=True, fill_price=notional, slippage_pct=0.001)
+
+    pkg = mgr.resolve_partial_fill(pkg, unwind_sim)
+    assert pkg.state == PackageState.ABORTED
+    assert pkg.unwound is True
+    assert len(unwind_calls) == 1
+    # Unwind scaled to the filled fraction (2500), NOT the full leg (5000)
+    assert unwind_calls[0][1] == pytest.approx(2500.0)
+
+
+def test_crash_recovery_restores_pending_package():
+    """Z3/W4 regression: a restart mid-package must restore the persisted
+    PENDING_FILL package (min-age interlock defers reconciliation of a
+    recent fill) instead of leaving amnesia — and the asset must stay
+    blocked while the package is unrestored."""
+    import tempfile
+
+    persist = tempfile.mkdtemp(prefix="ml_recover_")
+    mgr = MultiLegExecutionManager(persist_dir=persist)
+    pkg = mgr.propose_package(two_leg_steps(), notional=10_000)
+
+    def one_fills(step, notional):
+        filled = step.venue == "venue_a"
+        return LegResult(step=step, filled=filled,
+                         fill_price=notional if filled else None,
+                         slippage_pct=0.001 if filled else None)
+
+    pkg = mgr.dispatch_concurrent(pkg, one_fills)
+    assert pkg.state == PackageState.PENDING_FILL
+    pkg_id = pkg.id
+
+    # "Crash": brand-new manager on the same persist dir
+    mgr2 = MultiLegExecutionManager(persist_dir=persist)
+    assert mgr2.open_package_count() == 1
+    can_open, reason = mgr2.can_open("BTC")
+    assert can_open is False
+    assert "duplication" in reason
+    restored = mgr2._open_packages[pkg_id]
+    assert restored.state == PackageState.PENDING_FILL
+    assert len(restored.leg_results) == 2
+
+
+def test_recovery_cleans_terminal_package_files():
+    """Terminal-state scratch files must not accumulate: a persisted ABORTED
+    package older than the min-age interlock is deleted on recovery."""
+    import json
+    import os
+    import tempfile
+    import time
+
+    persist = tempfile.mkdtemp(prefix="ml_cleanup_")
+    mgr = MultiLegExecutionManager(persist_dir=persist)
+    pkg = mgr.propose_package(two_leg_steps(), notional=10_000)
+    # Simulate an old terminal record left on disk
+    path = os.path.join(persist, f"pkg_{pkg.id}.json")
+    with open(path, "w") as f:
+        json.dump({
+            "id": pkg.id,
+            "steps": [{"venue": s.venue, "action": s.action, "asset": s.asset,
+                       "amount_ratio": s.amount_ratio,
+                       "max_slippage_pct": s.max_slippage_pct} for s in pkg.steps],
+            "notional": pkg.notional,
+            "state": "aborted",
+            "leg_results": [],
+            "unwound": False,
+            "slippage_breached": False,
+            "created_at": time.time() - 3600,
+            "updated_at": time.time() - 3600,
+            "dispatched_legs": 0,
+            "last_fill_ts": time.time() - 3600,
+        }, f)
+
+    mgr2 = MultiLegExecutionManager(persist_dir=persist)
+    assert mgr2.open_package_count() == 0
+    assert not os.path.exists(path)
+
+
 def test_paper_fill_simulator_can_actually_breach_slippage():
     """Regression for the cap bug: the source clamped slippage with min(..., 
     max*1.5), so no fill could ever exceed max_slippage_pct and the breach path

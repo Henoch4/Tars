@@ -308,6 +308,11 @@ _integrity_gate = DataIntegrityGate(
 )
 _multi_leg_manager = MultiLegExecutionManager(
     max_concurrent_packages=int(os.getenv("MAX_CONCURRENT_PACKAGES", "3")),
+    # Persistent scratch for multi-leg crash recovery (D1(a)/Z3/W4): package
+    # state is saved per leg so a restart mid-package reconciles instead of
+    # leaving a naked leg. Must live on persistent storage in production
+    # (same requirement as RISK_STATE_PATH) — temp dirs defeat recovery.
+    persist_dir=os.getenv("MULTI_LEG_STATE_DIR", "data/multi_leg_state"),
 )
 _trading_agent = AutonomousTradingAgent(
     okx_cli=_cli,
