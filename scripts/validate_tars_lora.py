@@ -60,6 +60,71 @@ LABEL_YFLIP = "y_flip"
 COST_BPS = 35.0  # round-trip cost assumption (both legs)
 EV_MARGIN = 2.0  # need 2x costs to count as "win"
 
+# Fold-level resume checkpoints (local only, gitignored). The model is
+# deterministic (do_sample=False), so resumed folds are bit-identical to
+# an uninterrupted run. A dataset fingerprint in manifest.json guards
+# against reusing stale checkpoints after the dataset changes.
+CHECKPOINT_DIR_NAME = "tars_lora_checkpoints"
+TRAIN_CHUNK_ROWS = 2000  # save train-prediction progress every N rows
+
+
+def _dataset_fingerprint(df: pd.DataFrame, n_folds: int, train_frac: float) -> dict:
+    """Fingerprint the dataset + split config. Any change invalidates checkpoints."""
+    return {
+        "rows": int(len(df)),
+        "ts_min": int(df["ts"].min()),
+        "ts_max": int(df["ts"].max()),
+        "n_folds": n_folds,
+        "train_frac": train_frac,
+    }
+
+
+def _init_checkpoint_dir(checkpoint_dir: Path, fingerprint: dict, fresh: bool) -> dict:
+    """Validate manifest against the current dataset. Returns manifest dict.
+
+    If `fresh` or the fingerprint mismatches (or manifest is missing/corrupt),
+    wipes the dir and writes a new manifest. Otherwise keeps existing folds.
+    """
+    import json
+
+    manifest_path = checkpoint_dir / "manifest.json"
+    if fresh and checkpoint_dir.exists():
+        print("  --fresh: discarding all checkpoints")
+        for p in checkpoint_dir.glob("*"):
+            p.unlink()
+    if checkpoint_dir.exists() and manifest_path.exists():
+        try:
+            saved = json.loads(manifest_path.read_text())
+            if saved.get("fingerprint") == fingerprint:
+                done = sorted(p.name for p in checkpoint_dir.glob("fold_*.npz"))
+                print(f"  Resuming: {len(done)} completed folds found ({', '.join(done) or 'none'})")
+                return saved
+            print("  Dataset/split changed since last run: discarding stale checkpoints")
+            for p in checkpoint_dir.glob("*"):
+                p.unlink()
+        except (json.JSONDecodeError, OSError) as e:
+            print(f"  Corrupt manifest ({e}): starting fresh")
+            for p in checkpoint_dir.glob("*"):
+                p.unlink()
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    manifest = {"fingerprint": fingerprint}
+    manifest_path.write_text(json.dumps(manifest, indent=2))
+    return manifest
+
+
+def _metrics_from_arrays(returns: np.ndarray, predictions: np.ndarray) -> dict:
+    """Recompute fold metrics from saved arrays (identical formulas to evaluate_model_on_fold)."""
+    return {
+        "sharpe": sharpe_ratio(returns),
+        "calmar": calmar_ratio(returns),
+        "max_drawdown": max_drawdown(returns),
+        "cagr": cagr(returns),
+        "num_trades": int(np.sum(predictions)),
+        "win_rate": float(np.mean(predictions)) if len(predictions) > 0 else 0.0,
+        "returns": returns,
+        "predictions": predictions,
+    }
+
 
 def load_dataset() -> pd.DataFrame:
     """Load the carry dataset."""
@@ -157,8 +222,15 @@ def run_walk_forward_validation(
     model_predict_func,
     n_folds: int = 6,
     train_frac: float = 0.7,
+    checkpoint_dir: Path | None = None,
+    fresh: bool = False,
 ) -> dict:
-    """Run full walk-forward validation with purged splits."""
+    """Run full walk-forward validation with purged splits.
+
+    When `checkpoint_dir` is given, each completed fold's returns/predictions
+    are saved to `fold_{idx}.npz` and skipped on re-run (resume). A manifest
+    fingerprint guards against stale checkpoints after dataset changes.
+    """
     # Dataset already has fold/split columns from build script
     # But we re-compute to ensure consistency with validation.py logic
 
@@ -168,6 +240,11 @@ def run_walk_forward_validation(
     # Get unique timestamps for walk-forward
     unique_ts = df["ts"].unique()
     unique_ts.sort()
+
+    if checkpoint_dir is not None:
+        _init_checkpoint_dir(
+            checkpoint_dir, _dataset_fingerprint(df, n_folds, train_frac), fresh
+        )
 
     all_test_returns = []
     all_test_predictions = []
@@ -198,8 +275,24 @@ def run_walk_forward_validation(
             print("  Skipping: no test data")
             continue
 
-        # Evaluate on this fold
-        fold_result = evaluate_model_on_fold(train_df, test_df, model_predict_func)
+        # Resume: recompute metrics from saved arrays, skip inference
+        ckpt_path = checkpoint_dir / f"fold_{fold_idx}.npz" if checkpoint_dir else None
+        if ckpt_path is not None and ckpt_path.exists():
+            saved = np.load(ckpt_path)
+            fold_result = _metrics_from_arrays(
+                saved["returns"], saved["predictions"]
+            )
+            print(f"  Resumed from checkpoint (no inference)")
+        else:
+            # Evaluate on this fold
+            fold_result = evaluate_model_on_fold(train_df, test_df, model_predict_func)
+            if ckpt_path is not None:
+                np.savez_compressed(
+                    ckpt_path,
+                    returns=fold_result["returns"],
+                    predictions=fold_result["predictions"],
+                )
+                print(f"  Checkpoint saved: {ckpt_path.name}")
         fold_results.append(fold_result)
 
         all_test_returns.extend(fold_result["returns"])
@@ -253,11 +346,72 @@ def run_pbo_analysis(
     return {"pbo": 0.0, "pbo_pass": True, "n_combinations_tested": 1, "warning": None}
 
 
-def main():
+def predict_train_chunked(
+    train_df: pd.DataFrame,
+    model_predict_func,
+    checkpoint_dir: Path,
+    fingerprint: dict,
+    chunk_rows: int = TRAIN_CHUNK_ROWS,
+) -> np.ndarray:
+    """Predict over all train rows, saving progress every `chunk_rows`.
+
+    Resume-safe: `train_progress.json` records completed rows + dataset
+    fingerprint. A fingerprint mismatch discards partial progress.
+    """
+    import json
+
+    progress_path = checkpoint_dir / "train_progress.json"
+    preds_path = checkpoint_dir / "train_predictions.npy"
+    done = 0
+    if progress_path.exists() and preds_path.exists():
+        try:
+            progress = json.loads(progress_path.read_text())
+            if progress.get("fingerprint") == fingerprint:
+                done = int(progress.get("done", 0))
+                print(f"  Resuming train predictions from row {done}/{len(train_df)}")
+            else:
+                print("  Train fingerprint changed: restarting train predictions")
+        except (json.JSONDecodeError, OSError) as e:
+            print(f"  Corrupt train progress ({e}): restarting train predictions")
+
+    predictions = (
+        list(np.load(preds_path)) if done > 0 and preds_path.exists() else []
+    )
+    # Guard against a longer saved array than the current frame (dataset shrank)
+    predictions = predictions[:done]
+
+    rows = list(train_df.iterrows())
+    for i in range(done, len(rows)):
+        _, row = rows[i]
+        features = {}
+        for model_feat, df_col in FEATURE_MAP.items():
+            val = row.get(df_col, np.nan)
+            features[model_feat] = float(val) if not np.isnan(val) else 0.0
+        predictions.append(1 if model_predict_func(features) else 0)
+        if (i + 1) % chunk_rows == 0 or (i + 1) == len(rows):
+            np.save(preds_path, np.array(predictions, dtype=np.int8))
+            progress_path.write_text(json.dumps(
+                {"done": i + 1, "fingerprint": fingerprint}
+            ))
+            print(f"  Train predictions: {i + 1}/{len(rows)}", flush=True)
+
+    return np.array(predictions, dtype=np.int8)
+
+
+def main() -> int:
+    import argparse
+
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--fresh", action="store_true",
+                    help="discard all checkpoints and start over")
+    args = ap.parse_args()
+
     print("=" * 80)
     print("TARS-LORA VALIDATION GATE")
     print("=" * 80)
     print(f"REPO = {REPO}")
+    if args.fresh:
+        print("Mode: FRESH (checkpoints discarded)")
 
     # Check if model exists
     adapter_path = REPO / "tars-lora-repo" / "lora_model"
@@ -320,7 +474,10 @@ def main():
     print("WALK-FORWARD VALIDATION (6 folds, 70/30, 7-day embargo)")
     print("=" * 80)
 
-    wf_results = run_walk_forward_validation(df, model_predict)
+    checkpoint_dir = REPO / "reports" / CHECKPOINT_DIR_NAME
+    wf_results = run_walk_forward_validation(
+        df, model_predict, checkpoint_dir=checkpoint_dir, fresh=args.fresh
+    )
 
     # Run validation report
     # Combine all test returns for the gate
@@ -328,14 +485,13 @@ def main():
     # Need in-sample returns too - for simplicity, use train returns from first fold
     # (In practice, this would be a separate train evaluation)
     train_df = df[(df["split"] == "train") & df["usable"]]
-    train_predictions = []
-    for _, row in train_df.iterrows():
-        features = {}
-        for model_feat, df_col in FEATURE_MAP.items():
-            val = row.get(df_col, np.nan)
-            features[model_feat] = float(val) if not np.isnan(val) else 0.0
-        train_predictions.append(1 if model_predict(features) else 0)
-    train_predictions = np.array(train_predictions)
+    print(f"\nTrain predictions ({len(train_df)} rows, checkpointed every {TRAIN_CHUNK_ROWS}):")
+    train_predictions = predict_train_chunked(
+        train_df,
+        model_predict,
+        checkpoint_dir,
+        _dataset_fingerprint(df, 6, 0.7),
+    )
     train_returns = simulate_carry_returns(train_df, train_predictions)
 
     report = validation_report(

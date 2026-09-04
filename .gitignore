@@ -78,6 +78,13 @@ model-inspiration/
 # Inspiration research docs (removed from repos 2026-09; do not re-add)
 docs/inspiration-*.md
 
+# External-repo stealables (ika/OOBE/zinger idea mining, local research only — never commit)
+# These are private analysis of other projects; keeping them out of the repo
+# avoids exposing internal sourcing notes and any third-party IP concern.
+docs/ika-stealables.md
+docs/oobe-sap-stealables.md
+docs/zinger-core-stealables.md
+
 # One-off sub-projects that live outside this repo (never commit)
 t3n/
 mermail-trading-skill/
@@ -97,3 +104,6 @@ hf-space/lora_model/adapter_model.safetensors
 # ML spike reports + internal planning (temporary, not part of rebrand)
 reports/ml-*.md
 .zcode/
+
+# tars-lora validation resume checkpoints (regenerable, local only)
+reports/tars_lora_checkpoints/
