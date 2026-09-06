@@ -203,8 +203,6 @@ def main():
     
     # Update rotated keys
     new_env.update({
-        'DRY_RUN': 'false',
-        'ALLOW_LIVE': 'true',
         'AGENT_WALLET_PRIVATE_KEY': new_private_key,
         'AGENT_API_TOKEN': secrets.token_hex(32),
     })
@@ -234,8 +232,9 @@ def main():
         'VAULT_MIN_DEPOSIT', 'VAULT_MAX_TVL',
         'XLAYER_RPC_URL', 'XLAYER_RPC_URL_FALLBACK', 'XLAYER_CHAIN_ID',
         'AUDIT_CONTRACT_ADDRESS', 'VAULT_CONTRACT_ADDRESS',
-        'LOG_LEVEL', 'AGENT_API_TOKEN', 'AGENT_ID',
+        'LOG_LEVEL', 'AGENT_ID',
         'EXCHANGE', 'OKX_BASE_URL', 'OKX_DEMO',
+        'DRY_RUN', 'ALLOW_LIVE',
         'XLAYER_RPC_URL', 'XLAYER_RPC_URL_FALLBACK',
         'XLAYER_CHAIN_ID', 'AUDIT_CONTRACT_ADDRESS',
         'VAULT_CONTRACT_ADDRESS', 'PAY_TO_ADDRESS',
@@ -248,8 +247,8 @@ def main():
     
     # Ensure required keys have defaults
     defaults = {
-        'DRY_RUN': 'false',
-        'ALLOW_LIVE': 'true',
+        'DRY_RUN': 'true',
+        'ALLOW_LIVE': 'false',
         'AGENT_API_TOKEN': secrets.token_hex(32),
         'XLAYER_RPC_URL': 'https://rpc.xlayer.tech',
         'XLAYER_RPC_URL_FALLBACK': 'https://rpc.xlayer.tech',

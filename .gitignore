@@ -78,12 +78,17 @@ model-inspiration/
 # Inspiration research docs (removed from repos 2026-09; do not re-add)
 docs/inspiration-*.md
 
-# External-repo stealables (ika/OOBE/zinger idea mining, local research only — never commit)
+# External-repo stealables / reference-dependency docs (ika/OOBE/zinger/freqtrade/vibe-trading/autohedge/finceptterminal/claude-ads local research — never commit)
 # These are private analysis of other projects; keeping them out of the repo
 # avoids exposing internal sourcing notes and any third-party IP concern.
 docs/ika-stealables.md
 docs/oobe-sap-stealables.md
 docs/zinger-core-stealables.md
+docs/freqtrade-stealables.md
+docs/vibe-trading-stealables.md
+docs/autohedge-stealables.md
+docs/finceptterminal-stealables.md
+docs/claude-ads-stealables.md
 
 # One-off sub-projects that live outside this repo (never commit)
 t3n/

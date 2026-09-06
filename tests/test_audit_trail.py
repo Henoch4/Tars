@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from src.audit_trail import AuditLog, _jsonable
+from src.audit_trail import AuditLog, PROOF_EVIDENCE, _jsonable
 
 
 class FakeEvt(Enum):
@@ -36,8 +36,9 @@ def test_record_shape(audit_path: Path):
     log = AuditLog(audit_path)
     log.write("risk_rejection", {"reason": "STALE_PRICE"})
     record = json.loads(audit_path.read_text(encoding="utf-8").strip().splitlines()[0])
-    assert set(record) == {"ts", "event_type", "payload"}
+    assert set(record) == {"ts", "event_type", "proof", "payload"}
     assert record["event_type"] == "risk_rejection"
+    assert record["proof"] == PROOF_EVIDENCE
     assert record["payload"] == {"reason": "STALE_PRICE"}
     assert isinstance(record["ts"], (int, float))
 

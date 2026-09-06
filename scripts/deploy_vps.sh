@@ -58,6 +58,7 @@ install_system_packages() {
         logrotate \
         htop \
         tmux \
+        netcat-openbsd \
         git
 }
 
@@ -132,8 +133,8 @@ setup_env_file() {
 # Generated: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
 
 # Trading Mode
-DRY_RUN=false
-ALLOW_LIVE=true
+DRY_RUN=true
+ALLOW_LIVE=false
 
 # Agent Identity
 AGENT_WALLET_PRIVATE_KEY=
@@ -203,6 +204,7 @@ EOF
     chown root:root "$ENV_FILE"
     log "Environment file created at $ENV_FILE"
     warn "IMPORTANT: Edit $ENV_FILE and fill in all required values before starting services!"
+    fi
 }
 
 setup_systemd_services() {
@@ -275,37 +277,6 @@ StandardError=journal
 WantedBy=multi-user.target
 EOF
 
-    # Redis service (if not using system redis)
-    cat > /etc/systemd/system/tars-redis.service <<'EOF'
-[Unit]
-Description=TARS Redis Instance
-After=network.target
-
-[Service]
-Type=simple
-User=tars
-ExecStart=/usr/bin/redis-server /etc/redis/tars.conf
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    # Redis config
-    mkdir -p /etc/redis
-    cat > /etc/redis/tars.conf <<'EOF'
-bind 127.0.0.1
-port 6379
-maxmemory 256mb
-maxmemory-policy allkeys-lru
-save 900 1
-save 300 10
-save 60 10000
-appendonly yes
-appendfsync everysec
-EOF
-
     systemctl daemon-reload
     systemctl enable redis-server
     systemctl enable tars-agent tars-scheduler tars-ws-hub
@@ -316,43 +287,42 @@ EOF
 setup_nginx() {
     log "Configuring Nginx reverse proxy..."
     
-    cat > /etc/nginx/sites-available/tars <<'EOF'
+    cat > /etc/nginx/conf.d/tars_ratelimit.conf <<'EOF'
+limit_req_zone $binary_remote_addr zone=api:10m rate=30r/s;
+EOF
+
+    CERT_DIR="/etc/letsencrypt/live/your-domain.com"
+
+    if [[ -f "$CERT_DIR/fullchain.pem" && -f "$CERT_DIR/privkey.pem" ]]; then
+        cat > /etc/nginx/sites-available/tars <<'EOF'
 server {
     listen 80;
     server_name _;
-    
-    # Redirect HTTP to HTTPS
     return 301 https://$server_name$request_uri;
 }
 
 server {
     listen 443 ssl http2;
     server_name _;
-    
+
     ssl_certificate /etc/letsencrypt/live/your-domain.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/your-domain.com/privkey.pem;
-    
+
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
-    
-    # Security headers
+
     add_header X-Frame-Options DENY;
     add_header X-Content-Type-Options nosniff;
     add_header X-XSS-Protection "1; mode=block";
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-    
-    # Rate limiting
-    limit_req_zone $binary_remote_addr zone=api:10m rate=30r/s;
-    limit_req zone=api burst=50 nodelay;
-    
-    # Health check
+
     location /health {
+        limit_req zone=api burst=50 nodelay;
         proxy_pass http://127.0.0.1:8000;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
     }
-    
-    # WebSocket
+
     location /ws/ {
         proxy_pass http://127.0.0.1:8001;
         proxy_http_version 1.1;
@@ -362,17 +332,16 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_read_timeout 86400;
     }
-    
-    # API endpoints
+
     location /api/ {
+        limit_req zone=api burst=50 nodelay;
         proxy_pass http://127.0.0.1:8000;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
     }
-    
-    # Static files
+
     location /static/ {
         alias /opt/tars/static/;
         expires 30d;
@@ -380,6 +349,53 @@ server {
     }
 }
 EOF
+        log "Nginx configured with TLS"
+    else
+        warn "No Let's Encrypt certs found at $CERT_DIR — configuring HTTP-only. After DNS is pointed at this host, run: certbot --nginx -d <your-domain> --redirect"
+        cat > /etc/nginx/sites-available/tars <<'EOF'
+server {
+    listen 80;
+    server_name _;
+
+    add_header X-Frame-Options DENY;
+    add_header X-Content-Type-Options nosniff;
+    add_header X-XSS-Protection "1; mode=block";
+
+    location /health {
+        limit_req zone=api burst=50 nodelay;
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    location /ws/ {
+        proxy_pass http://127.0.0.1:8001;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_read_timeout 86400;
+    }
+
+    location /api/ {
+        limit_req zone=api burst=50 nodelay;
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /static/ {
+        alias /opt/tars/static/;
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+    }
+}
+EOF
+        warn "TLS disabled until certbot runs. HTTP-only access only."
+    fi
 
     # Enable site
     ln -sf /etc/nginx/sites-available/tars /etc/nginx/sites-enabled/
@@ -465,7 +481,9 @@ check_port "Agent API" 8000 || FAILURES=$((FAILURES + 1))
 check_port "WebSocket Hub" 8001 || FAILURES=$((FAILURES + 1))
 check_port "Redis" 6379 || FAILURES=$((FAILURES + 1))
 check_port "Nginx HTTP" 80 || FAILURES=$((FAILURES + 1))
-check_port "Nginx HTTPS" 443 || FAILURES=$((FAILURES + 1))
+if [[ -f /etc/letsencrypt/live/your-domain.com/fullchain.pem ]]; then
+    check_port "Nginx HTTPS" 443 || FAILURES=$((FAILURES + 1))
+fi
 
 # Check disk space
 DISK_USAGE=$(df /data | awk 'NR==2 {print $5}' | sed 's/%//')
