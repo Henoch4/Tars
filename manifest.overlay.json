@@ -5,7 +5,7 @@
     "name": "Portfolio Risk Audit Service",
     "description": "Runs a comprehensive portfolio audit: fetches account balances and positions, evaluates risk exposure, applies non-overridable risk gates, and logs the decision trail onchain to X Layer testnet. The service is hired via the /hire endpoint and returns a detailed audit report with risk scores, position analysis, and onchain decision hashes.",
     "type": "A2MCP",
-    "endpoint": "https://api.tars-trade.com/hire",
+    "endpoint": "https://api.tarstrade.xyz/hire",
     "request": {
       "method": "POST",
       "parameters": [
@@ -15,7 +15,7 @@
         "balance_data (object, optional): Pre-gathered balance data from 'okx account balance-all --json'. Required for data-forwarding mode (production). Example: {\"data\": [{\"ccy\": \"USDT\", \"availBal\": \"10000\"}]}",
         "positions_data (array, optional): Pre-gathered positions data from 'okx account positions --json'. Array of position objects. Example: [{\"instId\": \"BTC-USDT-SWAP\", \"pos\": \"0.1\", \"avgPx\": \"50000\"}]"
       ],
-      "example": "curl -X POST https://api.tars-trade.com/hire \\\n  -H \"Content-Type: application/json\" \\\n  -H \"X-Agent-Token: YOUR_AGENT_TOKEN\" \\\n  -d '{\n    \"mode\": \"own_account\",\n    \"profile_mode\": \"demo\",\n    \"inst_type\": \"SWAP\",\n    \"balance_data\": {\"data\": [{\"ccy\": \"USDT\", \"availBal\": \"10000\"}]},\n    \"positions_data\": [{\"instId\": \"BTC-USDT-SWAP\", \"pos\": \"0.1\", \"avgPx\": \"50000\"}]\n  }'"
+      "example": "curl -X POST https://api.tarstrade.xyz/hire \\\n  -H \"Content-Type: application/json\" \\\n  -H \"X-Agent-Token: YOUR_AGENT_TOKEN\" \\\n  -d '{\n    \"mode\": \"own_account\",\n    \"profile_mode\": \"demo\",\n    \"inst_type\": \"SWAP\",\n    \"balance_data\": {\"data\": [{\"ccy\": \"USDT\", \"availBal\": \"10000\"}]},\n    \"positions_data\": [{\"instId\": \"BTC-USDT-SWAP\", \"pos\": \"0.1\", \"avgPx\": \"50000\"}]\n  }'"
     },
     "response": {
       "description": "Returns a comprehensive audit report with risk scores, position analysis, leverage checks, and onchain decision trail.",
