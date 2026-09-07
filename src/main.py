@@ -58,12 +58,18 @@ from .data_integrity import DataIntegrityGate
 from .vault_api import router as vault_router
 from .reconciliation import read_vault_state, read_okx_balance, reconcile
 from .moove import MooveError, client_from_env
+from .settings import get_settings
 
 logger = logging.getLogger(__name__)
 
+# Wiring comes from src/settings.py (single table, validated at boot).
+# Module-level names are kept stable — tests monkeypatch these attrs
+# directly (e.g. X402_MAX_USD_PER_CALL, _MOOVE_GATE_HIRE).
+settings = get_settings()
+
 
 # Safety guard: live-account audits are opt-in at the PROCESS level.
-ALLOW_LIVE = os.getenv("ALLOW_LIVE", "false").lower() == "true"
+ALLOW_LIVE = settings.allow_live
 
 _MANIFEST_PATH = pathlib.Path(__file__).resolve().parent.parent / "manifest.json"
 
@@ -153,13 +159,13 @@ PRICED_ROUTES: dict[str, dict] = {
 # Server-side spend guardrail: a priced route above this is a
 # misconfiguration — it is left UNGATED (free) rather than overcharging,
 # and the refusal is logged. Callers protect themselves via /estimate.
-X402_MAX_USD_PER_CALL = float(os.getenv("X402_MAX_USD_PER_CALL", "5.00"))
+X402_MAX_USD_PER_CALL = settings.x402_max_usd_per_call
 
 # Per-tier per-IP budgets (token buckets, 60s window). Env-overridable;
 # premium is deliberately tight (runaway-LLM protection on value actions).
 _TIER_PER_MIN = {
-    "premium": int(os.getenv("X402_PREMIUM_PER_MIN", "10")),
-    "micro": int(os.getenv("X402_MICRO_PER_MIN", "120")),
+    "premium": settings.x402_premium_per_min,
+    "micro": settings.x402_micro_per_min,
 }
 _tier_buckets: dict[str, list[float]] = defaultdict(list)
 
@@ -196,7 +202,7 @@ def _build_paid_routes() -> dict:
     """
     priced = PRICED_ROUTES
     cap = X402_MAX_USD_PER_CALL
-    pay_to = os.getenv("PAY_TO_ADDRESS", "")
+    pay_to = settings.pay_to_address
     routes: dict = {}
     for path, entry in priced.items():
         try:
@@ -230,7 +236,7 @@ def _build_paid_routes() -> dict:
 # found the URL could trigger live trades or toggle the kill switch. This
 # is a shared-secret header check, not full auth, but it closes the
 # "anyone on the internet can call these" gap.
-_AGENT_API_TOKEN = os.getenv("AGENT_API_TOKEN", "").strip()
+_AGENT_API_TOKEN = settings.agent_api_token.strip()
 
 
 def _require_agent_token(x_agent_token: str | None = Header(default=None)) -> None:
@@ -252,10 +258,10 @@ def _require_agent_token(x_agent_token: str | None = Header(default=None)) -> No
 
 
 # --- x402 payment SDK wiring ---
-_pay_to = os.getenv("PAY_TO_ADDRESS", "")
+_pay_to = settings.pay_to_address
 if _pay_to and _x402_available:
     _facilitator = HTTPFacilitatorClient(
-        FacilitatorConfig(url=os.getenv("OKX_BASE_URL", ""))
+        FacilitatorConfig(url=settings.okx_base_url)
     )
     _x402_server = x402ResourceServer(_facilitator)
     _x402_server.register("eip155:196", ExactEvmScheme())  # type: ignore[arg-type]
@@ -511,6 +517,114 @@ async def billing_moove_link_get(link_id: str):
         await client.aclose()
 
 
+# --- Moove billing M2: settled-link gate + reconciliation status ---
+# When MOOVE_GATE_HIRE=true, POST /hire requires an X-Payment-Link header
+# carrying a COMPLETED Moove link id. Default false: the demo stays open
+# and the gate is inert (same honesty rule as the x402 paywall — a gate
+# that cannot enforce must not pretend to).
+_MOOVE_GATE_HIRE = settings.moove_gate_hire
+
+# Replay guard: a completed link pays for exactly one hire. In-memory, so
+# it is durable only on a persistent host — on serverless each invocation
+# starts empty (documented; the persistent-host migration closes it).
+_MOOVE_CONSUMED_LINKS: set[str] = set()
+
+
+async def _moove_hire_price() -> str:
+    """Single source for what one /hire costs (the pricing table)."""
+    return price_of("/hire")["price_usdc"]
+
+
+async def _moove_issue_hire_link(client) -> dict:
+    """Mint the single-use link a 402 response points the caller at."""
+    return await client.create_payment_link(
+        await _moove_hire_price(),
+        description="TARS hire audit (single use)",
+        max_usage=1,
+    )
+
+
+async def _require_hire_payment(request: Request) -> dict:
+    """Settled-link check for /hire. Returns the redeemed link.
+
+    Missing/unknown/unsettled → 402 with a ready-to-pay URL (or 404 for
+    an unknown id, 503 when Moove is unconfigured). Fail-closed throughout:
+    any Moove error denies the audit rather than waving it through.
+    """
+    link_id = (request.headers.get("X-Payment-Link") or "").strip()
+    client = client_from_env()
+    try:
+        if not link_id:
+            try:
+                fresh = await _moove_issue_hire_link(client)
+            except MooveError as e:
+                raise HTTPException(
+                    _moove_http_status(e),
+                    f"{e.code}: {e}" if e.code else str(e),
+                )
+            raise HTTPException(402, {
+                "detail": "Payment required: pass a completed Moove link id "
+                          "in the X-Payment-Link header.",
+                "payment_url": fresh["url"],
+                "link_id": fresh["id"],
+                "price_usdc": await _moove_hire_price(),
+            })
+        try:
+            link = await client.find_link(link_id)
+        except MooveError as e:
+            raise HTTPException(
+                _moove_http_status(e),
+                f"{e.code}: {e}" if e.code else str(e),
+            )
+        if link is None:
+            raise HTTPException(404, f"Unknown payment link: {link_id}")
+        if link.get("status") != "completed":
+            raise HTTPException(402, {
+                "detail": f"Payment link is {link.get('status')}, not settled.",
+                "payment_url": link.get("url"),
+                "link_id": link_id,
+            })
+        if link_id in _MOOVE_CONSUMED_LINKS:
+            raise HTTPException(402, {
+                "detail": "Payment link already redeemed for a previous audit.",
+                "link_id": link_id,
+            })
+        _MOOVE_CONSUMED_LINKS.add(link_id)
+        return link
+    finally:
+        await client.aclose()
+
+
+@app.get("/api/v1/billing/status/{link_id}")
+async def billing_status(link_id: str):
+    """Reconciliation verdict for one link: settled or not, with amounts
+    and the settling transaction. The receipt an agent (or the /hire gate)
+    checks before treating a payment as complete. Scoped — 503 when
+    Moove is unconfigured; 404 for an unknown id."""
+    client = client_from_env()
+    try:
+        try:
+            link = await client.find_link(link_id)
+        except MooveError as e:
+            raise HTTPException(
+                _moove_http_status(e),
+                f"{e.code}: {e}" if e.code else str(e),
+            )
+        if link is None:
+            raise HTTPException(404, f"Unknown payment link: {link_id}")
+        return {
+            "id": link.get("id"),
+            "status": link.get("status"),
+            "settled": link.get("status") == "completed",
+            "to_amount": link.get("toAmount"),
+            "received_amount": link.get("receivedAmount"),
+            "transaction_url": link.get("transactionUrl"),
+            "url": link.get("url"),
+        }
+    finally:
+        await client.aclose()
+
+
 @app.post("/hire")
 async def hire(req: HireRequest, request: Request):
     """Run a portfolio audit: analyze holdings, score risk, log the decision trail."""
@@ -528,6 +642,10 @@ async def hire(req: HireRequest, request: Request):
     client_ip = request.client.host if request.client else "unknown"
     if not _check_tier_limit(client_ip, "premium"):
         raise HTTPException(429, "Premium rate limit exceeded. Try again later.")
+
+    # M2 settled-link gate (opt-in via MOOVE_GATE_HIRE; inert by default).
+    if _MOOVE_GATE_HIRE:
+        await _require_hire_payment(request)
 
     # Mode detection: data-forwarding vs CLI
     if req.balance_data is not None:
@@ -582,37 +700,37 @@ _ALLOWED_COMPANIONS = _companions()
 
 def _make_risk_gate(onchain_logger=None) -> RiskGate:
     return RiskGate(
-        max_position_usd=float(os.getenv("MAX_POSITION_USD", "5000")),
-        max_daily_loss_usd=float(os.getenv("MAX_DAILY_LOSS_USD", "500")),
-        max_daily_trades=int(os.getenv("MAX_DAILY_TRADES", "10")),
-        max_daily_volume_usd=float(os.getenv("MAX_DAILY_VOLUME_USD", "50000")),
-        max_leverage=float(os.getenv("MAX_LEVERAGE", "5.0")),
-        min_confidence_bps=int(os.getenv("MIN_CONFIDENCE_BPS", "7000")),
-        max_price_age_seconds=float(os.getenv("MAX_PRICE_AGE_SECONDS", "60")),
-        loss_cooldown_minutes=float(os.getenv("LOSS_COOLDOWN_MINUTES", "30")),
-        drawdown_window_days=int(os.getenv("DRAWDOWN_WINDOW_DAYS", "3")),
-        drawdown_loss_mult=float(os.getenv("DRAWDOWN_LOSS_MULT", "2.0")),
+        max_position_usd=settings.max_position_usd,
+        max_daily_loss_usd=settings.max_daily_loss_usd,
+        max_daily_trades=settings.max_daily_trades,
+        max_daily_volume_usd=settings.max_daily_volume_usd,
+        max_leverage=settings.max_leverage,
+        min_confidence_bps=settings.min_confidence_bps,
+        max_price_age_seconds=settings.max_price_age_seconds,
+        loss_cooldown_minutes=settings.loss_cooldown_minutes,
+        drawdown_window_days=settings.drawdown_window_days,
+        drawdown_loss_mult=settings.drawdown_loss_mult,
         allowed_assets=_ALLOWED_ASSETS,
         allowed_companions=_ALLOWED_COMPANIONS,
-        regime_throttle=os.getenv("REGIME_THROTTLE", "false").lower() in ("1", "true", "yes"),
-        regime_band_pct=float(os.getenv("REGIME_BAND_PCT", "5.0")),
-        regime_size_scale=float(os.getenv("REGIME_SIZE_SCALE", "0.8")),
+        regime_throttle=settings.regime_throttle,
+        regime_band_pct=settings.regime_band_pct,
+        regime_size_scale=settings.regime_size_scale,
         counters_durable=True,
         onchain_logger=onchain_logger,
     )
 
 def _make_onchain_logger() -> OnchainLogger | None:
     """Create onchain logger if configured. Returns None if not configured."""
-    rpc_url = os.getenv("XLAYER_RPC_URL", "").strip()
-    contract_addr = os.getenv("AUDIT_CONTRACT_ADDRESS", "").strip()
-    private_key = os.getenv("AGENT_WALLET_PRIVATE_KEY", "").strip()
+    rpc_url = settings.xlayer_rpc_url.strip()
+    contract_addr = settings.audit_contract_address.strip()
+    private_key = settings.agent_wallet_private_key.strip()
     if not all([rpc_url, contract_addr, private_key]):
         return None
     return OnchainLogger(
         rpc_url=rpc_url,
         contract_address=contract_addr,
         private_key=private_key,
-        chain_id=int(os.getenv("XLAYER_CHAIN_ID", "1952")),
+        chain_id=settings.xlayer_chain_id,
     )
 
 def _make_curator() -> CuratorAgent | None:
@@ -623,41 +741,41 @@ def _make_curator() -> CuratorAgent | None:
         return None
     return CuratorAgent(profiles_path, audit_log=_audit_log)
 
-_dry_run = os.getenv("DRY_RUN", "true").lower() == "true"
+_dry_run = settings.dry_run
 # Order matters: the onchain logger must exist before the risk gate is built,
 # so the gate can boot-strap daily counters against TradeAuditTrail at import.
 _onchain_logger = _make_onchain_logger()
 _risk_gate = _make_risk_gate(onchain_logger=_onchain_logger)
-_exchange = os.getenv("EXCHANGE", "okx").lower()
+_exchange = settings.exchange.lower()
 _cli = create_exchange_client(_exchange)
-_audit_log = AuditLog(path=os.getenv("AUDIT_LOG_PATH", "audit_log.jsonl"))
+_audit_log = AuditLog(path=settings.audit_log_path)
 _curator = _make_curator()
 _integrity_gate = DataIntegrityGate(
-    staleness_threshold_s=float(os.getenv("DATA_STALENESS_SECONDS", "30")),
+    staleness_threshold_s=settings.data_staleness_seconds,
 )
 _multi_leg_manager = MultiLegExecutionManager(
-    max_concurrent_packages=int(os.getenv("MAX_CONCURRENT_PACKAGES", "3")),
+    max_concurrent_packages=settings.max_concurrent_packages,
     # Persistent scratch for multi-leg crash recovery (D1(a)/Z3/W4): package
     # state is saved per leg so a restart mid-package reconciles instead of
     # leaving a naked leg. Must live on persistent storage in production
     # (same requirement as RISK_STATE_PATH) — temp dirs defeat recovery.
-    persist_dir=os.getenv("MULTI_LEG_STATE_DIR", "data/multi_leg_state"),
+    persist_dir=settings.multi_leg_state_dir,
 )
 _trading_agent = AutonomousTradingAgent(
     okx_cli=_cli,
     risk_gate=_risk_gate,
     onchain_logger=_onchain_logger,
     dry_run=_dry_run,
-    max_position_usd=float(os.getenv("MAX_POSITION_USD", "5000")),
-    agent_id=os.getenv("AGENT_ID", "autonomous-trader-001"),
-    sizing_mode=os.getenv("SIZING_MODE", "kelly"),
-    kelly_fraction=float(os.getenv("KELLY_FRACTION", "0.5")),
+    max_position_usd=settings.max_position_usd,
+    agent_id=settings.agent_id,
+    sizing_mode=settings.sizing_mode,
+    kelly_fraction=settings.kelly_fraction,
     integrity_gate=_integrity_gate,
     curator=_curator,
     audit_log=_audit_log,
     multi_leg_manager=_multi_leg_manager,
-    funding_arb_min_rate=float(os.getenv("FUNDING_ARB_MIN_RATE", "0.001")),
-    regime_filter_window=int(os.getenv("REGIME_FILTER_WINDOW", "50")),
+    funding_arb_min_rate=settings.funding_arb_min_rate,
+    regime_filter_window=settings.regime_filter_window,
 )
 
 
