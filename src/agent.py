@@ -1231,7 +1231,7 @@ class AutonomousTradingAgent:
 
                 # Use funding_history tail if available
                 hist = self._get_ml_history(asset)["funding"][-48:] if self._get_ml_history(asset)["funding"] else [0.0]
-                dec = decompose_funding(hist, interest=0.0)
+                dec = decompose_funding(hist, interest_rate=0.0)
                 pin_state = dec["pin_state"][-1] if dec["pin_state"] else 0
             except Exception:
                 pin_state = 0

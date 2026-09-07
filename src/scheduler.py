@@ -156,7 +156,7 @@ class TradingScheduler:
                 elif transition == "recovered":
                     send_alert(
                         "LOOP_RECOVERED", "warning",
-                        f"Cycle loop contributing again (last: {hb['cycle_id']}).",
+                        f"Cycle loop contributing again (last: {hb['cycle_id'] if hb else 'unknown'}).",
                     )
             except Exception as e:  # noqa: BLE001 — watchdog never kills the loop
                 logger.warning(f"Watchdog check failed: {e}")

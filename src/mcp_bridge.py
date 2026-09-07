@@ -110,7 +110,8 @@ class McpBridge:
         if proc is None:
             return
         try:
-            proc.stdin.close()
+            if proc.stdin is not None:
+                proc.stdin.close()
         except Exception:
             pass
         try:

@@ -110,10 +110,6 @@ class LearningState:
         return json.dumps(sorted(serializable.items()), separators=(",", ":")).encode()
 
 
-def _sha256(data: bytes) -> bytes:
-    return hashlib.sha256(data).digest()
-
-
 class LearningStore:
     """Persistent learning-state store with Merkle root per cycle (I12).
 
@@ -230,24 +226,8 @@ def merkle_root(leaves: list[bytes]) -> bytes:
     return level[0]
 
 
-def _sha256(data: bytes) -> bytes:
-    return hashlib.sha256(data).digest()
-
-
 def _sha256_str(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
-
-
-# Import at bottom to avoid circular dependency
-import hashlib
-import json
-import time
-from dataclasses import dataclass, field
-from typing import Any
-from pathlib import Path
-
-
-import pickle
 
 # --- Backwards-compat helpers for existing pipeline ---
 def save_learning_state(

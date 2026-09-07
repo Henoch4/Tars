@@ -298,7 +298,9 @@ class OnchainLogger:
                     # Re-read nonce from the new endpoint and check for divergence
                     old_counter = self._nonce_counter
                     self.w3 = candidate
-                    new_nonce = self.w3.eth.get_transaction_count(self.agent_address)
+                    new_nonce = self.w3.eth.get_transaction_count(
+                        Web.to_checksum_address(self.agent_address)
+                    )
                     if old_counter is not None and new_nonce != old_counter:
                         logger.warning(
                             f"Nonce divergence on failover: local counter={old_counter}, "
@@ -313,14 +315,18 @@ class OnchainLogger:
     def get_nonce(self) -> int:
         """Node-reported transaction count. Kept for scripts/external callers;
         the transaction path uses _next_nonce() for race safety."""
-        return self.w3.eth.get_transaction_count(self.agent_address)
+        return self.w3.eth.get_transaction_count(
+            Web.to_checksum_address(self.agent_address)
+        )
 
     def _next_nonce(self) -> int:
         """Return the next nonce to use, maintaining a local monotonic counter
         so parallel sends don't collide. The counter is seeded from the node on
         first use and bumped once per send."""
         if self._nonce_counter is None:
-            self._nonce_counter = self.w3.eth.get_transaction_count(self.agent_address)
+            self._nonce_counter = self.w3.eth.get_transaction_count(
+                Web.to_checksum_address(self.agent_address)
+            )
         else:
             self._nonce_counter += 1
         return self._nonce_counter
