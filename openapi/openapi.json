@@ -181,6 +181,80 @@
         }
       }
     },
+    "/api/v1/billing/moove-link": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Create a Moove Receive payment link for a value action. Returns",
+        "operationId": "billing_moove_link",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        },
+        "security": [
+          {
+            "AgentToken": []
+          }
+        ]
+      }
+    },
+    "/api/v1/billing/moove-links": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Reconciliation source: newest-first page (10 fixed) of the",
+        "operationId": "billing_moove_links",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/billing/moove-link/{link_id}": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Public link lookup (no key needed \u2014 mirrors Moove's unauthenticated",
+        "operationId": "billing_moove_link_get",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
     "/hire": {
       "post": {
         "tags": [

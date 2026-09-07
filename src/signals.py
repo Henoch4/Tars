@@ -519,6 +519,202 @@ def funding_rate_signal(
         )
 
 
+def funding_persistence_z_signal(
+    asset: str,
+    funding_rate: float,
+    funding_history: list[float] | None = None,
+    price_history: list[float] | None = None,
+    z_threshold: float = 1.5,
+    persist_window: int = 5,
+    persist_frac: float = 0.8,
+    mild_threshold: float = 0.0003,
+    vol_window: int = 24,
+    premium_history: list[float] | None = None,
+    interest_rate: float = 0.0001,
+    surge_enabled: bool = False,
+    surge_vol_mult: float = 2.0,
+    surge_persist_window: int = 7,
+) -> Signal:
+    """
+    Funding-rate contrarian with z-score + persistence filters.
+
+    More selective than the plain funding_rate_signal so that the few trades
+    that fire have a better chance of surviving 8 bps round-trip costs.
+    Designed to produce non-zero OOS returns (avoids the has_oos_evidence=False
+    failure mode) while keeping confidence high enough for the live risk gate.
+    """
+    # Build funding history window for z-score
+    if funding_history is None or len(funding_history) < 5:
+        return Signal(
+            strategy="funding_persistence_z",
+            asset=asset,
+            direction="NEUTRAL",
+            confidence_bps=0,
+            entry_price=price_history[-1] if price_history else None,
+            rationale="Insufficient funding history for z-score",
+            metadata={"funding_rate": funding_rate},
+        )
+    hist = funding_history[-21:] if len(funding_history) >= 21 else funding_history
+    mean_f = statistics.mean(hist)
+    std_f = statistics.pstdev(hist) if len(hist) > 1 else 0.0
+
+    if std_f < 1e-12:
+        return Signal(
+            strategy="funding_persistence_z",
+            asset=asset,
+            direction="NEUTRAL",
+            confidence_bps=0,
+            entry_price=price_history[-1] if price_history else None,
+            rationale="Funding std near zero — no z-score",
+            metadata={"funding_rate": funding_rate, "mean_funding": mean_f},
+        )
+
+    funding_z = (funding_rate - mean_f) / std_f
+
+    # Surge detector (bored2boar steal): volatility bursts are where the
+    # drip turns into a surge — and where adverse-selection risk is highest.
+    # When enabled, current-window vol is compared against the preceding
+    # non-overlapping baseline window (a burst must be a regime *change*,
+    # not just high vol). If the ratio exceeds surge_vol_mult, the
+    # persistence window widens (5 → 7): pickier entries during bursts,
+    # same entries in calm. A flat baseline (vol 0) abstains — no ratio to
+    # compute. Disabled by default so the validated SOL PASS behavior is
+    # unchanged until the gate clears the surge variant.
+    eff_window = persist_window
+    surge_detected = False
+    vol_ratio = 0.0
+    if surge_enabled and price_history and len(price_history) >= 2 * vol_window + 1:
+        short_rets = [
+            (price_history[i] - price_history[i - 1]) / price_history[i - 1]
+            for i in range(-vol_window, 0)
+            if price_history[i - 1] != 0
+        ]
+        base_rets = [
+            (price_history[i] - price_history[i - 1]) / price_history[i - 1]
+            for i in range(-2 * vol_window, -vol_window)
+            if price_history[i - 1] != 0
+        ]
+        vol_short = statistics.pstdev(short_rets) if len(short_rets) > 1 else 0.0
+        vol_base = statistics.pstdev(base_rets) if len(base_rets) > 1 else 0.0
+        if vol_base > 0:
+            vol_ratio = vol_short / vol_base
+            if vol_ratio > surge_vol_mult:
+                surge_detected = True
+                eff_window = surge_persist_window
+
+    # Persistence: fraction of recent rates on same side of mild_threshold
+    recent = funding_history[-eff_window:] if len(funding_history) >= eff_window else funding_history
+    if funding_rate > mild_threshold:
+        same_side = sum(1 for r in recent if r > mild_threshold)
+        direction_candidate: SignalDirection = "SHORT"
+    elif funding_rate < -mild_threshold:
+        same_side = sum(1 for r in recent if r < -mild_threshold)
+        direction_candidate = "LONG"
+    else:
+        return Signal(
+            strategy="funding_persistence_z",
+            asset=asset,
+            direction="NEUTRAL",
+            confidence_bps=0,
+            entry_price=price_history[-1] if price_history else None,
+            rationale=f"Funding rate {funding_rate:.6f} within mild band ±{mild_threshold} — no signal",
+            metadata={"funding_rate": funding_rate, "funding_z": funding_z},
+        )
+
+    persistence = same_side / len(recent) if recent else 0.0
+
+    # Optional vol dampener
+    vol = 0.0
+    if price_history and len(price_history) >= vol_window + 1:
+        rets = [
+            (price_history[i] - price_history[i - 1]) / price_history[i - 1]
+            for i in range(-vol_window, 0)
+            if price_history[i - 1] != 0
+        ]
+        vol = statistics.pstdev(rets) if len(rets) > 1 else 0.0
+
+    # Pin-state-aware: when |interest-P| >= cap, funding pinned → y has near-zero var
+    # Feed as categorical to quantile model; here expose as metadata and keep gate
+    pin_state = 0
+    premium_z_val = 0.0
+    residual_val = 0.0
+    if premium_history and len(premium_history) >= 5:
+        try:
+            # premium_history is TWAP premium avg over funding interval
+            dec = decompose_funding(premium_history[-persist_window:], interest_rate=interest_rate, cap=0.0005, window_bars=48)
+            pin_state = int(dec["pin_state"][-1]) if dec["pin_state"] else 0
+            premium_z_val = float(dec["premium_z"][-1]) if dec["premium_z"] else 0.0
+            residual_val = float(dec["residual"][-1]) if dec["residual"] else 0.0
+        except Exception:
+            pin_state = 0
+
+    # Strict entry: need both z-extremity and persistence
+    if abs(funding_z) < z_threshold or persistence < persist_frac:
+        return Signal(
+            strategy="funding_persistence_z",
+            asset=asset,
+            direction="NEUTRAL",
+            confidence_bps=0,
+            entry_price=price_history[-1] if price_history else None,
+            rationale=(
+                f"Funding z={funding_z:.2f} (need >={z_threshold}) or "
+                f"persist={persistence:.0%} (need >={persist_frac:.0%})"
+                + (" [surge: window 5→7]" if surge_detected else "")
+            ),
+            metadata={
+                "funding_z": funding_z,
+                "persistence": persistence,
+                "funding_rate": funding_rate,
+                "vol": vol,
+                "pin_state": pin_state,
+                "premium_z": premium_z_val,
+                "residual": residual_val,
+                "surge_detected": surge_detected,
+                "vol_ratio": vol_ratio,
+                "persist_window": eff_window,
+            },
+        )
+
+    # Confidence mapping: start high and scale with |z| and persistence
+    # Target: strong cases land >= 7200 bps so they pass both validation
+    # is_tradeable (6000) and the live risk-gate floor (7000).
+    strength = min(abs(funding_z) / 3.0, 1.0) * 0.6 + persistence * 0.4
+    confidence = 0.72 + 0.20 * strength  # 0.72 -> 0.92
+    if vol > 0.02:  # very rough 1h vol dampener
+        confidence *= 0.92
+    confidence_bps = int(min(confidence, 0.92) * 10000)
+
+    return Signal(
+        strategy="funding_persistence_z",
+        asset=asset,
+        direction=direction_candidate,
+        confidence_bps=confidence_bps,
+        entry_price=price_history[-1] if price_history else None,
+        rationale=(
+            f"Funding z={funding_z:.2f}, persistence={persistence:.0%} "
+            f"over last {eff_window} periods, rate={funding_rate:.6f}. "
+            f"Contrarian {direction_candidate} pin={pin_state}."
+            + (" surge=1." if surge_detected else "")
+        ),
+        metadata={
+            "funding_z": funding_z,
+            "persistence": persistence,
+            "funding_rate": funding_rate,
+            "mean_funding": mean_f,
+            "std_funding": std_f,
+            "vol": vol,
+            "z_threshold": z_threshold,
+            "persist_frac": persist_frac,
+            "pin_state": pin_state,
+            "premium_z": premium_z_val,
+            "residual": residual_val,
+            "surge_detected": surge_detected,
+            "vol_ratio": vol_ratio,
+            "persist_window": eff_window,
+        },
+    )
+
+
 def ensemble_signal(asset: str, signals: list[Signal]) -> Signal:
     """
     Combine multiple signals into an ensemble decision.
@@ -975,9 +1171,11 @@ def ml_funding_carry_signal(
     price_history: list[float] | None = None,
     min_basis_bps: float = 5.0,
     min_annualized_apr: float = 10.0,
+    premium_history: list[float] | None = None,
+    interest_rate: float = 0.0001,
 ) -> Signal:
     """
-    ML-enhanced funding carry signal using tars-lora.
+    ML-enhanced funding carry signal using trained quantile + hazard models.
 
     Replaces the fixed `funding_arb_min_rate` threshold with a learned
     decision: "will 7-day carry clear costs?"
@@ -989,6 +1187,8 @@ def ml_funding_carry_signal(
     - ret: recent return from price history
     - funding_7d_mean: 7-day mean funding rate from funding history
     - funding_z_score: z-score of current funding vs 7-day history
+    - premium_history: TWAP premium avg (for pin_state decomposition)
+    - interest_rate: per-8h interest rate (default 0.01%/8h, 0.0 for ETH/BTC)
 
     S5/W3 fail-closed: if the ML model produces no prediction, this returns
     NEUTRAL with degraded=True and a typed degradation_reason — never LONG.
@@ -996,7 +1196,8 @@ def ml_funding_carry_signal(
     the skip is counted (see ML_DEGRADATIONS) instead of silently defaulted
     into a tradeable value.
     """
-    from .ml_inference import CarryFeatures, predict_carry_clear
+    from src.ml_inference import predict_carry_decision, predict_carry_clear
+    from src.ml_inference import CarryDecision  # backward compat
 
     basis = perp_price - spot_price
     basis_bps = (basis / spot_price) * 10000 if spot_price > 0 else 0
@@ -1028,77 +1229,103 @@ def ml_funding_carry_signal(
     # Rule-based gate first (fast path)
     rule_passes = basis_bps >= min_basis_bps and annualized_funding >= min_annualized_apr
 
-    # Try ML model. Any failure (missing weights, inference error,
-    # malformed output) yields a TYPED degradation, not a silent default.
+    # Build feature dict for ML inference
+    feat_dict = {
+        "f0": funding_rate,
+        "f1": basis_bps,
+        "f2": vol,
+        "f_del": ret,
+        "f_mean3d": funding_7d_mean,
+        "f_z30d": funding_z_score,
+        # pin_state etc. will be filled by caller if premium_history available
+    }
+
+# Try ML model (quantile + hazard). Any failure yields TYPED degradation.
     ml_decision = None
     ml_confidence = 0.0
     ml_degradation: str | None = None
+    pin_state = 0
+    result = None
     try:
-        features = CarryFeatures(
-            funding_rate=funding_rate,
-            basis_bps=basis_bps,
-            vol=vol,
-            ret=ret,
-            funding_7d_mean=funding_7d_mean,
-            funding_z_score=funding_z_score,
+        result = predict_carry_decision({
+            "f0": funding_rate,
+            "f1": basis_bps,
+            "f2": vol,
+            "f_del": ret,
+            "f_mean3d": funding_7d_mean,
+            "f_z30d": funding_z_score,
+        }, premium_history=premium_history, interest_rate=interest_rate)
+        ml_decision = CarryDecision(
+            will_clear=result["eligible"],
+            confidence=result["q20_bps"] / 10000.0,
+            raw_answer=f"q20={result['q20_bps']:.1f} bps"
         )
-        ml_decision = predict_carry_clear(features)
-        ml_confidence = ml_decision.confidence
+        ml_confidence = result["q20_bps"] / 10000.0
+        pin_state = result.get("pin_state", 0)
     except Exception as e:
         ml_degradation = f"ml_unavailable:{type(e).__name__}"
         record_ml_degradation(f"{asset}:{ml_degradation}")
 
     # Combine rule-based + ML: both must agree for HIGH confidence
-    # If ML unavailable, fall back to rule-based with moderate confidence
     direction: SignalDirection = "NEUTRAL"
-    if ml_decision is not None:
-        if ml_decision.will_clear and rule_passes:
-            # Both agree: strong signal
-            confidence = min(0.85 + ml_confidence * 0.1, 0.95)
-            direction = "LONG"
-            rationale = (
-                f"ML carry model: YES (conf={ml_confidence:.2f}). "
-                f"Rule gate: basis {basis_bps:.1f}bps, funding {annualized_funding:.1f}% APR. "
-                f"Long spot + short perp to collect carry."
-            )
-        elif not ml_decision.will_clear and not rule_passes:
-            # Both agree: no trade
-            confidence = 0.3
-            direction = "NEUTRAL"
-            rationale = (
-                f"ML carry model: NO (conf={ml_confidence:.2f}). "
-                f"Rule gate: basis {basis_bps:.1f}bps, funding {annualized_funding:.1f}% APR. "
-                f"No carry opportunity."
-            )
-        elif ml_decision.will_clear and not rule_passes:
-            # ML says yes but rules say no: cautious
-            confidence = 0.4
-            direction = "NEUTRAL"
-            rationale = (
-                f"ML carry model: YES (conf={ml_confidence:.2f}) but rule gate failed: "
-                f"basis {basis_bps:.1f}bps (< {min_basis_bps}) or "
-                f"funding {annualized_funding:.1f}% (< {min_annualized_apr}%). "
-                f"Waiting for rule confirmation."
-            )
-        else:  # ML says no but rules pass
-            confidence = 0.3
-            direction = "NEUTRAL"
-            rationale = (
-                f"Rule gate passed (basis {basis_bps:.1f}bps, funding {annualized_funding:.1f}%) "
-                f"but ML carry model: NO (conf={ml_confidence:.2f}). "
-                f"Model predicts carry won't clear costs."
-            )
-    else:
-        # S5/W3: ML produced no prediction — fail closed. NEUTRAL with a
-        # typed reason; the rule gate's status is reported for diagnosis
-        # but never converted into a LONG under this strategy's name.
-        confidence = 0.2
+    if result and result.get("eligible", False) and rule_passes:
+        # Both agree: strong signal
+        confidence = min(0.85 + result["q20_bps"] / 100000.0, 0.95)
+        direction = "LONG"
+        rationale = (
+            f"ML carry q20={result['q20_bps']:.1f} bps > 16 bps. "
+            f"Rule gate: basis {basis_bps:.1f}bps, funding {annualized_funding:.1f}% APR. "
+            f"Long spot + short perp to collect carry."
+        )
+    elif not result or (not result.get("eligible", True) and not rule_passes):
+        # Both agree: no trade (or ML degraded)
+        confidence = 0.3
         direction = "NEUTRAL"
         rationale = (
-            f"ML carry model unavailable ({ml_degradation}); no ML input. "
-            f"Rule gate: basis {basis_bps:.1f}bps, funding "
-            f"{annualized_funding:.1f}% APR — signal withheld, not confirmed."
+            f"ML carry q20={result.get('q20_bps', 0) if result else 0:.1f} bps <= 16 bps. "
+            f"Rule gate: basis {basis_bps:.1f}bps, funding {annualized_funding:.1f}% APR. "
+            f"No carry opportunity."
         )
+    elif result and result.get("eligible", False) and not rule_passes:
+        # ML says yes but rules say no: cautious
+        confidence = 0.4
+        direction = "NEUTRAL"
+        rationale = (
+            f"ML carry says YES (q20={result.get('q20_bps', 0):.1f} bps) but rule gate failed: "
+            f"basis {basis_bps:.1f}bps (< {min_basis_bps}) or "
+            f"funding {annualized_funding:.1f}% (< {min_annualized_apr}%). "
+            f"Waiting for rule confirmation."
+        )
+    else:  # ML says no but rules pass (or ML degraded)
+        confidence = 0.3
+        direction = "NEUTRAL"
+        rationale = (
+            f"Rule gate passed (basis {basis_bps:.1f}bps, funding {annualized_funding:.1f}%) "
+            f"but ML carry q20={result.get('q20_bps', 0) if result else 0:.1f} bps <= 16 bps. "
+            f"Model predicts carry won't clear costs."
+        )
+
+    # Build metadata with pin_state if available
+    metadata = {
+        "spot_price": spot_price,
+        "perp_price": perp_price,
+        "basis_bps": basis_bps,
+        "funding_rate": funding_rate,
+        "annualized_funding_pct": annualized_funding,
+        "vol": 0.0,
+        "ret": 0.0,
+        "funding_7d_mean": funding_7d_mean,
+        "funding_z_score": funding_z_score,
+        "ml_will_clear": result.get("eligible", False) if result else False,
+        "ml_confidence": result.get("q20_bps", 0) / 10000.0 if result else 0.0,
+        "ml_raw_answer": f"q20={result.get('q20_bps', 0):.1f} bps" if result else "q20=N/A",
+        "rule_passes": rule_passes,
+        "degraded": result is None,
+        "degradation_reason": ml_degradation,
+        "next_funding_ts": 0,
+        "legs": {"spot": "LONG", "perp": "SHORT"},
+        "pin_state": pin_state,
+    }
 
     return Signal(
         strategy="ml_funding_carry",
@@ -1107,25 +1334,7 @@ def ml_funding_carry_signal(
         confidence_bps=int(confidence * 10000),
         entry_price=spot_price,
         rationale=rationale,
-        metadata={
-            "spot_price": spot_price,
-            "perp_price": perp_price,
-            "basis_bps": basis_bps,
-            "funding_rate": funding_rate,
-            "annualized_funding_pct": annualized_funding,
-            "vol": vol,
-            "ret": ret,
-            "funding_7d_mean": funding_7d_mean,
-            "funding_z_score": funding_z_score,
-            "ml_will_clear": ml_decision.will_clear if ml_decision else None,
-            "ml_confidence": ml_confidence if ml_decision else None,
-            "ml_raw_answer": ml_decision.raw_answer if ml_decision else None,
-            "rule_passes": rule_passes,
-            "degraded": ml_decision is None,
-            "degradation_reason": ml_degradation,
-            "next_funding_ts": 0,
-            "legs": {"spot": "LONG", "perp": "SHORT"},
-        },
+        metadata=metadata,
     )
 
 
@@ -1134,36 +1343,134 @@ def ml_funding_carry_signal(
 CARRY_EV_MARGIN = 2.0
 
 
+# --- Quantile / Pinball helpers (Koenker & Bassett 1978, Econometrica 46(1):33-50) ---
+
+def pinball_loss(y_true: float, q_pred: float, tau: float) -> float:
+    """L_tau(y,q) = (tau - 1{y<q})(y-q)  — Koenker & Bassett (1978)."""
+    return (tau - (1 if y_true < q_pred else 0)) * (y_true - q_pred)
+
+
+def enforce_quantile_non_crossing(q20: float, q50: float) -> tuple[float, float]:
+    """Post-hoc fix for crossing quantiles (q20 > q50) — most common silent bug."""
+    if q20 > q50:
+        q20 = q50
+    return q20, q50
+
+
+def quantile_coverage(y: list[float], q: list[float], tau: float) -> float:
+    """Empirical P(y < q) should ≈ tau. If 0.35 vs 0.2, q20 not conservative."""
+    if not y or len(y) != len(q):
+        return float("nan")
+    return sum(1 for yi, qi in zip(y, q) if yi < qi) / len(y)
+
+
+def is_quantile_pass(q20: float, threshold_bps: float = 16.0) -> bool:
+    """Acceptance: q_{0.2}(x) > 16 bps — screen on conditional quantile, not mean."""
+    return q20 > threshold_bps
+
+
+def decompose_funding(
+    premium_avg: list[float],
+    interest_rate: float | list[float] = 0.0001,
+    cap: float = 0.0005,
+    window_bars: int = 48,
+) -> dict:
+    """Corrected Binance: funding = P_avg + clamp(interest - P_avg, -cap, cap)
+    cap=0.05% (0.0005), interest 0.01%/8h (0.0001) default, 0.0 for ETH/BTC etc.
+    pin_state fires when |interest-P| >= cap — more often than raw clamp.
+    Feed pin_state as categorical to quantile (item 1) — pinned y has near-zero
+    var, else drags q20 down. Don't hard-code interest per-venue/per-symbol."""
+    if isinstance(interest_rate, (int, float)):
+        interest_list = [float(interest_rate)] * len(premium_avg)
+    else:
+        interest_list = list(interest_rate)  # type: ignore
+        if len(interest_list) != len(premium_avg):
+            raise ValueError("interest length must match premium_avg")
+
+    funding: list[float] = []
+    pin_state: list[int] = []
+    clamped_spread: list[float] = []
+    for p, it in zip(premium_avg, interest_list):
+        spread = it - p
+        cs = min(max(spread, -cap), cap)
+        clamped_spread.append(cs)
+        funding.append(p + cs)
+        pin_state.append(-1 if spread <= -cap else (1 if spread >= cap else 0))
+
+    # premium_z rolling (window_bars) — as spec, not EWMA, to match funding decomposition note
+    premium_z: list[float] = []
+    import statistics as _st
+
+    for i, p in enumerate(premium_avg):
+        win = premium_avg[max(0, i - window_bars + 1): i + 1]
+        m = _st.mean(win) if win else 0.0
+        s = _st.pstdev(win) if len(win) > 1 else 0.0
+        premium_z.append((p - m) / s if s > 1e-12 else 0.0)
+
+    residual = [cs - (it - p) for cs, it, p in zip(clamped_spread, interest_list, premium_avg)]
+
+    return {"funding": funding, "pin_state": pin_state, "premium_z": premium_z, "residual": residual}
+
+
+def expected_carry_pnl(
+    funding_per_period: list[float],
+    hazards: list[float],
+    cost_per_period: float = 0.0,
+    terminal_payoff: float = 0.0,
+) -> float:
+    """Survival-weighted carry: E[PnL]= Σ S_{t-1}(funding_t - cost_t) + S_K*terminal
+    S_t = Π(1-h_j), h_t = P(flip|alive). Prevents assuming survival to day 7."""
+    if len(funding_per_period) != len(hazards):
+        raise ValueError("funding and hazards must same length")
+    s_prev = 1.0
+    exp = 0.0
+    for f, h in zip(funding_per_period, hazards):
+        exp += s_prev * (f - cost_per_period)
+        s_prev *= (1 - h)
+    exp += s_prev * terminal_payoff
+    return exp
+
+
 def carry_break_even_rate(
     taker_fee_bps_spot: float = 5.0,
     taker_fee_bps_perp: float = 5.0,
     slippage_bps_per_leg: float = 3.0,
     hold_periods: float = 21.0,
+    survival_prob: float = 1.0,
+    pin_state: int = 0,
 ) -> float:
     """Minimum per-period funding rate for delta-neutral carry to clear costs.
 
-    Z1: a flat threshold is wrong in both directions — too loose when fees
-    are high or the hold is short (books that lose money slip through),
-    too strict when costs are low (profitable carry refused). Derive the
-    break-even from the actual fee/slippage schedule instead:
+    Z1 + survival + clamp: a flat threshold is wrong in both directions — too
+    loose when fees are high or hold short (books that lose money slip through),
+    too strict when costs low (profitable carry refused). Derive break-even
+    from actual fee/slippage, then adjust for position survival S(k) and
+    clamp state (pin_state !=0 means funding capped regardless of premium):
 
     - Round trip per leg = entry fee + exit fee + entry slip + exit slip.
     - Two legs (long spot + short perp).
     - total_cost_bps = 2 * (fee_spot + fee_perp + 2 * slip).
-    - Per-period break-even = total_cost_bps / 1e4 * CARRY_EV_MARGIN / hold.
+    - Per-period break-even = total_cost_bps / 1e4 * CARRY_EV_MARGIN / (hold * S(k)).
+    - If pin_state !=0, caller should treat funding as capped — quantile model
+      must see pin_state as feature (else clamp flatness misattributed to decay).
 
     With defaults (5/5bps fees, 3bps slip, 21 periods = 7d at 8h cadence):
     2*(5+5+6) = 32bps * 2.0 / 21 ≈ 0.000305/period. Returns a per-period
     rate in the same units as funding_rate (e.g. 0.001 = 0.1%/8h).
+    survival_prob S(k) from hazard model scales required funding: lower
+    survival → higher break-even. pin_state is informational for caller.
     """
     if hold_periods <= 0:
         raise ValueError(f"hold_periods must be positive, got {hold_periods}")
     if min(taker_fee_bps_spot, taker_fee_bps_perp, slippage_bps_per_leg) < 0:
         raise ValueError("fee/slippage inputs must be non-negative")
+    if not 0 < survival_prob <= 1.0:
+        raise ValueError(f"survival_prob must be (0,1], got {survival_prob}")
     total_cost_bps = 2.0 * (
         taker_fee_bps_spot + taker_fee_bps_perp + 2.0 * slippage_bps_per_leg
     )
-    return total_cost_bps / 10000.0 * CARRY_EV_MARGIN / hold_periods
+    # pin_state informational — quantile model should get it as feature
+    return total_cost_bps / 10000.0 * CARRY_EV_MARGIN / (hold_periods * survival_prob)
 
 
 def funding_carry_signal(

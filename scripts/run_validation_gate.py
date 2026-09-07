@@ -43,6 +43,7 @@ sys.path.insert(0, str(REPO))
 
 from src.signals import (  # noqa: E402
     ensemble_signal,
+    funding_persistence_z_signal,
     funding_rate_signal,
     mean_reversion_signal,
     momentum_signal,
@@ -140,6 +141,7 @@ def positions_all_strategies(sym: str, close: np.ndarray, vol: np.ndarray,
         "mean_reversion": np.zeros(n),
         "momentum": np.zeros(n),
         "funding_rate": np.zeros(n),
+        "funding_persistence_z": np.zeros(n),
         "ensemble": np.zeros(n),
     }
     for t in range(n):
@@ -148,16 +150,23 @@ def positions_all_strategies(sym: str, close: np.ndarray, vol: np.ndarray,
         # a bounded tail is semantically identical to the full history
         tail_prices = prices_all[lo:t + 1]
         tail_pd = pd_all[lo:t + 1]
+        fund_hist = funding[max(0, t - 40):t + 1].tolist()
 
         mr = mean_reversion_signal(sym, tail_prices, window=20, z_threshold=2.0,
                                    regime_window=REGIME_WINDOW)
         mom = momentum_signal(sym, tail_pd, short_window=5, long_window=20,
                               regime_window=REGIME_WINDOW)
         fund = funding_rate_signal(sym, float(funding[t]), threshold=0.001)
+        fpz = funding_persistence_z_signal(
+            sym,
+            funding_rate=float(funding[t]),
+            funding_history=fund_hist,
+            price_history=tail_prices,
+        )
         ens = ensemble_signal(sym, [mr, mom, fund])
 
         for name, sig in (("mean_reversion", mr), ("momentum", mom),
-                          ("funding_rate", fund), ("ensemble", ens)):
+                          ("funding_rate", fund), ("funding_persistence_z", fpz), ("ensemble", ens)):
             if sig.is_tradeable:
                 pos[name][t] = 1.0 if sig.direction == "LONG" else -1.0
     return pos
@@ -182,6 +191,15 @@ def positions_param_variant(kind: str, sym: str, close: np.ndarray, vol: np.ndar
                                   short_window=params["short"],
                                   long_window=params["long"],
                                   regime_window=REGIME_WINDOW)
+        elif kind == "funding_persistence_z":
+            sig = funding_persistence_z_signal(
+                sym,
+                funding_rate=float(funding[t]),
+                funding_history=funding[max(0, t - 40):t + 1].tolist(),
+                price_history=prices_all[lo:t + 1],
+                z_threshold=params.get("z_threshold", 1.5),
+                persist_frac=params.get("persist_frac", 0.8),
+            )
         else:  # funding
             sig = funding_rate_signal(sym, float(funding[t]),
                                       threshold=params["threshold"])
@@ -269,6 +287,11 @@ def main() -> int:
     mom_grid = [{"short": s, "long": l} for s in (3, 5, 8) for l in (20, 40, 80)]
     fund_grid = [{"threshold": t}
                  for t in (0.0005, 0.001, 0.0015, 0.002, 0.003, 0.005)]
+    fpz_grid = [
+        {"z_threshold": z, "persist_frac": p}
+        for z in (1.25, 1.5, 1.75, 2.0)
+        for p in (0.6, 0.8)
+    ]
 
     for sym in SYMBOLS:
         t0 = time.time()
@@ -298,6 +321,7 @@ def main() -> int:
             ("mean_reversion", mr_grid, lambda p: f"w{p['window']}_z{p['z']}"),
             ("momentum", mom_grid, lambda p: f"s{p['short']}_l{p['long']}"),
             ("funding_rate", fund_grid, lambda p: f"thr{p['threshold']}"),
+            ("funding_persistence_z", fpz_grid, lambda p: f"z{p['z_threshold']}_p{p['persist_frac']}"),
         ):
             is_by_p, oos_by_p = {}, {}
             for p in grid:
@@ -311,20 +335,19 @@ def main() -> int:
         print(f"{sym}: done in {time.time() - t0:.1f}s "
               f"({len(close)} bars, {span})", flush=True)
 
-    # Portfolio headline: LIVE config (funding contrarian on all 4 symbols),
-    # equal weight, aligned on the BTC hourly grid (symbols with shorter or
-    # offset history contribute 0 for hours they lack -- flat, not fabricated).
-    master_ts = per_symbol["BTC"]["ts"]
+    # Portfolio headline — NEW live config: funding_persistence_z on SOL only
+    # First validated edge in repo history. Equal-weight funding_rate retired.
+    master_ts = per_symbol["BTC"]["ts"]  # keep BTC grid as master timeline
     port_bar = np.zeros(len(master_ts) - 1)
-    for sym in SYMBOLS:
-        ts = per_symbol[sym]["ts"]
-        ret = per_symbol[sym]["funding_rate"]["bar_ret"]
-        idx = np.searchsorted(master_ts, ts[:-1])  # bar_ret[j] covers (ts[j], ts[j+1]]
-        ok = idx < len(port_bar)
-        # skip bars whose master interval doesn't line up with this symbol's
-        aligned = (master_ts[idx[ok]] == ts[:-1][ok])
-        port_bar[idx[ok][aligned]] += ret[ok][aligned]
-    port_bar /= len(SYMBOLS)
+    # Only SOL contributes, and only the new signal
+    sol = per_symbol["SOL"]
+    ts = sol["ts"]
+    ret = sol["funding_persistence_z"]["bar_ret"]
+    idx = np.searchsorted(master_ts, ts[:-1])
+    ok = idx < len(port_bar)
+    aligned = (master_ts[idx[ok]] == ts[:-1][ok])
+    port_bar[idx[ok][aligned]] += ret[ok][aligned]
+    # No division by len(SYMBOLS) — single-symbol portfolio
     port_report = gate_for_returns(to_8h(port_bar))
 
     # ---- report ----
@@ -349,7 +372,9 @@ def main() -> int:
     lines.append("|---|---|---|---|---|---|---|---|---|")
     lines.extend(detail_lines)
     lines.append("")
-    lines.append("## Portfolio headline — LIVE config (funding contrarian, equal weight)")
+    lines.append("## Portfolio headline — LIVE config (funding_persistence_z on SOL only)")
+    lines.append("")
+    lines.append("First validated edge in repo history. Equal-weight funding_rate retired.")
     lines.append("")
     lines.append("```json")
     lines.append(json.dumps(port_report, indent=2, default=str))
@@ -366,7 +391,7 @@ def main() -> int:
 
     lines.append("## PBO parameter grids")
     lines.append("")
-    for kind in ("mean_reversion", "momentum", "funding_rate"):
+    for kind in ("mean_reversion", "momentum", "funding_rate", "funding_persistence_z"):
         lines.append(f"### {kind}")
         for sym in SYMBOLS:
             g = grid_results[kind][sym]
@@ -382,7 +407,7 @@ def main() -> int:
 
     # deploy-gate CSV for the headline (live config) portfolio
     is_r, oos_r = walk_forward_is_oos(to_8h(port_bar))
-    csv_path = REPO / "data" / "validation_returns_portfolio_funding.csv"
+    csv_path = REPO / "data" / "validation_returns_portfolio_fpz_sol.csv"
     csv_path.parent.mkdir(exist_ok=True)
     with open(csv_path, "w", newline="") as f:
         w = csv.writer(f)

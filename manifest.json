@@ -15,6 +15,21 @@
       "description": "x402 payment discovery (I4): which routes are paid and on what terms."
     },
     {
+      "path": "/api/v1/billing/moove-link",
+      "method": "POST",
+      "description": "Create a Moove Receive payment link for a value action. Returns"
+    },
+    {
+      "path": "/api/v1/billing/moove-link/{link_id}",
+      "method": "GET",
+      "description": "Public link lookup (no key needed \u2014 mirrors Moove's unauthenticated"
+    },
+    {
+      "path": "/api/v1/billing/moove-links",
+      "method": "GET",
+      "description": "Reconciliation source: newest-first page (10 fixed) of the"
+    },
+    {
       "path": "/api/v1/curator-profile",
       "method": "GET",
       "description": "Read-only: active curator profile with the resolve knobs for the next"
@@ -118,5 +133,5 @@
     "onchain_logging"
   ],
   "chain": "xlayer",
-  "openapi_generated": "2026-09-04T10:15:13.391639Z"
+  "openapi_generated": "2026-09-07T01:37:45.603468Z"
 }

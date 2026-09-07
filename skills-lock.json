@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "skills": {
+    "celo-builders": {
+      "source": "celobuilders.xyz",
+      "sourceUrl": "https://celobuilders.xyz",
+      "sourceType": "well-known",
+      "computedHash": "5f83a21bbd0f91fe3870648d74b8a3364f54001b2a0212cb1dd7f1859d6013dc",
+      "wellKnownDigest": "sha256:b2adcdb874bc08b1852e9f8cc1ce8fef1e68fcd2b02fa459ecc5eb4326e18546"
+    }
+  }
+}

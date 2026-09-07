@@ -57,6 +57,7 @@ from .curator import CuratorAgent
 from .data_integrity import DataIntegrityGate
 from .vault_api import router as vault_router
 from .reconciliation import read_vault_state, read_okx_balance, reconcile
+from .moove import MooveError, client_from_env
 
 logger = logging.getLogger(__name__)
 
@@ -421,6 +422,93 @@ def api_estimate(route: str):
     quote["enforced"] = route in _paid_routes()
     quote["cap_usdc"] = f"{X402_MAX_USD_PER_CALL:.2f}"
     return quote
+
+
+# --- Moove billing (M1: Receive Agent payment links) ---
+# Agent-to-agent billing for value actions (/hire, /trade, vault attest).
+# Create is scoped (needs MOOVE_API_KEY); retrieve is public by Moove
+# design (the hosted checkout page calls it). Without a key every scoped
+# route reports an honest 503 instead of a fake success.
+
+class MooveLinkRequest(BaseModel):
+    to_amount: str | int | float = Field(
+        ..., description="Amount in the settlement token. Forwarded as a "
+        "string to avoid float rounding (USDC: max 6 decimals).")
+    description: str | None = Field(
+        None, max_length=500,
+        description="Shown to the payer on checkout (e.g. 'TARS hire <id>').")
+    max_usage: int | None = Field(
+        None, ge=1,
+        description="Payments accepted before completion. Omit = unlimited.")
+    expiration_date: str | None = Field(
+        None, description="ISO 8601 future timestamp. Omit = never expires.")
+
+
+def _moove_http_status(e: MooveError) -> int:
+    """Pass through real Moove statuses; local validation errors are 422."""
+    if e.status:
+        return e.status
+    return 422
+
+
+@app.post("/api/v1/billing/moove-link")
+async def billing_moove_link(req: MooveLinkRequest):
+    """Create a Moove Receive payment link for a value action. Returns
+    ``{"id", "url"}`` only — reconcile via the list endpoint (by API
+    design create never returns status/amounts). Settles to the operator's
+    own default wallet; the caller cannot choose a destination."""
+    client = client_from_env()
+    try:
+        return await client.create_payment_link(
+            req.to_amount,
+            description=req.description,
+            max_usage=req.max_usage,
+            expiration_date=req.expiration_date,
+        )
+    except MooveError as e:
+        raise HTTPException(
+            _moove_http_status(e),
+            f"{e.code}: {e}" if e.code else str(e),
+        )
+    finally:
+        await client.aclose()
+
+
+@app.get("/api/v1/billing/moove-links")
+async def billing_moove_links(
+    status: Literal["active", "inactive", "completed"] | None = None,
+    offset: int = 0,
+):
+    """Reconciliation source: newest-first page (10 fixed) of the
+    operator's payment links, all keys/dashboard links included. Follow
+    ``nextOffset`` until null. Scoped — 503 when Moove is unconfigured."""
+    client = client_from_env()
+    try:
+        return await client.list_payment_links(status=status, offset=offset)
+    except MooveError as e:
+        raise HTTPException(
+            _moove_http_status(e),
+            f"{e.code}: {e}" if e.code else str(e),
+        )
+    finally:
+        await client.aclose()
+
+
+@app.get("/api/v1/billing/moove-link/{link_id}")
+async def billing_moove_link_get(link_id: str):
+    """Public link lookup (no key needed — mirrors Moove's unauthenticated
+    retrieve that the hosted checkout page calls). Returns the link plus
+    the owner's public profile; never anything private."""
+    client = client_from_env()
+    try:
+        return await client.retrieve_payment_link(link_id)
+    except MooveError as e:
+        raise HTTPException(
+            _moove_http_status(e),
+            f"{e.code}: {e}" if e.code else str(e),
+        )
+    finally:
+        await client.aclose()
 
 
 @app.post("/hire")

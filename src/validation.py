@@ -123,6 +123,53 @@ def evaluate_parameter_grid(returns_by_param: dict[str, np.ndarray], oos_returns
     }
 
 
+def isotonic_calibration(q_pred: np.ndarray, y_actual: np.ndarray) -> dict:
+    """Isotonic calibration + decile plot — catches v2 52.5%→-90% flat curve.
+    Returns decile means and monotonic fit; flat curve = rank ok, calibration dead."""
+    try:
+        from sklearn.isotonic import IsotonicRegression  # type: ignore
+
+        iso = IsotonicRegression(out_of_bounds="clip")
+        y_iso = iso.fit_transform(q_pred, y_actual)
+        # decile plot
+        idx = np.argsort(q_pred)
+        n = len(q_pred)
+        deciles = []
+        for k in range(10):
+            lo, hi = k * n // 10, (k + 1) * n // 10
+            sl = idx[lo:hi]
+            deciles.append({"pred_mean": float(np.mean(q_pred[sl])), "actual_mean": float(np.mean(y_actual[sl]))})
+        return {"y_iso": y_iso, "deciles": deciles}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def survival_curve(hazards: list[float] | np.ndarray) -> np.ndarray:
+    """S_t = Π(1-h_j), h_t=P(flip|alive). Singer & Willett (1993) discrete-time."""
+    return np.cumprod(1 - np.array(hazards, dtype=float))
+
+
+def expected_carry_pnl_validation(
+    funding_per_period: list[float] | np.ndarray,
+    hazards: list[float] | np.ndarray,
+    cost_per_period: float = 0.0,
+    terminal_payoff: float = 0.0,
+) -> float:
+    """E[PnL]= Σ S_{t-1}(funding_t - cost_t) + S_K*terminal — survival-weighted,
+    not S(k)Σfunding. Prevents implicitly assuming survival to K."""
+    f = np.array(funding_per_period, dtype=float)
+    h = np.array(hazards, dtype=float)
+    if len(f) != len(h):
+        raise ValueError("funding and hazards same length")
+    s_prev = 1.0
+    exp = 0.0
+    for fi, hi in zip(f, h):
+        exp += s_prev * (fi - cost_per_period)
+        s_prev *= (1 - hi)
+    exp += s_prev * terminal_payoff
+    return float(exp)
+
+
 def validation_report(returns: np.ndarray, oos_returns: np.ndarray,
                       param_grid_returns: dict[str, np.ndarray] | None = None,
                       param_grid_oos_returns: dict[str, np.ndarray] | None = None,

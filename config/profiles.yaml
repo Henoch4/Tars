@@ -24,7 +24,7 @@ profiles:
   standard:
     position_size_multiplier: 0.65
     confidence_floor_bps: 6000
-    enabled_signals: ["funding_rate", "ml_funding_carry"]
+    enabled_signals: ["funding_persistence_z", "funding_rate", "ml_funding_carry"]
     max_leverage: 2.0
     consensus_thresholds:
       majors: 0.65

@@ -26,6 +26,7 @@ from .signals import (
     momentum_signal,
     funding_rate_signal,
     funding_carry_signal,
+    funding_persistence_z_signal,
     ml_funding_carry_signal,
     record_ml_degradation,
     ensemble_signal,
@@ -430,13 +431,35 @@ class AutonomousTradingAgent:
         price_data = self._extract_price_data(market_data)
         funding_rate = market_data.get("funding_rate", 0.0)
 
-        signals = [
+        signals = []
+        # SOL: first validated edge — funding_persistence_z primary
+        if asset.startswith("SOL"):
+            hist = self._get_ml_history(asset)
+            funding_history = hist["funding"] if hist["funding"] else [funding_rate]
+            price_hist = hist["prices"] if hist["prices"] else prices
+            signals.append(
+                funding_persistence_z_signal(
+                    asset=asset,
+                    funding_rate=funding_rate,
+                    funding_history=funding_history,
+                    price_history=price_hist,
+                )
+            )
+        # Keep legacy funding_rate for other assets (filtered by curator allowlist)
+        # Standard profile now includes both so BTC/ETH/BNB tests still see funding_rate
+        if not asset.startswith("SOL"):
+            signals.append(funding_rate_signal(asset, funding_rate, threshold=0.001))
+        else:
+            # SOL also keeps funding_rate as secondary (curator decides)
+            signals.append(funding_rate_signal(asset, funding_rate, threshold=0.001))
+
+        # Mean reversion always available (curator filtered)
+        signals.append(
             mean_reversion_signal(
                 asset, prices, window=20, z_threshold=2.0,
                 regime_window=self.regime_filter_window,
-            ),
-            funding_rate_signal(asset, funding_rate, threshold=0.001),
-        ]
+            )
+        )
 
         # ML-enhanced funding carry signal (delta-neutral)
         if spot_price and prices:
@@ -870,6 +893,16 @@ class AutonomousTradingAgent:
 
         if pkg.state == PackageState.LOCKED:
             await asyncio.to_thread(manager.settle, pkg)
+            # Profit sweep to cold settlement at fresh stealth address (two-tier custody)
+            try:
+                from .wallet import sweep_to_cold
+
+                # Estimate realized carry profit as funding * notional (conservative)
+                funding_profit = float(md.get("funding_rate", 0.0)) * pkg.notional
+                if funding_profit > 0:
+                    sweep_to_cold(funding_profit, hot_signer_id=self.agent_id)
+            except Exception as e:
+                logger.warning(f"Profit sweep failed for {asset}: {e}")
             leg_fill_prices = {
                 r.step.asset: r.fill_price for r in pkg.leg_results if r.filled
             }
@@ -1146,10 +1179,9 @@ class AutonomousTradingAgent:
             except Exception:
                 pass
 
-        # Update rolling ML history for 7-day rolling features
-        if self.use_ml_carry_gate:
-            funding_rate = float(md.get("funding_rate", 0.0))
-            self._update_ml_history(asset, funding_rate, perp_price)
+        # Update rolling history for funding_persistence_z (needs 5+ points) and ML gate
+        funding_rate = float(md.get("funding_rate", 0.0))
+        self._update_ml_history(asset, funding_rate, perp_price)
 
         if self._funding_arb_opportunity(asset, md, spot_price, perp_price):
             return await self._run_funding_arb_package(asset, md, cycle_id, out)
@@ -1185,11 +1217,55 @@ class AutonomousTradingAgent:
                     }, proof=PROOF_DECISION)
             return out
 
+        # --- Phase 2.5: Equal SafetyNet (risk-balanced 1 : 1.5) ---
+        # Hard 1% risk, need E[PnL] >= 1.5*R and q20>16 when available. Fail -> NEUTRAL, no order.
+        try:
+            from .safety_net import safety_net
+
+            # Capital for risk calc — use max_position_usd as book proxy when equity not tracked
+            capital = getattr(self, "max_position_usd", 5000) * 10  # ~50k book proxy
+            # Try to get pin_state/premium for ML gate — fallback to 0
+            pin_state = 0
+            try:
+                from .signals import decompose_funding
+
+                # Use funding_history tail if available
+                hist = self._get_ml_history(asset)["funding"][-48:] if self._get_ml_history(asset)["funding"] else [0.0]
+                dec = decompose_funding(hist, interest=0.0)
+                pin_state = dec["pin_state"][-1] if dec["pin_state"] else 0
+            except Exception:
+                pin_state = 0
+
+            sn = safety_net(ensemble, capital=capital, target_rr=1.5, survival=1.0, pin_state=pin_state)
+            if not sn.approved:
+                logger.info(f"SafetyNet blocked {asset}: {sn.reason}")
+                if self.audit_log:
+                    from .audit_trail import PROOF_DECISION
+
+                    async with self._audit_lock:
+                        self.audit_log.write("safety_net_block", {"cycle_id": cycle_id, "asset": asset, "reason": sn.reason}, proof=PROOF_DECISION)
+                return out
+            # Cap order size to SafetyNet risk-based size (still under RiskGate max)
+            # _signal_to_order will compute size; we will clamp after
+            safety_net_size_cap = sn.size_usd
+        except Exception as e:  # SafetyNet must never crash cycle
+            logger.warning(f"SafetyNet error for {asset}: {e}")
+            safety_net_size_cap = None
+
         # --- Phase 3: Risk Gate ---
         order = self._signal_to_order(ensemble, md)
         if order is None:
             logger.info(f"No order for {asset} (no tradeable signal or already positioned)")
             return out
+        # Clamp to SafetyNet size cap (equal risk)
+        if safety_net_size_cap is not None:
+            try:
+                order_size = float(order.size)
+                if order_size > safety_net_size_cap:
+                    order.size = f"{safety_net_size_cap:.2f}"
+                    logger.info(f"SafetyNet capped {asset} size {order_size:.2f} -> {safety_net_size_cap:.2f} (1% risk, 1:1.5 RR)")
+            except Exception:
+                pass
 
         # I8 graded read: advisory only, logged + gauged, never gating.
         # Funding-arb packages are deliberately unscored — two-leg economics
@@ -1364,6 +1440,16 @@ class AutonomousTradingAgent:
             if order_result.state in (OrderStatus.FILLED, OrderStatus.PARTIALLY_FILLED):
                 async with self._risk_lock:
                     self.risk_gate.report_volume(self.agent_id, float(order.size))
+                # Single-leg profit sweep to cold (directional SOL live)
+                try:
+                    from .wallet import sweep_to_cold
+
+                    # Estimate PnL as size * expected funding carry (conservative)
+                    est_profit = float(order.size) * 0.0001  # placeholder 1bp carry
+                    if est_profit > 0:
+                        sweep_to_cold(est_profit, hot_signer_id=self.agent_id)
+                except Exception as e:
+                    logger.warning(f"Single-leg sweep failed for {asset}: {e}")
 
         except ExecutionError as e:
             out["errors"].append(f"Execution failed for {asset}: {e}")
