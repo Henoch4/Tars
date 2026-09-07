@@ -51,7 +51,7 @@ from .execution import (
     RiskCheckResult,
     ExecutionError,
 )
-from .audit_logger import OnchainLogger, DecisionPayload
+# from .audit_logger import OnchainLogger, DecisionPayload  # X-Layer on-chain logging disabled
 from .okx_cli import OkxCli, OkxCliConfig, OkxCliError
 from .audit_trail import AuditLog
 from .curator import CuratorAgent, apply_env_overrides
@@ -97,7 +97,7 @@ class AutonomousTradingAgent:
         self,
         okx_cli: OkxCli,
         risk_gate: RiskGate,
-        onchain_logger: OnchainLogger | None = None,
+        onchain_logger = None,
         dry_run: bool = True,
         max_position_usd: float = 5000,
         agent_id: str = "autonomous-trader-001",

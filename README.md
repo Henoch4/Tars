@@ -6,7 +6,7 @@
 
 *Built for OKX Build X AI Season Hackathon 2026 (Aug 7–21)*
 
-A multi-agent AI trading system that combines Wall Street risk management principles with onchain transparency — every trading decision is logged to X Layer **before** execution, creating an immutable, verifiable audit trail. Before every trade, the decision is written to a public ledger — written first, traded second — if the write fails, no trade happens. Records cannot be edited or deleted after the fact.
+A multi-agent AI trading system that combines Wall Street risk management principles with onchain transparency — every trading decision is logged to local audit **before** execution, creating an immutable, verifiable audit trail. Before every trade, the decision is written to a public ledger — written first, traded second — if the write fails, no trade happens. Records cannot be edited or deleted after the fact.
 
 ## Backronym: Trade Audit & Risk System
 
@@ -21,7 +21,7 @@ Market Data → Signal Engine → Risk Gate → Onchain Logger → Execution
                      Momentum          (non-overridable)
                      Funding Rate         ↓
                                           ↓  if rejected → BLOCKED
-                                          ↓  if approved → logDecision() on X Layer
+                                          ↓  if approved → logDecision() on local audit
                                           ↓  then executeOrder() via OKX CLI
 ```
 
@@ -29,7 +29,7 @@ Market Data → Signal Engine → Risk Gate → Onchain Logger → Execution
 
 1. **Non-overridable risk gate** (Wall Street principle): The RiskGate sits between the AI signal generator and the execution layer. The AI cannot bypass position limits, daily loss limits, or confidence thresholds.
 
-2. **Onchain audit trail**: Every decision is signed with EIP-191 and submitted to `TradeAuditTrail.sol` on X Layer **before** the order hits OKX. If logging fails, trading is blocked. Written first, traded second — if the write fails, no trade happens. Records cannot be edited or deleted after the fact.
+2. **Onchain audit trail**: Every decision is signed with EIP-191 and submitted to `TradeAuditTrail.sol` on local audit **before** the order hits OKX. If logging fails, trading is blocked. Written first, traded second — if the write fails, no trade happens. Records cannot be edited or deleted after the fact.
 
 3. **Multi-agent pipeline**: Inspired by TradingAgents research paper — separate specialized agents for market data, signal generation, risk evaluation, and execution.
 
@@ -90,7 +90,7 @@ AuditTrailTrader/
 │   ├── agent.py         # Multi-agent orchestrator
 │   ├── signals.py       # Signal: mean rev + momentum + funding
 │   ├── execution.py     # OrderExecutor + RiskGate (non-overridable)
-│   ├── audit_logger.py  # OnchainLogger (X Layer)
+│   ├── audit_logger.py  # OnchainLogger (local audit)
 │   ├── auditor.py       # Existing risk audit (extended)
 │   ├── okx_cli.py       # OKX CLI wrapper
 │   ├── validation.py    # Walk-forward + PBO + Calmar strategy validation gate
@@ -138,7 +138,7 @@ pip install py-solc-x
 # Compile
 python scripts/compile_contract.py
 
-# Deploy to X Layer Testnet
+# Deploy to local audit Testnet
 set XLAYER_RPC_URL=https://testnet-rpc.xlayer.tech
 set DEPLOYER_PRIVATE_KEY=0xYOUR_PRIVATE_KEY
 python scripts/deploy_contract.py
@@ -205,7 +205,7 @@ curl -X POST http://localhost:8000/hire \
 
 ## Smart Contract: TradeAuditTrail.sol
 
-**Deployed on**: X Layer Testnet (chainId: 1952)
+**Deployed on**: local audit Testnet (chainId: 1952)
 **Native USDC**: Supported (CCTP-ready, MiCA-compliant)
 
 ### Contract Functions

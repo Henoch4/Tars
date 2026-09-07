@@ -1,9 +1,9 @@
 {
   "name": "Portfolio Risk Copilot",
-  "description": "Autonomous portfolio risk auditing agent with onchain audit trail. Analyzes holdings, scores risk, and logs decision trail to X Layer before any trade execution.",
+  "description": "Autonomous portfolio risk auditing agent. Analyzes holdings, scores risk, and enforces non-overridable risk gates before any trade execution.",
   "service": {
     "name": "Portfolio Risk Audit Service",
-    "description": "Runs a comprehensive portfolio audit: fetches account balances and positions, evaluates risk exposure, applies non-overridable risk gates, and logs the decision trail onchain to X Layer testnet. The service is hired via the /hire endpoint and returns a detailed audit report with risk scores, position analysis, and onchain decision hashes.",
+    "description": "Runs a comprehensive portfolio audit: fetches account balances and positions, evaluates risk exposure, applies non-overridable risk gates, and returns a detailed audit report with risk scores and position analysis. The service is hired via the /hire endpoint.",
     "type": "A2MCP",
     "endpoint": "https://api.tarstrade.xyz/hire",
     "request": {
@@ -18,8 +18,8 @@
       "example": "curl -X POST https://api.tarstrade.xyz/hire \\\n  -H \"Content-Type: application/json\" \\\n  -H \"X-Agent-Token: YOUR_AGENT_TOKEN\" \\\n  -d '{\n    \"mode\": \"own_account\",\n    \"profile_mode\": \"demo\",\n    \"inst_type\": \"SWAP\",\n    \"balance_data\": {\"data\": [{\"ccy\": \"USDT\", \"availBal\": \"10000\"}]},\n    \"positions_data\": [{\"instId\": \"BTC-USDT-SWAP\", \"pos\": \"0.1\", \"avgPx\": \"50000\"}]\n  }'"
     },
     "response": {
-      "description": "Returns a comprehensive audit report with risk scores, position analysis, leverage checks, and onchain decision trail.",
-      "example": "{\n  \"total_equity_usd\": 10000.0,\n  \"risk_score\": 45,\n  \"positions\": [{\"asset\": \"BTC\", \"size\": 0.1, \"leverage\": 2.0, \"unrealized_pnl\": 150.0}],\n  \"risk_violations\": [],\n  \"onchain_decision_hash\": \"0xabc123...\",\n  \"timestamp\": 1699999999.0\n}"
+      "description": "Returns a comprehensive audit report with risk scores, position analysis, and leverage checks.",
+      "example": "{\n  \"total_equity_usd\": 10000.0,\n  \"risk_score\": 45,\n  \"positions\": [{\"asset\": \"BTC\", \"size\": 0.1, \"leverage\": 2.0, \"unrealized_pnl\": 150.0}],\n  \"risk_violations\": [],\n  \"risk_report_id\": \"risk-123\",\n  \"timestamp\": 1699999999.0\n}"
     }
   },
   "capabilities": [
@@ -27,7 +27,6 @@
     "signal_generation",
     "risk_management",
     "trade_execution",
-    "onchain_logging",
     "portfolio_audit"
   ],
   "permissions": [

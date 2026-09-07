@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Portfolio Risk Copilot",
-    "description": "Autonomous portfolio risk auditing agent with onchain audit trail. Analyzes holdings, scores risk, and logs decision trail to X Layer before any trade execution.",
+    "description": "Autonomous portfolio risk auditing agent. Analyzes holdings, scores risk, and enforces non-overridable risk gates before any trade execution.",
     "version": "0.1.0"
   },
   "servers": [
