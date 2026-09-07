@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 def client(monkeypatch):
     import src.main as main
     monkeypatch.setattr(main, "_onchain_logger", None)
+    monkeypatch.setattr(main, "_AGENT_API_TOKEN", "test-token")
     # Deterministic baseline: ensure the shared singleton gate is not tripped
     # by a previous test before this fixture builds the client.
     main._risk_gate.deactivate_kill_switch()
@@ -40,7 +41,7 @@ def test_deactivate_without_onchain_clears_local(client, monkeypatch):
     main._risk_gate.activate_kill_switch("manual")
     assert main._risk_gate.kill_switch_status()["active"] is True
 
-    res = client.post("/kill-switch/deactivate")
+    res = client.post("/kill-switch/deactivate", headers={"X-Agent-Token": "test-token"})
     assert res.status_code == 200
     body = res.json()
     assert body["status"] == "deactivated"
@@ -54,7 +55,7 @@ def test_deactivate_onchain_success_clears_local(client, monkeypatch):
     main._risk_gate.activate_kill_switch("manual")
     assert main._risk_gate.kill_switch_status()["active"] is True
 
-    res = client.post("/kill-switch/deactivate")
+    res = client.post("/kill-switch/deactivate", headers={"X-Agent-Token": "test-token"})
     assert res.status_code == 200
     body = res.json()
     assert body["status"] == "deactivated"
@@ -72,7 +73,7 @@ def test_deactivate_onchain_failure_keeps_local_halted(client, monkeypatch):
     main._risk_gate.activate_kill_switch("manual")
     assert main._risk_gate.kill_switch_status()["active"] is True
 
-    res = client.post("/kill-switch/deactivate")
+    res = client.post("/kill-switch/deactivate", headers={"X-Agent-Token": "test-token"})
     assert res.status_code == 200
     body = res.json()
     assert body["status"] == "deactivate_failed"

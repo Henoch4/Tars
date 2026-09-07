@@ -40,7 +40,7 @@ def _agent(**overrides):
     return AutonomousTradingAgent(**kwargs)
 
 
-def _force_tradeable(agent):
+def _force_tradeable(agent, monkeypatch=None):
     # The stub feed yields a non-tradeable ensemble (1/2 signals bearish), so
     # _signal_to_order returns None and we never reach the log step. Force a
     # real order so the onchain-failure path is exercised.
@@ -51,12 +51,20 @@ def _force_tradeable(agent):
         inst_id="BTC-USDT-SWAP", side="buy", order_type="market", size="100",
         confidence_bps=9000,
     )
+    # SafetyNet runs before _signal_to_order and blocks the stub ensemble
+    # (SHORT 3000 is_tradeable=false). Stub it so we reach the onchain log.
+    if monkeypatch is not None:
+        from src.safety_net import SafetyNetResult
+        monkeypatch.setattr(
+            "src.safety_net.safety_net",
+            lambda *a, **k: SafetyNetResult(approved=True, reason="stubbed", size_usd=10000),
+        )
 
 
 @pytest.mark.asyncio
-async def test_onchain_log_failure_blocks_execution():
+async def test_onchain_log_failure_blocks_execution(monkeypatch):
     agent = _agent(onchain_logger=_FailingLogger())
-    _force_tradeable(agent)
+    _force_tradeable(agent, monkeypatch)
 
     result = await agent.run_trading_cycle(["BTC-USDT-SWAP"])
 
@@ -68,9 +76,9 @@ async def test_onchain_log_failure_blocks_execution():
 
 
 @pytest.mark.asyncio
-async def test_onchain_log_failure_does_not_crash_cycle():
+async def test_onchain_log_failure_does_not_crash_cycle(monkeypatch):
     agent = _agent(onchain_logger=_FailingLogger())
-    _force_tradeable(agent)
+    _force_tradeable(agent, monkeypatch)
     # Multiple assets: one failing logger must not abort the whole gather.
     result = await agent.run_trading_cycle(["BTC-USDT-SWAP", "ETH-USDT-SWAP"])
     assert len(result.errors) >= 1
