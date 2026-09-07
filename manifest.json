@@ -1,8 +1,29 @@
 {
-  "name": "tars-trade-audit-risk-system",
-  "description": "TARS (Trade Audit & Risk System) \u00e2\u20ac\u201d autonomous trading robot with rules it cannot break, live on testnet \u00e2\u20ac\u201d open source, 400+ automated checks passing",
+  "name": "Portfolio Risk Copilot",
+  "description": "Autonomous portfolio risk auditing agent with onchain audit trail. Analyzes holdings, scores risk, and logs decision trail to X Layer before any trade execution.",
   "version": "0.1.0",
   "category": "Finance",
+  "service": {
+    "name": "Portfolio Risk Audit Service",
+    "description": "Runs a comprehensive portfolio audit: fetches account balances and positions, evaluates risk exposure, applies non-overridable risk gates, and logs the decision trail onchain to X Layer testnet. The service is hired via the /hire endpoint and returns a detailed audit report with risk scores, position analysis, and onchain decision hashes.",
+    "type": "A2MCP",
+    "endpoint": "https://api.tars-trade.com/hire",
+    "request": {
+      "method": "POST",
+      "parameters": [
+        "mode (string, required): Audit mode - 'demo' for testnet data or 'live' for real account. Example: \"demo\"",
+        "profile_mode (string, required): Profile mode - 'demo' or 'live'. Example: \"demo\"",
+        "inst_type (string, optional): Instrument type filter for leverage/positions check - 'SWAP', 'FUTURES', or 'OPTION'. Example: \"SWAP\"",
+        "balance_data (object, optional): Pre-gathered balance data from 'okx account balance-all --json'. Required for data-forwarding mode (production). Example: {\"data\": [{\"ccy\": \"USDT\", \"availBal\": \"10000\"}]}",
+        "positions_data (array, optional): Pre-gathered positions data from 'okx account positions --json'. Array of position objects. Example: [{\"instId\": \"BTC-USDT-SWAP\", \"pos\": \"0.1\", \"avgPx\": \"50000\"}]"
+      ],
+      "example": "curl -X POST https://api.tars-trade.com/hire \\\n  -H \"Content-Type: application/json\" \\\n  -H \"X-Agent-Token: YOUR_AGENT_TOKEN\" \\\n  -d '{\n    \"mode\": \"own_account\",\n    \"profile_mode\": \"demo\",\n    \"inst_type\": \"SWAP\",\n    \"balance_data\": {\"data\": [{\"ccy\": \"USDT\", \"availBal\": \"10000\"}]},\n    \"positions_data\": [{\"instId\": \"BTC-USDT-SWAP\", \"pos\": \"0.1\", \"avgPx\": \"50000\"}]\n  }'"
+    },
+    "response": {
+      "description": "Returns a comprehensive audit report with risk scores, position analysis, leverage checks, and onchain decision trail.",
+      "example": "{\n  \"total_equity_usd\": 10000.0,\n  \"risk_score\": 45,\n  \"positions\": [{\"asset\": \"BTC\", \"size\": 0.1, \"leverage\": 2.0, \"unrealized_pnl\": 150.0}],\n  \"risk_violations\": [],\n  \"onchain_decision_hash\": \"0xabc123...\",\n  \"timestamp\": 1699999999.0\n}"
+    }
+  },
   "endpoints": [
     {
       "path": "/.well-known/agent-card.json",
@@ -28,6 +49,11 @@
       "path": "/api/v1/billing/moove-links",
       "method": "GET",
       "description": "Reconciliation source: newest-first page (10 fixed) of the"
+    },
+    {
+      "path": "/api/v1/billing/status/{link_id}",
+      "method": "GET",
+      "description": "Reconciliation verdict for one link: settled or not, with amounts"
     },
     {
       "path": "/api/v1/curator-profile",
@@ -130,8 +156,9 @@
     "signal_generation",
     "risk_management",
     "trade_execution",
-    "onchain_logging"
+    "onchain_logging",
+    "portfolio_audit"
   ],
   "chain": "xlayer",
-  "openapi_generated": "2026-09-07T01:37:45.603468Z"
+  "openapi_generated": "2026-09-07T11:53:24.766285Z"
 }

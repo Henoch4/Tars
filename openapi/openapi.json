@@ -1,8 +1,8 @@
 {
   "openapi": "3.0.3",
   "info": {
-    "title": "tars-trade-audit-risk-system",
-    "description": "TARS (Trade Audit & Risk System) \u00e2\u20ac\u201d autonomous trading robot with rules it cannot break, live on testnet \u00e2\u20ac\u201d open source, 400+ automated checks passing",
+    "title": "Portfolio Risk Copilot",
+    "description": "Autonomous portfolio risk auditing agent with onchain audit trail. Analyzes holdings, scores risk, and logs decision trail to X Layer before any trade execution.",
     "version": "0.1.0"
   },
   "servers": [
@@ -178,7 +178,18 @@
           "500": {
             "description": "Internal server error"
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "route",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Route path to get price estimate for (e.g., /hire, /trade)"
+          }
+        ]
       }
     },
     "/api/v1/billing/moove-link": {
@@ -206,7 +217,17 @@
           {
             "AgentToken": []
           }
-        ]
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MooveLinkRequest"
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/billing/moove-links": {
@@ -229,7 +250,31 @@
           "500": {
             "description": "Internal server error"
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "inactive",
+                "completed"
+              ]
+            },
+            "description": "Filter by link status"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 0
+            },
+            "description": "Pagination offset"
+          }
+        ]
       }
     },
     "/api/v1/billing/moove-link/{link_id}": {
@@ -239,6 +284,40 @@
         ],
         "summary": "Public link lookup (no key needed \u2014 mirrors Moove's unauthenticated",
         "operationId": "billing_moove_link_get",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "link_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Payment link ID"
+          }
+        ]
+      }
+    },
+    "/api/v1/billing/status/{link_id}": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Reconciliation verdict for one link: settled or not, with amounts",
+        "operationId": "billing_status",
         "responses": {
           "200": {
             "description": "Successful response"
@@ -264,23 +343,49 @@
         "operationId": "hire",
         "responses": {
           "200": {
-            "description": "Successful response"
+            "description": "Successful response - returns AuditReport",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditReport"
+                }
+              }
+            }
           },
           "400": {
-            "description": "Bad request"
+            "description": "Bad request - invalid input data"
           },
           "401": {
-            "description": "Unauthorized"
+            "description": "Unauthorized - missing or invalid X-Agent-Token header"
+          },
+          "403": {
+            "description": "Forbidden - live mode not enabled on this deployment"
+          },
+          "429": {
+            "description": "Too Many Requests - rate limit exceeded"
           },
           "500": {
             "description": "Internal server error"
+          },
+          "502": {
+            "description": "Bad Gateway - OKX CLI call failed"
           }
         },
         "security": [
           {
             "AgentToken": []
           }
-        ]
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HireRequest"
+              }
+            }
+          }
+        }
       }
     },
     "/trade": {
@@ -292,7 +397,14 @@
         "operationId": "trade",
         "responses": {
           "200": {
-            "description": "Successful response"
+            "description": "Successful response - returns TradingCycleResult",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradingCycleResult"
+                }
+              }
+            }
           },
           "400": {
             "description": "Bad request"
@@ -300,15 +412,34 @@
           "401": {
             "description": "Unauthorized"
           },
+          "423": {
+            "description": "Locked - kill switch is active"
+          },
+          "429": {
+            "description": "Too Many Requests - rate limit exceeded"
+          },
           "500": {
             "description": "Internal server error"
+          },
+          "501": {
+            "description": "Not Implemented - mode='cycle' not supported in serverless"
           }
         },
         "security": [
           {
             "AgentToken": []
           }
-        ]
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TradeRequest"
+              }
+            }
+          }
+        }
       }
     },
     "/audit-stats": {
@@ -331,7 +462,20 @@
           "500": {
             "description": "Internal server error"
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 7,
+              "minimum": 1,
+              "maximum": 30
+            },
+            "description": "Number of days to query"
+          }
+        ]
       }
     },
     "/risk-stats": {
@@ -497,7 +641,17 @@
           {
             "AgentToken": []
           }
-        ]
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KillSwitchRequest"
+              }
+            }
+          }
+        }
       }
     },
     "/kill-switch/deactivate": {
@@ -570,6 +724,12 @@
           },
           "500": {
             "description": "Internal server error"
+          },
+          "502": {
+            "description": "Bad Gateway - could not read OKX balance"
+          },
+          "503": {
+            "description": "Service Unavailable - vault not deployed or not configured"
           }
         },
         "security": [
@@ -586,6 +746,272 @@
         "type": "apiKey",
         "in": "header",
         "name": "X-Agent-Token"
+      }
+    },
+    "schemas": {
+      "HireRequest": {
+        "type": "object",
+        "required": [
+          "mode",
+          "profile_mode"
+        ],
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "own_account"
+            ],
+            "default": "own_account",
+            "description": "Only 'own_account' is supported."
+          },
+          "profile_mode": {
+            "type": "string",
+            "enum": [
+              "demo",
+              "live"
+            ],
+            "default": "demo",
+            "description": "Audit mode: 'demo' for testnet data or 'live' for real account."
+          },
+          "inst_type": {
+            "type": "string",
+            "enum": [
+              "SWAP",
+              "FUTURES",
+              "OPTION"
+            ],
+            "description": "Optional filter for the leverage/positions check."
+          },
+          "balance_data": {
+            "type": "object",
+            "description": "Output of `okx account balance-all --json`. Required for data-forwarding mode (production).",
+            "example": {
+              "data": [
+                {
+                  "ccy": "USDT",
+                  "availBal": "10000"
+                }
+              ]
+            }
+          },
+          "positions_data": {
+            "type": "array",
+            "description": "Output of `okx account positions --json`. Array of position objects.",
+            "items": {
+              "type": "object"
+            },
+            "example": [
+              {
+                "instId": "BTC-USDT-SWAP",
+                "pos": "0.1",
+                "avgPx": "50000"
+              }
+            ]
+          }
+        },
+        "example": {
+          "mode": "own_account",
+          "profile_mode": "demo",
+          "inst_type": "SWAP",
+          "balance_data": {
+            "data": [
+              {
+                "ccy": "USDT",
+                "availBal": "10000"
+              }
+            ]
+          },
+          "positions_data": [
+            {
+              "instId": "BTC-USDT-SWAP",
+              "pos": "0.1",
+              "avgPx": "50000"
+            }
+          ]
+        }
+      },
+      "TradeRequest": {
+        "type": "object",
+        "properties": {
+          "assets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [
+              "BTC-USDT-SWAP",
+              "ETH-USDT-SWAP",
+              "SOL-USDT-SWAP"
+            ],
+            "description": "Assets to trade"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "single",
+              "cycle"
+            ],
+            "default": "single",
+            "description": "Single cycle or continuous (cycle not implemented in serverless)"
+          },
+          "interval_seconds": {
+            "type": "integer",
+            "default": 300,
+            "description": "Interval for continuous mode"
+          }
+        },
+        "example": {
+          "assets": [
+            "BTC-USDT-SWAP",
+            "ETH-USDT-SWAP"
+          ],
+          "mode": "single"
+        }
+      },
+      "KillSwitchRequest": {
+        "type": "object",
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Why the kill switch is being activated"
+          }
+        },
+        "example": {
+          "reason": "Daily loss limit exceeded"
+        }
+      },
+      "AuditReport": {
+        "type": "object",
+        "properties": {
+          "total_equity_usd": {
+            "type": "number",
+            "description": "Total account equity in USD"
+          },
+          "risk_score": {
+            "type": "integer",
+            "description": "Overall risk score (0-100)"
+          },
+          "positions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "asset": {
+                  "type": "string"
+                },
+                "size": {
+                  "type": "number"
+                },
+                "leverage": {
+                  "type": "number"
+                },
+                "unrealized_pnl": {
+                  "type": "number"
+                }
+              }
+            }
+          },
+          "risk_violations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "onchain_decision_hash": {
+            "type": "string",
+            "description": "Onchain decision log transaction hash"
+          },
+          "timestamp": {
+            "type": "number",
+            "description": "Unix timestamp of the audit"
+          }
+        }
+      },
+      "TradingCycleResult": {
+        "type": "object",
+        "properties": {
+          "cycle_id": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "number"
+          },
+          "signals": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "decisions": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "executions": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "total_pnl_usd": {
+            "type": "number"
+          },
+          "total_fees_usd": {
+            "type": "number"
+          },
+          "status": {
+            "type": "string"
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "dry_run": {
+            "type": "boolean"
+          }
+        }
+      },
+      "MooveLinkRequest": {
+        "type": "object",
+        "required": [
+          "to_amount"
+        ],
+        "properties": {
+          "to_amount": {
+            "type": [
+              "string",
+              "number"
+            ],
+            "description": "Amount in the settlement token (USDC). Forwarded as string to avoid float rounding."
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "Shown to the payer on checkout (e.g., 'TARS hire audit')."
+          },
+          "max_usage": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Payments accepted before completion. Omit = unlimited."
+          },
+          "expiration_date": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 future timestamp. Omit = never expires."
+          }
+        },
+        "example": {
+          "to_amount": "0.50",
+          "description": "TARS hire audit",
+          "max_usage": 1
+        }
       }
     }
   },
@@ -613,7 +1039,7 @@
     },
     {
       "name": "System",
-      "description": "Health and manifest"
+      "description": "Health, manifest, and billing"
     }
   ]
 }
