@@ -36,7 +36,7 @@
 |-----|--------|-------------|
 | Automated test coverage partial | Some edge cases in `RiskGate` only hit in integration | `scripts/preflight_check.py` blocks deploy if critical env missing |
 | On-chain audit logger not yet audited | Forensic mismatch possible | `src/audit_logger.py` + `TradeAuditTrail.sol` have regression suite (`test_signature_roundtrip.py`) |
-| No external audit | Professional audit needed before real capital | Budgeted Phase 4 ($15–30K lean) |
+| No external audit | Professional audit needed before real capital | External audit planned for Phase 4 |
 | On-chain reconciliation operator-attested | Operator could misreport `totalAssets` | Phase 2: price-pinged reconciliation; Phase 3: on-chain execution via vault-controlled sub-account |
 | `AGENT_WALLET_PRIVATE_KEY` in env | Single point of failure for trade signing | Rotation supported via `proposeAgent`/`acceptAgent` (timelocked); future: threshold sig / MPC |
 | No formal fuzz testing | State-space exploration limited | `src/execution` has property tests for slippage/position size; more needed |
