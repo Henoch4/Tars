@@ -595,7 +595,7 @@ class OnchainLogger:
             )
             for evt in decision_events:
                 args = dict(evt["args"])
-                args.pop("indexing", None)  # remove non-serializable 'indexed' key
+                args.pop("indexed", None)  # remove non-serializable 'indexed' key
                 decisions.append(args)
         except Exception as e:
             logger.warning(f"Failed to query decisions: {e}")
