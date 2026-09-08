@@ -1,54 +1,51 @@
 {
-  "name": "Portfolio Risk Copilot",
-  "description": "Autonomous portfolio risk auditing agent. Analyzes holdings, scores risk, and enforces non-overridable risk gates before any trade execution.",
+  "name": "TARS - Trade Audit & Risk System",
+  "description": "Autonomous AI trading agent with onchain audit trail. Every decision is signed and logged to X Layer before execution. Non-overridable risk gates enforce position limits, daily loss limits, and confidence floors that the AI cannot bypass.",
   "version": "0.1.0",
   "category": "Finance",
   "service": {
-    "name": "Portfolio Risk Audit Service",
-    "description": "Runs a comprehensive portfolio audit: fetches account balances and positions, evaluates risk exposure, applies non-overridable risk gates, and returns a detailed audit report with risk scores and position analysis. The service is hired via the /hire endpoint.",
+    "name": "TARS Trading Audit Service",
+    "description": "Runs a complete trading cycle: fetches market data, generates multi-strategy signals (mean reversion, momentum, funding rate, ML-enhanced funding carry), passes through non-overridable risk gates, logs decisions onchain to X Layer testnet, and executes via OKX. The service is hired via the /trade endpoint.",
     "type": "A2MCP",
-    "endpoint": "https://api.tarstrade.xyz/hire",
+    "endpoint": "https://api.tarstrade.xyz/trade",
     "request": {
       "method": "POST",
       "parameters": [
-        "mode (string, required): Audit mode - 'demo' for testnet data or 'live' for real account. Example: \"demo\"",
-        "profile_mode (string, required): Profile mode - 'demo' or 'live'. Example: \"demo\"",
-        "inst_type (string, optional): Instrument type filter for leverage/positions check - 'SWAP', 'FUTURES', or 'OPTION'. Example: \"SWAP\"",
-        "balance_data (object, optional): Pre-gathered balance data from 'okx account balance-all --json'. Required for data-forwarding mode (production). Example: {\"data\": [{\"ccy\": \"USDT\", \"availBal\": \"10000\"}]}",
-        "positions_data (array, optional): Pre-gathered positions data from 'okx account positions --json'. Array of position objects. Example: [{\"instId\": \"BTC-USDT-SWAP\", \"pos\": \"0.1\", \"avgPx\": \"50000\"}]"
+        "assets (array[string], required): List of perpetual instruments to trade, e.g., [\"BTC-USDT-SWAP\", \"ETH-USDT-SWAP\", \"SOL-USDT-SWAP\"]. Example: [\"BTC-USDT-SWAP\"]",
+        "dry_run (boolean, optional): If true, simulates execution without placing real orders. Default: true. Example: true"
       ],
-      "example": "curl -X POST https://api.tarstrade.xyz/hire \\\n  -H \"Content-Type: application/json\" \\\n  -H \"X-Agent-Token: YOUR_AGENT_TOKEN\" \\\n  -d '{\n    \"mode\": \"own_account\",\n    \"profile_mode\": \"demo\",\n    \"inst_type\": \"SWAP\",\n    \"balance_data\": {\"data\": [{\"ccy\": \"USDT\", \"availBal\": \"10000\"}]},\n    \"positions_data\": [{\"instId\": \"BTC-USDT-SWAP\", \"pos\": \"0.1\", \"avgPx\": \"50000\"}]\n  }'"
+      "example": "curl -X POST https://api.tarstrade.xyz/trade \\\n  -H \"Content-Type: application/json\" \\\n  -H \"X-Agent-Token: {your_agent_token}\" \\\n  -d '{\n    \"assets\": [\"BTC-USDT-SWAP\", \"ETH-USDT-SWAP\"],\n    \"dry_run\": true\n  }'"
     },
     "response": {
-      "description": "Returns a comprehensive audit report with risk scores, position analysis, and leverage checks.",
-      "example": "{\n  \"total_equity_usd\": 10000.0,\n  \"risk_score\": 45,\n  \"positions\": [{\"asset\": \"BTC\", \"size\": 0.1, \"leverage\": 2.0, \"unrealized_pnl\": 150.0}],\n  \"risk_violations\": [],\n  \"risk_report_id\": \"risk-123\",\n  \"timestamp\": 1699999999.0\n}"
+      "description": "Returns the trading cycle result with signals generated, decisions made, executions performed, and any errors.",
+      "example": "{\n  \"cycle_id\": \"cycle_abc123\",\n  \"timestamp\": 1699999999.0,\n  \"signals\": [{\"strategy\": \"funding_persistence_z\", \"asset\": \"SOL-USDT-SWAP\", \"direction\": \"SHORT\", \"confidence_bps\": 7200, \"is_tradeable\": true}],\n  \"decisions\": [{\"decision_id\": \"dec_xyz789\", \"asset\": \"SOL-USDT-SWAP\", \"signal\": \"SHORT\", \"confidence_bps\": 7200, \"status\": \"approved\"}],\n  \"executions\": [{\"decision_id\": \"dec_xyz789\", \"asset\": \"SOL-USDT-SWAP\", \"order_id\": \"ord_123\", \"state\": \"filled\", \"fill_px\": 145.50}],\n  \"errors\": [],\n  \"curator\": {\"profile\": \"standard\", \"knobs\": {\"position_size_multiplier\": 0.65, \"confidence_floor_bps\": 6000}}\n}"
     }
   },
   "endpoints": [
     {
       "path": "/.well-known/agent-card.json",
       "method": "GET",
-      "description": "A2A-compatible discovery card (I4): capabilities, tool catalog with"
+      "description": "A2A-compatible discovery card: capabilities, tool catalog with schemas"
     },
     {
       "path": "/.well-known/x402",
       "method": "GET",
-      "description": "x402 payment discovery (I4): which routes are paid and on what terms."
+      "description": "x402 payment discovery: which routes are paid and on what terms"
     },
     {
       "path": "/api/v1/billing/moove-link",
       "method": "POST",
-      "description": "Create a Moove Receive payment link for a value action. Returns"
+      "description": "Create a Moove Receive payment link for a value action"
     },
     {
       "path": "/api/v1/billing/moove-link/{link_id}",
       "method": "GET",
-      "description": "Public link lookup (no key needed \u2014 mirrors Moove's unauthenticated"
+      "description": "Public link lookup (no key needed — mirrors Moove's unauthenticated lookup)"
     },
     {
       "path": "/api/v1/billing/moove-links",
       "method": "GET",
-      "description": "Reconciliation source: newest-first page (10 fixed) of the"
+      "description": "Reconciliation source: newest-first page (10 fixed) of payment links"
     },
     {
       "path": "/api/v1/billing/status/{link_id}",
@@ -58,77 +55,77 @@
     {
       "path": "/api/v1/curator-profile",
       "method": "GET",
-      "description": "Read-only: active curator profile with the resolve knobs for the next"
+      "description": "Read-only: active curator profile with resolved knobs for the next cycle"
     },
     {
       "path": "/api/v1/estimate",
       "method": "GET",
-      "description": "Cost estimate before a value action (I6): show price before asking"
+      "description": "Cost estimate before a value action: show price before asking"
     },
     {
       "path": "/api/v1/metrics",
       "method": "GET",
-      "description": "Structured metrics snapshot (S3): counters, gauges, heartbeat, and"
+      "description": "Structured metrics snapshot: counters, gauges, heartbeat"
     },
     {
       "path": "/api/v1/pricing",
       "method": "GET",
-      "description": "Full x402 price card (I3): every priced route with tier and USDC"
+      "description": "Full x402 price card: every priced route with tier and USDC"
     },
     {
       "path": "/api/v1/validation",
       "method": "GET",
-      "description": "Read-only: the strategy-validation pipeline gate (walk-forward + PBO +"
+      "description": "Read-only: the strategy-validation pipeline gate (walk-forward + PBO + Calmar)"
     },
     {
       "path": "/api/v1/vault/attest",
       "method": "POST",
-      "description": "Operator triggers attestTotalAssets on the vault contract."
+      "description": "Operator triggers attestTotalAssets on the vault contract"
     },
     {
       "path": "/api/v1/vault/reconciliation",
       "method": "GET",
-      "description": "Operator-only reconciliation snapshot: vault totalAssets vs OKX balance."
+      "description": "Operator-only reconciliation snapshot: vault totalAssets vs OKX balance"
     },
     {
       "path": "/audit-stats",
       "method": "GET",
-      "description": "Query onchain audit trail for recent decisions and executions."
+      "description": "Query onchain audit trail for recent decisions and executions"
     },
     {
       "path": "/funding-arb-status",
       "method": "GET",
-      "description": "Return current funding rates and arb package status for all assets."
+      "description": "Return current funding rates and arb package status for all assets"
     },
     {
       "path": "/health",
       "method": "GET",
-      "description": "Liveness + heartbeat (S2): distinguishes \"no cycle ran\" (heartbeat"
+      "description": "Liveness + heartbeat: distinguishes \"no cycle ran\" from \"rejected\" from \"traded\""
     },
     {
       "path": "/hire",
       "method": "POST",
-      "description": "Run a portfolio audit: analyze holdings, score risk, log the decision trail."
+      "description": "Run a portfolio audit: analyze holdings, score risk, log the decision trail"
     },
     {
       "path": "/kill-switch",
       "method": "GET",
-      "description": "Current kill switch status. Checks the off-chain gate; also checks the"
+      "description": "Current kill switch status. Checks the off-chain gate; also checks the onchain halt"
     },
     {
       "path": "/kill-switch/activate",
       "method": "POST",
-      "description": "Halt all trading immediately. Always activates the off-chain gate;"
+      "description": "Halt all trading immediately. Always activates the off-chain gate; also calls onchain activateKillSwitch"
     },
     {
       "path": "/kill-switch/deactivate",
       "method": "POST",
-      "description": "Resume trading. A deliberate, separate call \u2014 this is never triggered"
+      "description": "Resume trading. A deliberate, separate call — this is never triggered automatically"
     },
     {
       "path": "/manifest",
       "method": "GET",
-      "description": "Serve the ASP manifest for okx.ai agent registration."
+      "description": "Serve the ASP manifest for okx.ai agent registration"
     },
     {
       "path": "/positions",
@@ -138,12 +135,12 @@
     {
       "path": "/risk-stats",
       "method": "GET",
-      "description": "Get current daily risk statistics for the agent."
+      "description": "Get current daily risk statistics for the agent"
     },
     {
       "path": "/trade",
       "method": "POST",
-      "description": "Run a trading cycle: generate signals \u2192 pass risk checks \u2192 log onchain \u2192 execute."
+      "description": "Run a trading cycle: generate signals → pass risk checks → log onchain → execute"
     }
   ],
   "permissions": [
@@ -156,8 +153,9 @@
     "signal_generation",
     "risk_management",
     "trade_execution",
-    "portfolio_audit"
+    "portfolio_audit",
+    "onchain_audit_trail"
   ],
   "chain": "xlayer",
-  "openapi_generated": "2026-09-07T23:26:47.707839Z"
+  "openapi_generated": "2026-09-08T00:00:00Z"
 }
