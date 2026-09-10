@@ -1,0 +1,87 @@
+name: Trading Loop
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'  # every 5 minutes
+  workflow_dispatch:  # manual trigger
+
+jobs:
+  trade:
+    name: Run Trading Cycle
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      XLAYER_RPC_URL: ${{ secrets.XLAYER_RPC_URL }}
+      XLAYER_CHAIN_ID: ${{ secrets.XLAYER_CHAIN_ID }}
+      AUDIT_CONTRACT_ADDRESS: ${{ secrets.AUDIT_CONTRACT_ADDRESS }}
+      VAULT_CONTRACT_ADDRESS: ${{ secrets.VAULT_CONTRACT_ADDRESS }}
+      AGENT_WALLET_PRIVATE_KEY: ${{ secrets.AGENT_WALLET_PRIVATE_KEY }}
+      AGENT_API_TOKEN: ${{ secrets.AGENT_API_TOKEN }}
+      OKX_API_KEY: ${{ secrets.OKX_API_KEY }}
+      OKX_SECRET_KEY: ${{ secrets.OKX_SECRET_KEY }}
+      OKX_PASSPHRASE: ${{ secrets.OKX_PASSPHRASE }}
+      OKX_BASE_URL: ${{ secrets.OKX_BASE_URL }}
+      DRY_RUN: "false"
+      MAX_POSITION_USD: ${{ secrets.MAX_POSITION_USD }}
+      MAX_DAILY_LOSS_USD: ${{ secrets.MAX_DAILY_LOSS_USD }}
+      MIN_CONFIDENCE_BPS: ${{ secrets.MIN_CONFIDENCE_BPS }}
+      ALLOW_LIVE: "true"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e .
+
+      - name: Run trading cycle
+        run: |
+          python -c "
+import asyncio
+import sys
+sys.path.insert(0, '.')
+from src.main import _trading_agent
+
+async def main():
+    result = await _trading_agent.run_trading_cycle([
+        'BTC-USDT-SWAP',
+        'ETH-USDT-SWAP',
+        'SOL-USDT-SWAP',
+        'BNB-USDT-SWAP'
+    ])
+    print(f'Cycle ID: {result.cycle_id}')
+    print(f'Status: {result.status}')
+    print(f'Signals: {len(result.signals)}')
+    print(f'Decisions: {len(result.decisions)}')
+    print(f'Executions: {len(result.executions)}')
+    print(f'Total PnL: \${result.total_pnl_usd:.2f}')
+    print(f'Total Fees: \${result.total_fees_usd:.2f}')
+    if result.errors:
+        print(f'Errors: {result.errors}')
+
+asyncio.run(main())
+          "
+
+      - name: Upload cycle logs (optional)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trading-cycle-logs
+          path: audit_log.jsonl
+          retention-days: 7

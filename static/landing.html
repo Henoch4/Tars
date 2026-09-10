@@ -8,7 +8,7 @@
 <meta name="description" content="TARS (Trade Audit & Risk System) is an automated crypto carry agent with strict safety limits it cannot override, and a public record of every decision &mdash; written down before any trade happens.">
 <meta name="theme-color" content="#F1F0EB">
 <meta property="og:title" content="TARS &mdash; A trading robot with rules it cannot break">
-<meta property="og:description" content="Strict limits the robot can't change, and a public log of every decision before the trade happens. Live on testnet &mdash; open source, 421 automated checks passing.">
+<meta property="og:description" content="Strict limits the robot can't change, and a public log of every decision before the trade happens. Live on testnet &mdash; open source, 400+ automated checks passing.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://tarstrade.xyz/">
 <meta property="og:site_name" content="TARS">
@@ -449,7 +449,7 @@ footer{border-top:1px solid var(--border);padding:var(--sp-700) 0 var(--sp-500);
         <a class="link-underline" href="#paths">See how it works &rarr;</a>
       </div>
       <div class="proof-line hero-anim d5">
-        <span><b>591</b> automated checks pass</span>
+        <span><b>400+</b> automated checks pass</span>
         <span>SOL <b>+13.6% net</b> validated</span>
         <span>Every decision <b>publicly logged</b></span>
         <span>Spending caps <b>nobody can loosen</b></span>
@@ -518,9 +518,9 @@ footer{border-top:1px solid var(--border);padding:var(--sp-700) 0 var(--sp-500);
           <ul class="path-list">
             <li>Every strategy is replayed against years of real market history, net of fees</li>
             <li>Results are checked for skill vs luck. Lucky strategies fail</li>
-            <li>Agent now runs with real OKX data ($77,985 BTC, live MA crossover signals)</li>
+            <li>Agent now runs on real exchange data (OKX demo and Binance spot cycles green, ensemble signals with confidence filters)</li>
           </ul>
-          <div class="path-stats">AGENT LIVE WITH REAL OKX DATA &middot; 421 AUTOMATED CHECKS PASS</div>
+          <div class="path-stats">AGENT LIVE ON REAL EXCHANGE DATA &middot; 400+ AUTOMATED CHECKS PASS</div>
           <a class="path-cta" href="https://github.com/Henoch4/Tars/blob/main/src/validation.py" target="_blank" rel="noopener">See the exam <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
         </div>
       </div>
@@ -566,7 +566,7 @@ footer{border-top:1px solid var(--border);padding:var(--sp-700) 0 var(--sp-500);
   <div class="container">
     <div class="section-head reveal">
       <div class="section-eyebrow">Terminal 3</div>
-      <h2>Built with Terminal 3</h2>
+      <h2>Verified in a Terminal 3 enclave</h2>
     </div>
     <div class="bento-grid reveal" style="grid-template-columns:1fr;">
       <a class="bento-card" href="https://terminal3.io" target="_blank" rel="noopener" style="text-decoration:none;color:inherit;">
@@ -575,7 +575,7 @@ footer{border-top:1px solid var(--border);padding:var(--sp-700) 0 var(--sp-500);
           <div style="flex:1;min-width:0;">
             <div style="font-family:'Geist Mono',monospace;font-size:0.72rem;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:var(--sp-100);">T3N Agent Build Challenge</div>
             <p style="margin:0 0 var(--sp-300);font-size:1rem;line-height:1.6;">TARS is a submission to the Terminal 3 (T3N) agent build challenge. The T3N protocol enables TEE-attested agents with on-chain audit trails, mandate enforcement, and escalation governance.</p>
-            <div style="font-family:'Geist Mono',monospace;font-size:0.72rem;color:var(--ink-faint);letter-spacing:0.04em;">CONTRACT: 0x6019b96e9d0Ba17588eb22579d9c2dEf0473d07c &middot; TESTNET</div>
+            
           </div>
           <div class="bento-arrow" aria-hidden="true" style="margin-top:var(--sp-400);">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
@@ -680,7 +680,7 @@ footer{border-top:1px solid var(--border);padding:var(--sp-700) 0 var(--sp-500);
           <span class="fee-price">Free <span class="fee-unit">paper-trade SOL dry_run $0</span></span>
           <span class="fee-soon-badge">No fees today</span>
         </div>
-        <p class="fee-desc">Paper-trade SOL is free and gated — 1% risk, 1:1.5 reward via SafetyNet, q20&gt;16 bps + survival S(k). Live needs <code>cleared_for_paper_trading=True</code> (SOL 28 trades 54% +13.6% net). Your exchange account stays yours: OKX official login, never sees password/API keys.</p>
+        <p class="fee-desc">Paper-trade SOL is free and gated — 1% risk, 1:1.5 reward via SafetyNet, q20&gt;16 bps + survival S(k). Live needs <code>cleared_for_paper_trading=True</code> (SOL 28 trades 54% +13.6% net). Your exchange account stays yours: OKX or Binance official login, never sees password/API keys.</p>
       </div>
       <div class="fee-card">
         <div class="fee-top">
@@ -749,11 +749,11 @@ footer{border-top:1px solid var(--border);padding:var(--sp-700) 0 var(--sp-500);
       </div>
       <div class="faq-item">
         <button class="faq-q"><span>Does it need my exchange password or keys?</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></span></button>
-        <div class="faq-a"><p>No. It connects through OKX's official login system, so your password and API keys never pass through it. A separate digital signature key exists only to sign the public records. On its own, it can't move anyone's money.</p></div>
+        <div class="faq-a"><p>No. It connects through your exchange's official login (OKX or Binance), so your password and API keys never pass through it. A separate digital signature key exists only to sign the public records. On its own, it can't move anyone's money.</p></div>
       </div>
       <div class="faq-item">
         <button class="faq-q"><span>Which assets does it trade?</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></span></button>
-        <div class="faq-a"><p>Bitcoin, Ethereum, Solana and BNB: four assets, on OKX, and nothing else. The list is locked into the safety limits themselves, so adding a new asset is a deliberate human decision, not something the robot can do on its own.</p></div>
+        <div class="faq-a"><p>Bitcoin, Ethereum, Solana and BNB: four assets, on OKX or Binance spot, and nothing else. The list is locked into the safety limits themselves, so adding a new asset is a deliberate human decision, not something the robot can do on its own.</p></div>
       </div>
       <div class="faq-item">
         <button class="faq-q"><span>Can I deposit money today?</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></span></button>
@@ -780,7 +780,7 @@ footer{border-top:1px solid var(--border);padding:var(--sp-700) 0 var(--sp-500);
         <a class="btn-pill" href="https://x.com/tarstrade" target="_blank" rel="noopener" style="background:var(--panel-dark-ink);color:var(--panel-dark-bg);text-decoration:none;">Follow @tarstrade</a>
         <a class="btn-pill ghost" href="https://github.com/Henoch4/Tars" target="_blank" rel="noopener" style="background:transparent;color:var(--panel-dark-ink);border:1px solid rgba(241,240,235,0.3);text-decoration:none;">Star on GitHub</a>
       </div>
-      <div class="final-note">421 AUTOMATED CHECKS PASS TODAY. T3N SUBMISSION COMPLETE. NOTHING HERE TOUCHES REAL MONEY UNTIL THE VAULT SHIPS.</div>
+      <div class="final-note">400+ AUTOMATED CHECKS PASS TODAY. T3N SUBMISSION COMPLETE. NOTHING HERE TOUCHES REAL MONEY UNTIL THE VAULT SHIPS.</div>
     </div>
   </div>
 </section>

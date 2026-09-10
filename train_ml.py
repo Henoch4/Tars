@@ -157,18 +157,21 @@ def export_weights_rust(model: TinyNN, scaler: StandardScaler, output_path: Path
 
 pub const W1: [f32; 17 * 8] = [
 """
-    # Write in 17-per-row chunks for readability
+    # Write in 17-per-row chunks for readability.
+    # NOTE: no leading-'+' format spec: Rust rejects `+0.12` float literals
+    # ("leading `+` is not supported"), so plain `:.6f` here — a past export
+    # produced uncompilable ml.rs and had to be stripped by hand.
     for j in range(8):
         row = w1_flat[j*17:(j+1)*17]
-        rust_output += "    " + ",  ".join(f"{v:+.6f}" for v in row) + ",\n"
+        rust_output += "    " + ",  ".join(f"{v:.6f}" for v in row) + ",\n"
     
     rust_output += f"""];
 
-pub const B1: [f32; 8] = [{",  ".join(f"{v:+.6f}" for v in fc1_b)}];
+pub const B1: [f32; 8] = [{",  ".join(f"{v:.6f}" for v in fc1_b)}];
 
-pub const W2: [f32; 8] = [{",  ".join(f"{v:+.6f}" for v in fc2_w.flatten())}];
+pub const W2: [f32; 8] = [{",  ".join(f"{v:.6f}" for v in fc2_w.flatten())}];
 
-pub const B2: f32 = {fc2_b[0]:+.6f};
+pub const B2: f32 = {fc2_b[0]:.6f};
 """
     
     output_path.write_text(rust_output)
