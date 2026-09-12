@@ -118,3 +118,6 @@ data/multi_leg_state/
 
 # ML training outputs (model.pt can be >100 MB — never commit)
 ml_output/
+.vercel
+.env*
+critical_path_files.zip
