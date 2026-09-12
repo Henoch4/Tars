@@ -128,16 +128,13 @@ class AuditLog:
     def __init__(self, path: str | Path = "audit_log.jsonl"):
         # Vercel filesystem is read-only except /tmp — use /tmp there so
         # the trading cycle doesn't fail with Errno 30 on audit_log.jsonl
-        # (review sandbox calls /trade and expects 200, not 500)
+        # (review sandbox calls /trade and expects 200, not 500).
+        # Do NOT auto-create missing parents: test_missing_parent_dir_raises
+        # expects FileNotFoundError when caller passes a non-existent dir.
         raw = str(path)
         if raw == "audit_log.jsonl" and os.getenv("VERCEL"):
             raw = "/tmp/audit_log.jsonl"
         self.path = Path(raw)
-        # Ensure parent dir exists (best-effort, fallback to /tmp on RO)
-        try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-        except OSError:
-            self.path = Path("/tmp") / self.path.name
         self._cycle_id: str | None = None
         self._cycle_records: list[dict] = []
 
@@ -164,7 +161,10 @@ class AuditLog:
             with self.path.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(record, default=str) + "\n")
         except OSError as e:
-            # Fallback to /tmp on read-only FS (Vercel) — never fail the trade
+            # Only fallback for read-only FS (Vercel, errno 30 EROFS) — not for
+            # missing parent (errno 2) which must raise per test_missing_parent_dir
+            if getattr(e, "errno", None) not in (30, 13) and not os.getenv("VERCEL"):
+                raise
             fallback = Path("/tmp") / self.path.name
             try:
                 fallback.parent.mkdir(parents=True, exist_ok=True)
@@ -204,7 +204,9 @@ class AuditLog:
         try:
             with self.path.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(seal, default=str) + "\n")
-        except OSError:
+        except OSError as e:
+            if getattr(e, "errno", None) not in (30, 13) and not os.getenv("VERCEL"):
+                raise
             fallback = Path("/tmp") / self.path.name
             try:
                 fallback.parent.mkdir(parents=True, exist_ok=True)
