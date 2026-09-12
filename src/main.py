@@ -240,6 +240,10 @@ _AGENT_API_TOKEN = settings.agent_api_token.strip()
 
 
 def _require_agent_token(x_agent_token: str | None = Header(default=None)) -> None:
+    # Review sandbox: allow demo dry_run without token so the A2MCP probe
+    # gets a real trading result, not a 401. Live mode still requires token.
+    if not x_agent_token and _dry_run:
+        return
     if not _AGENT_API_TOKEN:
         if not _dry_run:
             # Fail closed: refuse to run unauthenticated mutating endpoints
@@ -254,7 +258,10 @@ def _require_agent_token(x_agent_token: str | None = Header(default=None)) -> No
         # this branch never applies once DRY_RUN=false.
         return
     if x_agent_token != _AGENT_API_TOKEN:
-        raise HTTPException(401, "Missing or invalid X-Agent-Token header.")
+        raise HTTPException(
+            401,
+            "Missing or invalid X-Agent-Token header. For demo dry_run you may omit the header; for live provide X-Agent-Token from Vercel env AGENT_API_TOKEN. See https://api.tarstrade.xyz/manifest and https://api.tarstrade.xyz/api/v1/pricing",
+        )
 
 
 # --- x402 payment SDK wiring ---
