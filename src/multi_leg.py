@@ -174,7 +174,15 @@ class MultiLegExecutionManager:
             self._persist_dir = tempfile.mkdtemp(prefix="multi_leg_state_")
         else:
             self._persist_dir = persist_dir
-        os.makedirs(self._persist_dir, exist_ok=True)
+        try:
+            os.makedirs(self._persist_dir, exist_ok=True)
+        except OSError as e:
+            # Vercel filesystem is read-only except /tmp — fall back to temp
+            # so import never crashes the serverless function (PERSISTENT_HOST_DECISION)
+            import tempfile
+            fallback = tempfile.mkdtemp(prefix="multi_leg_state_")
+            logger.warning(f"multi_leg persist_dir {self._persist_dir!r} not writable ({e}); using {fallback}")
+            self._persist_dir = fallback
 
         # Crash recovery: load any persisted packages and reconcile
         if enable_recovery:
