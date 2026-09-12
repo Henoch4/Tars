@@ -79,10 +79,11 @@ committed file; prod behaves like demo mode or leaks a key.
 **Mechanism:** DRY_RUN was once in `vercel.json`, making live trading
 impossible or demo-mode-by-default depending on the value, and bled config into
 the repo. `81ce680` moved DRY_RUN to project env secrets. `829576c` scrubbed a
-leaked `AGENT_WALLET_PRIVATE_KEY` and added gitleaks guards.
+leaked `AGENT_WALLET_PRIVATE_KEY` (old `0x4E80…` permanently invalidated, rotated 2026-09-12)
+and added gitleaks guards.
 **Fix:** ALL secrets (`AGENT_WALLET_PRIVATE_KEY`, `AGENT_API_TOKEN`) and runtime
 switches like `DRY_RUN`/`ALLOW_LIVE` go in Vercel project env. Nothing in
-`vercel.json`, `.env`, or source. Gitleaks runs in CI and pre-commit.
+`vercel.json`, `.env` (gitignored; active 2026-09-12 in `.env`), or source. Gitleaks runs in CI and pre-commit.
 **Test-for-it:** `gitleaks detect` + a repo grep for the old key; after deploy,
 read the env via a `/health`-style debug endpoint and confirm the expected mode.
 

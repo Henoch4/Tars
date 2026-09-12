@@ -36,8 +36,7 @@ platform skills referenced from the `okx` index skill.
   `tests/test_signature_roundtrip.py` proves the sign/verify path without an RPC.
   Run them with `python -m pytest tests/ -q` from the repo root.
 - Never put real wallet/API secrets in code, `vercel.json`, or this file. The repo's
-  original `AGENT_WALLET_PRIVATE_KEY` is compromised (commit `829576c` scrubbed it);
-  any working key must come from env/secrets and be treated as rotated.
+  original `AGENT_WALLET_PRIVATE_KEY` was compromised (commit `829576c` scrubbed it) and has been rotated — new `AGENT_WALLET_PRIVATE_KEY` + OKX/Binance API credentials were generated 2026-09-12 and are active in `.env` (gitignored). The `0x4E80…` old key is permanently invalidated; any working key must come from env/secrets.
 
 ## Ported governance modules (2026-08)
 

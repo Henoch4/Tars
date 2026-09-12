@@ -1,7 +1,7 @@
 # TARS Pending Tasks & Constraints Report
 
-**Generated:** 2026-09-04  
-**Status:** Post-key-rotation (keys rotated, old credentials invalidated)
+**Generated:** 2026-09-04 · Updated 2026-09-12  
+**Status:** Keys rotated 2026-09-12 — new `AGENT_WALLET_PRIVATE_KEY` + OKX/Binance creds active in `.env` (old `0x4E80…` from `829576c` permanently invalidated)
 
 ---
 
@@ -38,13 +38,12 @@
 
 ---
 
-## 🔴 CRITICAL BLOCKERS (Holding Phase 4/5)
+## ✅ CRITICAL BLOCKERS — RESOLVED 2026-09-12
 
-### 1. **KEY ROTATION - IMMEDIATE ACTION REQUIRED**
-- **Status:** Old private key exposed in chat history, must rotate NOW
-- **Current .env has:** Real private key, real OKX creds, real Binance creds
-- **Action Required:** Run `python scripts/rotate_keys.py` AFTER generating new Binance API keys
-- **Constraint:** Script prompts for new Binance API Key + Secret (no passphrase for Binance)
+### 1. **KEY ROTATION — DONE 2026-09-12**
+- **Status:** ✅ New `AGENT_WALLET_PRIVATE_KEY` + OKX/Binance credentials generated 2026-09-12, active in `.env` (gitignored)
+- **Old key:** `0x4E80…` (commit `829576c`) permanently invalidated — scrubbed from history, gitleaks guards in place
+- **Verification:** `git diff` clean, `.env` gitignored, `scripts/preflight_check.py` passes `AGENT_WALLET_PRIVATE_KEY valid` without printing key
 
 ### 2. **PERSISTENT HOST PROVISIONING**
 - **Decision:** Contabo VPS (€4.50/mo, 4 vCPU/8GB/100GB SSD)
@@ -84,14 +83,14 @@
 - Key rotation docs: `docs/PERSISTENT_HOST_DECISION.md`, `scripts/rotate_keys.py`
 - VPS deployment: `scripts/deploy_vps.sh` + `docs/PERSISTENT_HOST_DECISION.md`
 
-### ⚠️ EXPOSED (ROTATED BUT HISTORY EXISTS)
-- Old private key was in `.env` and git history (commit `829576c` scrubbed but forks/clones may retain)
-- **Action:** Key rotation executed, old key invalidated
-- **Note:** Chat history exposed old key - treat as compromised
+### ✅ ROTATED 2026-09-12 (HISTORY SCRUBBED, OLD KEY INVALIDATED)
+- Old private key was in `.env` and git history (commit `829576c` scrubbed; `0x4E80…` permanently invalid)
+- **Action:** Rotation completed 2026-09-12 — new key active in `.env`, old key invalidated, forks/clones warned
+- **Note:** Former chat history exposure mitigated by rotation; gitleaks + pre-commit enforce no reintroduction
 
-### ❌ NOT YET DONE
-- [ ] Binance API keys rotated (awaiting manual creation on Binance dashboard)
-- [ ] OKX API keys rotated (if using OKX)
+### ✅ DONE 2026-09-12 / ❌ REMAINING
+- [x] Binance API keys rotated 2026-09-12 (active in `.env`)
+- [x] OKX API keys rotated 2026-09-12 (active in `.env`)
 - [ ] VPS provisioned (Contabo, per `docs/PERSISTENT_HOST_DECISION.md`)
 - [ ] `scripts/deploy_vps.sh` executed on fresh Ubuntu 22.04
 - [ ] Public repo synced (`git push` after secret scan)
@@ -145,10 +144,10 @@
 
 ## 🚀 IMMEDIATE NEXT STEPS
 
-1. **Rotate keys NOW** - `python scripts/rotate_keys.py` (after creating new Binance API keys)
+1. **Keys rotated 2026-09-12** — verified `preflight_check.py` + `git diff` clean
 2. **Provision Contabo VPS** - Use `docs/PERSISTENT_HOST_DECISION.md`
 3. **Run deploy** - `sudo ./scripts/deploy_vps.sh` on fresh Ubuntu 22.04
-4. **Sync repo** - `git push` after secret scan
+4. **Sync repo** - `git push` after secret scan (no `.env`/secrets)
 5. **Phase 4** - Audit + bug bounty ($15-30K)
 6. **Phase 5** - Legal, fee structure, first-loss capital
 
@@ -158,20 +157,20 @@
 
 | Constraint | Status | Notes |
 |------------|--------|-------|
-| No real keys in git | ✅ Enforced | `.env` in `.gitignore`, rotated |
-| No secrets in chat | ⚠️ Breached once | Rotated immediately |
+| No real keys in git | ✅ Enforced | `.env` in `.gitignore`, rotated 2026-09-12 |
+| No secrets in chat | ✅ Rotated 2026-09-12 | Old `0x4E80…` invalidated; gitleaks guards |
 | No withdrawal perms | ✅ Enforced | Exchange-level |
 | TVL cap immutable | ✅ Enforced | Per deploy |
 | Audit before public | 🚫 Not done | Phase 4 gate |
 | First-loss capital | 🚫 Not funded | Phase 6 gate |
-| Key rotation automation | ✅ Scripted | Manual OKX step required |
+| Key rotation automation | ✅ Done 2026-09-12 | New keys active in `.env` |
 | Persistent host | 📋 Documented | Contabo VPS runbook ready |
-| Public repo sync | 🔒 Blocked | Pending key rotation |
+| Public repo sync | ✅ Unblocked 2026-09-12 | Keys rotated; `git diff` clean |
 | Legal memo | ⏳ Phase 5 | Pre-stranger gate |
 | First-loss capital | ⏳ Phase 6 | Operator-funded |
 
 ---
 
 **Document Location:** `docs/PENDING_TASKS_REPORT.md`  
-**Last Updated:** 2026-09-04  
-**Next Review:** After key rotation + VPS provisioning
+**Last Updated:** 2026-09-12 (rotation verified; VPS next)  
+**Next Review:** After VPS provisioning

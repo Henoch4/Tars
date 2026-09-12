@@ -9,8 +9,7 @@ Deployed on X Layer Testnet → Mainnet
 ## Quick Start
 
 ```bash
-# Python backend
-cd AuditTrailTrader
+# Python backend (repo root is Tarstrade)
 pip install -r requirements.txt
 python -m uvicorn src.main:app --reload --port 8000
 
@@ -19,9 +18,9 @@ cd contracts
 npm install
 npx hardhat compile
 npx hardhat run scripts/deploy.js --network xltestnet
+cd ..
 
 # Run tests
-cd ../..
 python -m pytest tests/ -v
 python scripts/smoke_test.py
 python scripts/smoke_test_trading.py
@@ -133,7 +132,7 @@ npx hardhat run scripts/deploy.js --network xltestnet
 ## Files
 
 ```
-AuditTrailTrader/
+Tarstrade/
 ├── contracts/
 │   ├── contracts/TradeAuditTrail.sol     # Audit trail smart contract
 │   ├── artifacts/TradeAuditTrail_abi.json # Compiled ABI
@@ -143,7 +142,7 @@ AuditTrailTrader/
 │   ├── main.py          # FastAPI: /trade, /hire, /audit-stats, /risk-stats, /kill-switch endpoints
 │   ├── agent.py         # Multi-agent orchestrator
 │   ├── signals.py       # Signal generation engine
-│   ├── execution.py     # Order executor + RiskGate
+│   ├── execution/       # RiskGate + OrderExecutor
 │   ├── audit_logger.py  # Onchain logger for X Layer
 │   ├── auditor.py       # Existing risk audit (extended)
 │   └── okx_cli.py       # OKX CLI wrapper

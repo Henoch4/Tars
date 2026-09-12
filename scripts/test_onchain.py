@@ -2,12 +2,11 @@
 
 SECURITY NOTE: this script previously had a live private key hardcoded in
 plaintext, committed to this public repo. That key (deriving to
-0x4E80761B7c711a659b9De2d6398d1C45f19289f0) must be treated as permanently
-compromised — rotate it (deploy a new agent wallet, update
-AGENT_WALLET_PRIVATE_KEY everywhere it's configured, and re-run
-setRiskParams from the new address) even though this is testnet. This
-script now reads the key from the environment only and refuses to run
-without it, so a hardcoded key can't be reintroduced here by accident.
+0x4E80761B7c711a659b9De2d6398d1C45f19289f0) is permanently compromised —
+rotated 2026-09-12 (new AGENT_WALLET_PRIVATE_KEY + OKX/Binance creds active
+in .env; old 0x4E80… invalidated). This script now reads the key from the
+environment only and refuses to run without it, so a hardcoded key can't be
+reintroduced here by accident.
 """
 import asyncio
 import os
