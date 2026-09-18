@@ -14,11 +14,11 @@ The binary-level WIT extract is included as `z_trading_risk_gate.wit.txt`
 ## Expected result
 
 Imports (must match `t3n/contract/wit/world.wit`):
-- `host:tenant/tenant-context@1.0.0` (incl. `cluster-timestamp-secs`, `seq-no`)
+- `host:tenant@1.2.0` / `tenant-context@1.0.0` (incl. `cluster-timestamp-secs`, `seq-no`)
 - `host:interfaces/logging@2.1.0`
 - `host:interfaces/kv-store@2.1.0`
 
-Exports (`z:trading-risk-gate/contracts@0.1.3`) — 12 functions:
+Exports (`z:trading-risk-gate/contracts@0.1.0`) — 12 functions:
 - `validate-trade`, `log-decision`, `get-risk-params`, `get-daily-stats`
 - `set-mandate`, `get-mandate`, `evaluate-mandate`, `resolve-escalation`,
   `list-escalations`

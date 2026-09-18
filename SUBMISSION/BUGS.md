@@ -21,7 +21,7 @@ quickstart should `rustup target add wasm32-wasip2`.
 
 ### 2. Tenant-contract WIT worlds ship no host clock — every contract reinvents time
 
-`host:tenant/tenant-context@1.0.0` exposes `cluster-timestamp-secs()` (good!),
+`host:tenant@1.2.0` / `tenant-context@1.0.0` exposes `cluster-timestamp-secs()` (good!),
 but nothing in the docs or reference contracts demonstrates using it for
 *date* semantics. Without it, a naive implementation hardcodes "today" — our
 first draft did exactly that (`"2026-08-27"`) — which silently breaks any
@@ -102,7 +102,7 @@ cursor).
   idempotent / update re-grants ACLs — used for every re-register).
 - `T3nClient.executeAndDecode` for all 12 contract exports, including the
   owner-gated admin functions.
-- `host:tenant/tenant-context@1.0.0` `cluster-timestamp-secs()` + `seq-no()`
+- `host:tenant@1.2.0` / `tenant-context@1.0.0` `cluster-timestamp-secs()` + `seq-no()`
   — used by our contract for daily rollover and collision-free decision / 
   escalation IDs (`dec_<secs>_<seq>_<asset>`, `esc_<secs>_<seq>`).
 - `logging.info` from inside the enclave readable via `tenant.contracts.logs`.

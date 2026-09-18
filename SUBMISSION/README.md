@@ -15,7 +15,7 @@ This submission is structured for the bounty's two core criteria:
 *data, not code*; the safety layer is *not bypassable by the trading client*;
 and the audit trail is *complete by construction*.
 
-## Capabilities (live on testnet, contract v0.1.3)
+## Capabilities (live on testnet, contract v1.0.0)
 
 The enclave contract `z-trading-risk-gate` exports **12 functions**:
 
@@ -188,7 +188,7 @@ away.
 
 ## Findings (bugs faced)
 
-See `SUBMISSION/BUGS.md` (6 findings, 3 new to this challenge).
+See `SUBMISSION/BUGS.md` (8 findings, 5 new to this challenge).
 
 ## Screenshots
 

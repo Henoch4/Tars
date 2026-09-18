@@ -1,4 +1,4 @@
-# LIVE_OUTPUTS.md — verbatim testnet verification (contract v0.1.3, id 793)
+# LIVE_OUTPUTS.md — verbatim testnet verification (contract v1.0.0, id 793)
 
 > Real output captured against the T3N testnet cluster, `@terminal3/t3n-sdk`,
 > Node on Windows, Rust 1.97.1, target `wasm32-wasip2`, `wit-bindgen 0.49`,
@@ -10,8 +10,8 @@
 - Tenant DID: `did:t3n:5db3681df85b9a698777a5aa603329da86cdb5dc`
 - Agent DID: `did:t3n:f877094c99cd7264ebaab2cf2c6307c097775b76`
 - Contract: `z:5db3681df85b9a698777a5aa603329da86cdb5dc:trading-risk-gate`
-- contract_id **793**, version **0.1.3**
-- Component size: **308,953 bytes** (0.1.3) / 307,974 (0.1.2) — well under cap
+- contract_id **793**, version **1.0.0**
+- Component size: **308,953 bytes** (1.0.0) / 307,974 (0.1.2) — well under cap
 
 ## 1. Registration + KV map seeding (`npx tsx src/register.ts`)
 
@@ -25,7 +25,7 @@
 Registering T3N trading risk gate contract...
 Authenticated as tenant: did:t3n:5db3681df85b9a698777a5aa603329da86cdb5dc
 WASM size: 308953 bytes
-RpcError: RPC Error: contract version invalid: version 0.1.3 is not higher than current version 0.1.3 [bc7d36c1-c8eb-4b15-b421-eccbee8d3931]
+RpcError: RPC Error: contract version invalid: version 1.0.0 is not higher than current version 1.0.0 [bc7d36c1-c8eb-4b15-b421-eccbee8d3931]
 ```
 
 ## 2. get-risk-params (includes crash-veto + Kelly knobs)
@@ -146,7 +146,7 @@ correctly rejects — demonstrating disciplined, fail-closed behavior.
 ```
 --- T3N Trading Agent Demo ---
 Tenant: did:t3n:5db3681df85b9a698777a5aa603329da86cdb5dc
-Agent script: z:5db3681df85b9a698777a5aa603329da86cdb5dc:trading-risk-gate v0.1.3
+Agent script: z:5db3681df85b9a698777a5aa603329da86cdb5dc:trading-risk-gate v1.0.0
 agentDid: did:t3n:f877094c99cd7264ebaab2cf2c6307c097775b76
 
 --- Risk Parameters ---

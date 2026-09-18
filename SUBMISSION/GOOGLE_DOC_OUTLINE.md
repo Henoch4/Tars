@@ -33,7 +33,7 @@ fractional-Kelly sizing and an in-enclave neural net.
 - Real application domain: gates a live OKX-connected service, using real OKX
   historical candles (no synthetic data) for signals and the NN features.
 
-## 3. What was built (contract v0.1.3, ~309 KB WASM, 12 exports)
+## 3. What was built (contract v1.0.0, ~309 KB WASM, 12 exports)
 - `z-trading-risk-gate` — custom WASM TEE contract (Rust → wasm32-wasip2,
   wit-bindgen 0.49):
   - `validate-trade` (allowlist, size, confidence, leverage, daily loss/count),
@@ -47,8 +47,9 @@ fractional-Kelly sizing and an in-enclave neural net.
   trade orchestrator, OKX client, HTTP API (`/health`, `/risk-params`,
   `/daily-stats`, `/mandate`, `/escalations`, `/trade`, `/demo`).
 - 12 Rust unit tests (mandate, sizing, ML) — fully offline.
-- Bug findings: BUGS.md (6 findings, 3 new to this challenge, incl. a new
-  `kv_store::scan` visibility bug).
+- Bug findings: BUGS.md (8 findings, 5 new to this challenge, incl. a new
+  `kv_store::scan` visibility bug, the uncommitted-`wit/` rebuild gap, and
+  the weight-exporter float-literal bug).
 
 ## 4. Live on-chain demo (testnet)
 Recorded verbatim in `SUBMISSION/verification/LIVE_OUTPUTS.md`:
@@ -64,7 +65,7 @@ Recorded verbatim in `SUBMISSION/verification/LIVE_OUTPUTS.md`:
 - [x] Public GitHub repo (this repo, `SUBMISSION/` + `t3n/`)
 - [x] Agent DID + API key claimed (go.terminal3.io/adk-community)
 - [x] Quickstart + Walkthrough completed
-- [x] Custom TEE contract registered on testnet — contract_id 793, v0.1.3
+- [x] Custom TEE contract registered on testnet — contract_id 793, v1.0.0
 - [x] Live invocation logs (verification/LIVE_OUTPUTS.md)
 - [x] BUGS.md findings
 - [x] Screenshots

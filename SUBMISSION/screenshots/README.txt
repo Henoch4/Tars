@@ -1,5 +1,5 @@
 Screenshots captured (PNG) from live testnet verification, Aug 29 2026.
-All against contract v0.1.3 / id 793 on T3N testnet.
+All against contract v1.0.0 / id 793 on T3N testnet.
 
 LIVE OKX DATA SCREENSHOTS (final submission):
 

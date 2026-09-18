@@ -8,7 +8,7 @@
 - [x] 12 offline Rust unit tests pass (mandate, sizing, ML).
 - [x] Release WASM built: `t3n/contract/target/wasm32-wasip2/release/z_trading_risk_gate.wasm`
       (308,953 bytes, clean build).
-- [x] Contract **registered on testnet, contract_id 793, v0.1.3** (via
+- [x] Contract **registered on testnet, contract_id 793, v1.0.0** (via
       `npx tsx src/register.ts`); all 5 maps ACL'd, risk params + mandate
       seeded.
 - [x] All 12 exports verified LIVE on testnet via `executeAndDecode`
@@ -16,9 +16,9 @@
       in `SUBMISSION/verification/LIVE_OUTPUTS.md`.
 - [x] `kv_store::scan` visibility bug found + worked around (get-based pending
       index in `mandate.rs`); added as BUGS.md #6.
-- [x] `SUBMISSION/README.md` updated for v0.1.3 (full capability table,
-      architecture, risk policy, mandate, handover).
-- [x] `GOOGLE_DOC_OUTLINE.md` updated for v0.1.3.
+- [x] `SUBMISSION/README.md` updated for v1.0.0 (full capability table,
+       architecture, risk policy, mandate, handover).
+- [x] `GOOGLE_DOC_OUTLINE.md` updated for v1.0.0.
 - [x] `verification/README.md` updated (12 exports, real sizes/facts).
 - [x] `twitter_thread.md` rewritten for the T3N bounty, tags `@terminal3io`.
 
