@@ -1121,6 +1121,40 @@ class TestOnchainReconciliation:
         )
         assert gate._kill_switch_active is False
 
+    def test_require_onchain_sync_mandatory_for_live_mode(self, tmp_path):
+        """P1.8: require_onchain_sync=True with a working logger succeeds."""
+        from src.execution import DurableDailyCounters, RiskGate
+        gate = RiskGate(
+            counter_store=DurableDailyCounters(path=str(tmp_path / "s.json"), enabled=False),
+            onchain_logger=_FakeOnchainLogger(agent_address="0xAgent", kill_switch=False),
+            require_onchain_sync=True,
+        )
+        assert gate._kill_switch_active is False
+        assert gate.require_onchain_sync is True
+
+    def test_require_onchain_sync_raises_on_missing_logger(self, tmp_path):
+        """P1.8: require_onchain_sync=True without an onchain_logger raises."""
+        from src.execution import RiskGate
+        with pytest.raises(RuntimeError, match="onchain_logger"):
+            RiskGate(require_onchain_sync=True)
+
+    def test_require_onchain_sync_raises_on_chain_failure(self, tmp_path):
+        """P1.8: require_onchain_sync=True with a failing onchain_logger raises RuntimeError."""
+        from src.execution import DurableDailyCounters, RiskGate
+
+        class _FailingOnchainLogger:
+            agent_address = "0xAgent"
+            @property
+            def contract(self):
+                raise ConnectionError("RPC unreachable")
+
+        with pytest.raises(RuntimeError, match="Onchain reconciliation failed"):
+            RiskGate(
+                counter_store=DurableDailyCounters(path=str(tmp_path / "s.json"), enabled=False),
+                onchain_logger=_FailingOnchainLogger(),
+                require_onchain_sync=True,
+            )
+
 
 class TestSingleCountPerOrder:
     """Regression: one logical order must consume exactly ONE daily-trade

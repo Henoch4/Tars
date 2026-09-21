@@ -15,6 +15,8 @@ from .models import (
     ExecutionError,
 )
 from .risk_gate import (
+    DBCCurveConfig,
+    DBCCurveType,
     DurableDailyCounters,
     RiskCheckResult,
     RiskGate,
@@ -29,6 +31,8 @@ __all__ = [
     "OrderRequest",
     "OrderResult",
     "ExecutionError",
+    "DBCCurveConfig",
+    "DBCCurveType",
     "DurableDailyCounters",
     "RiskCheckResult",
     "RiskGate",

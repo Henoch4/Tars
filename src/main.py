@@ -722,6 +722,9 @@ def _make_risk_gate(onchain_logger=None) -> RiskGate:
         regime_throttle=settings.regime_throttle,
         regime_band_pct=settings.regime_band_pct,
         regime_size_scale=settings.regime_size_scale,
+        dbc_curve_type=settings.dbc_curve_type,
+        dbc_fee_bps=settings.dbc_fee_bps,
+        dbc_graduation=settings.dbc_graduation,
         counters_durable=True,
         onchain_logger=onchain_logger,
     )

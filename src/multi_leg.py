@@ -40,6 +40,7 @@ import time
 import uuid
 
 from .execution import OrderRequest, OrderResult, OrderStatus, OrderSide
+from .execution.risk_gate import DBCCurveType, DBCCurveConfig
 import logging
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,12 @@ class Step:
     amount_ratio: float  # fraction of package notional for this leg
     max_slippage_pct: float = 0.003
 
+    # DBC-specific parameters (Meteora integration). Plain str/int/float
+    # so steps stay JSON-serializable; values validated in validate_steps.
+    dbc_curve: str = DBCCurveType.FLAT
+    dbc_fee_bps: int = 100
+    dbc_graduation: float = 0.5
+
     def inverse(self) -> "Step":
         flip = {
             "buy_spot": "sell_spot",
@@ -66,7 +73,8 @@ class Step:
             "short_perp": "cover_perp",
             "cover_perp": "short_perp",
         }
-        return Step(self.venue, flip[self.action], self.asset, self.amount_ratio, self.max_slippage_pct)
+        return Step(self.venue, flip[self.action], self.asset, self.amount_ratio, self.max_slippage_pct,
+                    self.dbc_curve, self.dbc_fee_bps, self.dbc_graduation)
 
 
 def validate_steps(steps: list[Step]) -> list[str]:
@@ -80,6 +88,13 @@ def validate_steps(steps: list[Step]) -> list[str]:
     for s in steps:
         if s.max_slippage_pct <= 0 or s.max_slippage_pct > 0.05:
             errors.append(f"step on {s.venue} has implausible max_slippage_pct={s.max_slippage_pct}")
+        # Validate DBC curve type + fee/graduation bounds (fail-closed)
+        if s.dbc_curve not in [DBCCurveType.FLAT, DBCCurveType.EXPONENTIAL, DBCCurveType.LONG, DBCCurveType.CUSTOM]:
+            errors.append(f"step on {s.venue} has invalid DBC curve type: {s.dbc_curve}")
+        if s.dbc_fee_bps < 0 or s.dbc_fee_bps > 10000:
+            errors.append(f"step on {s.venue} has implausible dbc_fee_bps={s.dbc_fee_bps}")
+        if not 0.0 < s.dbc_graduation <= 1.0:
+            errors.append(f"step on {s.venue} has implausible dbc_graduation={s.dbc_graduation}")
     return errors
 
 
@@ -103,6 +118,9 @@ class LegResult:
             "step_venue": self.step.venue,
             "step_amount_ratio": self.step.amount_ratio,
             "step_max_slippage_pct": self.step.max_slippage_pct,
+            "step_dbc_curve": self.step.dbc_curve,
+            "step_dbc_fee_bps": self.step.dbc_fee_bps,
+            "step_dbc_graduation": self.step.dbc_graduation,
             "filled": self.filled,
             "fill_price": self.fill_price,
             "slippage_pct": self.slippage_pct,
@@ -119,6 +137,9 @@ class LegResult:
             asset=d["step_asset"],
             amount_ratio=d["step_amount_ratio"],
             max_slippage_pct=d["step_max_slippage_pct"],
+            dbc_curve=d.get("step_dbc_curve", DBCCurveType.FLAT),
+            dbc_fee_bps=d.get("step_dbc_fee_bps", 100),
+            dbc_graduation=d.get("step_dbc_graduation", 0.5),
         )
         return cls(
             step=step,
@@ -207,6 +228,9 @@ class MultiLegExecutionManager:
                     "asset": s.asset,
                     "amount_ratio": s.amount_ratio,
                     "max_slippage_pct": s.max_slippage_pct,
+                    "dbc_curve": s.dbc_curve,
+                    "dbc_fee_bps": s.dbc_fee_bps,
+                    "dbc_graduation": s.dbc_graduation,
                 }
                 for s in pkg.steps
             ],
@@ -240,6 +264,9 @@ class MultiLegExecutionManager:
                         asset=s["asset"],
                         amount_ratio=s["amount_ratio"],
                         max_slippage_pct=s["max_slippage_pct"],
+                        dbc_curve=s.get("dbc_curve", DBCCurveType.FLAT),
+                        dbc_fee_bps=s.get("dbc_fee_bps", 100),
+                        dbc_graduation=s.get("dbc_graduation", 0.5),
                     )
                     for s in data["steps"]
                 ],
@@ -565,6 +592,9 @@ class PaperFillSimulator:
     enforcement unreachable, because fills could never actually exceed
     `max_slippage_pct`. Here an occasional breach is real, which is the whole
     reason the enforcement path exists.
+
+    DBC integration: slippage respects per-leg `max_slippage_pct` and can
+    incorporate DBC curve shape parameters for more realistic simulation.
     """
 
     def __init__(self, seed: int = 7, fill_prob: float = 0.94):
@@ -593,6 +623,10 @@ class LiveFillSimulator:
     (``OrderResult.slippage_pct``, a percentage) and normalized to the same
     fraction unit ``Step.max_slippage_pct`` and PaperFillSimulator use, so the
     package's own breach detection compares like units.
+
+    DBC integration: per-leg DBC curve parameters are stored but the actual
+    slippage verification uses the executor's post-fill data, consistent
+    with the rest of the system.
     """
 
     def __init__(

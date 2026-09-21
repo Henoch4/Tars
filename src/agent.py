@@ -31,7 +31,9 @@ from .signals import (
     record_ml_degradation,
     ensemble_signal,
     backtest_simple,
+    dbc_curve_signal,
 )
+from .panta_client import PantaClient, get_panta_client
 from .trader import (
     TraderStrategy,
     MarketContext,
@@ -126,11 +128,14 @@ class AutonomousTradingAgent:
         use_consensus_gate: bool = False,
         consensus_gate: ConsensusGate | None = None,
         traders: list[TraderStrategy] | None = None,
-    ):
+        # --- Product C: Prediction Market Integration ---
+        panta_client: PantaClient | None = None,
+):
         self.cli = okx_cli
         self.risk_gate = risk_gate
         self.onchain_logger = onchain_logger
         self.dry_run = dry_run
+        self.panta_client = panta_client or get_panta_client()
         self.max_position_usd = max_position_usd
         self.agent_id = agent_id
         self.sizing_mode = sizing_mode
@@ -200,6 +205,11 @@ class AutonomousTradingAgent:
         self._position_size_multiplier: float = 1.0
         self._confidence_floor_bps: int | None = None
         self._enabled_signals: set[str] | None = None
+        # DBC knobs for the current cycle (Meteora integration). None means
+        # "no DBC profile resolved" — the signal falls back to the gate default.
+        self._dbc_curve_type: str | None = None
+        self._dbc_fee_bps: int | None = None
+        self._dbc_graduation: float | None = None
 
         # --- Product B: Swarm Trading ---
         self.use_consensus_gate = use_consensus_gate
@@ -348,6 +358,9 @@ class AutonomousTradingAgent:
             self._position_size_multiplier = 1.0
             self._confidence_floor_bps = None
             self._enabled_signals = None
+            self._dbc_curve_type = None
+            self._dbc_fee_bps = None
+            self._dbc_graduation = None
             return None
 
         profile = self.curator.active_profile()
@@ -357,17 +370,28 @@ class AutonomousTradingAgent:
                 "position_size_multiplier": os.getenv("CURATOR_POSITION_SIZE_MULTIPLIER"),
                 "confidence_floor_bps": os.getenv("CURATOR_CONFIDENCE_FLOOR_BPS"),
                 "max_leverage": os.getenv("CURATOR_MAX_LEVERAGE"),
+                "dbc_curve_type": os.getenv("DBC_CURVE_TYPE"),
+                "dbc_fee_bps": os.getenv("DBC_FEE_BPS"),
+                "dbc_graduation": os.getenv("DBC_GRADUATION"),
             },
             casters={
                 "position_size_multiplier": float,
                 "confidence_floor_bps": int,
                 "max_leverage": float,
+                "dbc_curve_type": str,
+                "dbc_fee_bps": int,
+                "dbc_graduation": float,
             },
         )
         self._position_size_multiplier = float(resolved.get("position_size_multiplier", 1.0))
         self._confidence_floor_bps = resolved.get("confidence_floor_bps")
         enabled = resolved.get("enabled_signals")
         self._enabled_signals = set(enabled) if enabled else None
+        # DBC knobs resolve only when the active profile carries them —
+        # non-DBC profiles leave them None (gate default applies).
+        self._dbc_curve_type = resolved.get("dbc_curve_type")
+        self._dbc_fee_bps = resolved.get("dbc_fee_bps")
+        self._dbc_graduation = resolved.get("dbc_graduation")
         return resolved
 
     def _check_integrity(self, asset: str, market_data: dict,
@@ -452,6 +476,22 @@ class AutonomousTradingAgent:
         else:
             # SOL also keeps funding_rate as secondary (curator decides)
             signals.append(funding_rate_signal(asset, funding_rate, threshold=0.001))
+
+        # DBC curve signal - Meteora integration. Emitted ONLY when the
+        # active curator profile allowlists "dbc_curve", so wiring a gate
+        # default never changes the signal set for existing profiles/tests.
+        # The curve comes from the resolved cycle knob, falling back to the
+        # gate construction-time default.
+        if self._enabled_signals is not None and "dbc_curve" in self._enabled_signals:
+            dbc_curve_type = self._dbc_curve_type or self.risk_gate.dbc_curve_type
+            signals.append(
+                dbc_curve_signal(
+                    asset=asset,
+                    funding_rate=funding_rate,
+                    curve_type=dbc_curve_type,
+                    threshold=0.001,
+                )
+            )
 
         # Mean reversion always available (curator filtered)
         signals.append(
@@ -1156,6 +1196,16 @@ class AutonomousTradingAgent:
                     }, proof=PROOF_EVIDENCE)
             return out
 
+        # --- Phase 1.7: Panta Prediction Market Integration ---
+        # If a Panta client is available, we can create prediction markets
+        # or buy primary positions as part of the trading cycle. This
+        # integrates Panta's prediction market infrastructure with tarstrade's
+        # risk-gated execution pipeline.
+        if self.panta_client is not None:
+            panta_outcome = await self._panta_phase(asset, md, cycle_id, out)
+            if panta_outcome is not None:
+                return panta_outcome
+
         # --- Phase 2: Signal Generation ---
         # The delta-neutral funding-arb package takes priority over the
         # directional signal path: a perp whose funding rate clears
@@ -1465,6 +1515,95 @@ class AutonomousTradingAgent:
                 )
 
         return out
+
+    async def _panta_phase(
+        self, asset: str, md: dict, cycle_id: str, out: dict
+    ) -> dict | None:
+        """Try a Panta prediction-market step for this asset.
+
+        Plain-English version: if the asset name starts with PANTA_,
+        ask the Panta API for a price quote (create a market, or buy
+        YES/NO in one) and record the answer as a decision. Quote
+        only -- nothing is signed or sent on-chain here.
+
+        Returns None for normal assets so the usual trading path
+        continues untouched.
+        """
+        base = asset[:-5] if asset.endswith("-SWAP") else asset
+
+        if base.startswith("PANTA_CREATE_"):
+            # Format: PANTA_CREATE_<outcome_a>_<outcome_b>_<usdc_base_units>
+            # e.g. PANTA_CREATE_BTC_UP_BTC_DOWN_50000000
+            try:
+                rest = base[len("PANTA_CREATE_"):]
+                parts = rest.split("_")
+                usdc_amount = int(parts[-1])
+                outcome_b = parts[-2]
+                outcome_a = "_".join(parts[:-2])
+                quote = await self.panta_client.create_market_quote(
+                    outcome_a=outcome_a,
+                    outcome_b=outcome_b,
+                    usdc_amount=usdc_amount,
+                )
+                out["decisions"].append({
+                    "decision_id": f"panta_dec_{uuid.uuid4().hex[:12]}",
+                    "asset": asset,
+                    "signal": "NEUTRAL",
+                    "status": "panta_create_quoted",
+                    "panta_response": quote,
+                })
+                out["signals"].append({
+                    "asset": asset,
+                    "ensemble": {
+                        "direction": "NEUTRAL",
+                        "confidence_bps": 0,
+                        "rationale": "Panta market-creation quote received.",
+                    },
+                    "individual": [],
+                })
+                return out
+            except Exception as e:
+                out["errors"].append(f"Panta market creation failed for {asset}: {e}")
+                logger.error(f"Panta market creation failed for {asset}: {e}")
+                return out
+
+        if base.startswith("PANTA_BUY_"):
+            # Format: PANTA_BUY_<market_id>_<YES|NO>_<usdc_amount>
+            # e.g. PANTA_BUY_mkt123_YES_20.00
+            try:
+                rest = base[len("PANTA_BUY_"):]
+                parts = rest.split("_")
+                usdc_amount = parts[-1]
+                outcome = parts[-2]
+                market_id = "_".join(parts[:-2])
+                quote = await self.panta_client.primary_buy_quote(
+                    market_id=market_id,
+                    outcome=outcome,
+                    usdc_amount=usdc_amount,
+                )
+                out["decisions"].append({
+                    "decision_id": f"panta_dec_{uuid.uuid4().hex[:12]}",
+                    "asset": asset,
+                    "signal": "NEUTRAL",
+                    "status": "panta_buy_quoted",
+                    "panta_response": quote,
+                })
+                out["signals"].append({
+                    "asset": asset,
+                    "ensemble": {
+                        "direction": "NEUTRAL",
+                        "confidence_bps": 0,
+                        "rationale": "Panta primary-buy quote received.",
+                    },
+                    "individual": [],
+                })
+                return out
+            except Exception as e:
+                out["errors"].append(f"Panta primary buy failed for {asset}: {e}")
+                logger.error(f"Panta primary buy failed for {asset}: {e}")
+                return out
+
+        return None
 
     async def _process_asset_consensus(self, asset: str, md: dict, cycle_id: str, out: dict) -> dict:
         """Process asset through Product B consensus gate (swarm trading)."""

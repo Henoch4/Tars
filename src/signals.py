@@ -23,6 +23,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Literal, Optional
 
+from .execution.risk_gate import DBCCurveType
+
 
 logger = logging.getLogger(__name__)
 
@@ -517,6 +519,87 @@ def funding_rate_signal(
             ),
             metadata={"funding_rate": funding_rate, "threshold": threshold},
         )
+
+
+def dbc_curve_signal(
+    asset: str,
+    funding_rate: float,
+    curve_type: str = DBCCurveType.FLAT,
+    threshold: float = 0.001,
+) -> Signal:
+    """
+    Meteora DBC curve signal.
+
+    Evaluates funding rate against DBC curve parameters to determine
+    trade direction. Different curve shapes have different expectations:
+
+    - FLAT: stable pricing, moderate funding expected
+    - EXPONENTIAL: rapid price discovery, higher funding volatility
+    - LONG: extended hold periods, accumulated funding
+    - CUSTOM: user-defined curve parameters
+
+    Returns NEUTRAL if funding is within normal bounds, otherwise directional
+    signal based on curve shape and funding extremity.
+    """
+    if abs(funding_rate) < threshold:
+        return Signal(
+            strategy="dbc_curve",
+            asset=asset,
+            direction="NEUTRAL",
+            confidence_bps=int(0.3 * 10000),  # 30% confidence for weak signal
+            entry_price=None,
+            rationale=(
+                f"Funding rate {funding_rate:.6f} within ±{threshold} band. "
+                f"No significant DBC curve signal."
+            ),
+            metadata={
+                "funding_rate": funding_rate,
+                "threshold": threshold,
+                "curve_type": curve_type,
+            },
+        )
+
+    # Confidence based on funding rate extremity and curve type
+    base_confidence = min(0.60 + abs(funding_rate) * 100, 0.90)
+
+    # Curve-type adjustment
+    curve_multiplier = {
+        DBCCurveType.FLAT: 1.0,
+        DBCCurveType.EXPONENTIAL: 1.2,
+        DBCCurveType.LONG: 1.1,
+        DBCCurveType.CUSTOM: 0.9,
+    }.get(curve_type, 1.0)
+
+    confidence = min(base_confidence * curve_multiplier, 0.95)
+    confidence_bps = int(confidence * 10000)
+
+    # Determine direction based on funding sign and curve shape
+    if funding_rate > threshold:
+        direction = "SHORT"
+        rationale = (
+            f"Funding rate {funding_rate:.6f} above threshold {threshold} "
+            f"with {curve_type} curve → contrarian short on funding reversion."
+        )
+    else:
+        direction = "LONG"
+        rationale = (
+            f"Funding rate {funding_rate:.6f} below threshold {threshold} "
+            f"with {curve_type} curve → contrarian long on funding reversion."
+        )
+
+    return Signal(
+        strategy="dbc_curve",
+        asset=asset,
+        direction=direction,
+        confidence_bps=confidence_bps,
+        entry_price=None,
+        rationale=rationale,
+        metadata={
+            "funding_rate": funding_rate,
+            "threshold": threshold,
+            "curve_type": curve_type,
+        },
+    )
 
 
 def funding_persistence_z_signal(

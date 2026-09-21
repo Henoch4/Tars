@@ -25,6 +25,27 @@ from datetime import datetime, timezone
 
 from .models import OrderRequest
 
+# Meteora DBC curve types — string constants, not an Enum, so they stay
+# JSON-serializable and comparable with plain strings from config/profiles.yaml.
+class DBCCurveType:
+    FLAT = "flat"
+    EXPONENTIAL = "exponential"
+    LONG = "long"
+    CUSTOM = "custom"
+
+
+@dataclass
+class DBCCurveConfig:
+    """Configuration for a Meteora Dynamic Bonding Curve."""
+    curve_type: DBCCurveType
+    scale: float = 1.0  # Scale factor for the curve
+    fee_bps: int = 100  # Fee in basis points (1% = 100 bps)
+    graduation_threshold: float = 0.5  # Threshold for DAMM v2 migration
+    # Custom curve parameters
+    a: float = 1.0  # Curve parameter a
+    b: float = 1.0  # Curve parameter b
+    c: float = 1.0  # Curve parameter c
+
 logger = logging.getLogger(__name__)
 
 class DurableDailyCounters:
@@ -245,8 +266,15 @@ class RiskGate:
          # and cross-checks on every counter write: the contract is authoritative
          # for the *halt* and the *loss floor*; the file is authoritative for the
          # in-process running totals between restarts.
-         onchain_logger=None,
-    ):
+          onchain_logger=None,
+          # --- Meteora DBC integration (construction-time, non-overridable) ---
+          # Curve/fee/graduation defaults for DBC legs. The agent may select
+          # a curve per package via Step fields; the gate holds the default.
+dbc_curve_type: str = "flat",
+           dbc_fee_bps: int = 100,
+           dbc_graduation: float = 0.5,
+           require_onchain_sync: bool = False,
+     ):
         self.max_position_usd = max_position_usd
         self.max_daily_loss_usd = max_daily_loss_usd
         self.max_daily_trades = max_daily_trades
@@ -254,6 +282,25 @@ class RiskGate:
         self.max_leverage = max_leverage
         self.max_slippage_pct = max_slippage_pct
         self.min_confidence_bps = min_confidence_bps
+        # DBC integration parameters (validated, fail-closed on bad values)
+        allowed_curves = (
+            DBCCurveType.FLAT,
+            DBCCurveType.EXPONENTIAL,
+            DBCCurveType.LONG,
+            DBCCurveType.CUSTOM,
+        )
+        if dbc_curve_type not in allowed_curves:
+            raise ValueError(f"invalid dbc_curve_type={dbc_curve_type!r}")
+        if dbc_fee_bps < 0 or dbc_fee_bps > 10000:
+            raise ValueError(f"invalid dbc_fee_bps={dbc_fee_bps!r}")
+        if not 0.0 < dbc_graduation <= 1.0:
+            raise ValueError(f"invalid dbc_graduation={dbc_graduation!r}")
+        self.dbc_curve_type: str = dbc_curve_type
+        self.dbc_curve_config: DBCCurveConfig = DBCCurveConfig(
+            curve_type=dbc_curve_type,
+            fee_bps=dbc_fee_bps,
+            graduation_threshold=dbc_graduation,
+        )
         self.max_price_age_seconds = max_price_age_seconds
         # W2/S9: the assets default comes from the single asset registry,
         # never a second copy of the list. Companions default to EMPTY on
@@ -300,6 +347,7 @@ class RiskGate:
             )
         self._counters = counter_store
         self._onchain_logger = onchain_logger
+        self.require_onchain_sync = require_onchain_sync
 
         # --- Kill switch: global halt, independent of per-agent limits ---
         # Initialised BEFORE onchain sync below — sync_with_onchain() may need
@@ -329,8 +377,23 @@ class RiskGate:
         # kill switch is authoritative and must be mirrored locally even when
         # the local flag was (necessarily, at cold start) unset. See
         # sync_with_onchain() for the source-of-truth map.
+        # In live mode (require_onchain_sync), reconciliation failure is
+        # fatal — we refuse to trade blind.
         if self._onchain_logger is not None:
-            self.sync_with_onchain()
+            try:
+                self.sync_with_onchain()
+            except Exception as e:
+                if self.require_onchain_sync:
+                    raise RuntimeError(
+                        f"Onchain reconciliation failed in live mode: {e}"
+                    ) from e
+                # Non-live mode: log and continue (safety cross-check,
+                # not a blocking read).
+                logger.warning(f"sync_with_onchain: unable to read kill switch from contract: {e}")
+        elif self.require_onchain_sync:
+            raise RuntimeError(
+                "require_onchain_sync=True but no onchain_logger was supplied"
+            )
 
     def _rehydrate_store(self) -> None:
         """Reload the current day's accumulators from the persistent store.

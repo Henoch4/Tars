@@ -24,6 +24,7 @@ from typing import Callable
 import yaml
 
 from .audit_trail import AuditLog
+from .execution.risk_gate import DBCCurveType
 
 
 @dataclass
@@ -65,6 +66,15 @@ class CuratorAgent:
     def active_profile(self) -> dict:
         return self.profiles[self.state.current_profile]
 
+    def dbc_curve_type(self) -> DBCCurveType | None:
+        """Get the DBC curve type for the active profile, if configured."""
+        profile_name = self.state.current_profile
+        if profile_name in self.profiles:
+            profile = self.profiles[profile_name]
+            if "dbc_curve_type" in profile:
+                return profile["dbc_curve_type"]
+        return None
+
     def consensus_settings(self) -> dict:
         """Get consensus gate settings for the current active profile.
         
@@ -81,6 +91,9 @@ class CuratorAgent:
             "thresholds": {**defaults.get("thresholds", {}), **profile.get("consensus_thresholds", {})},
             "behavior": profile.get("consensus_behavior", defaults.get("behavior", "skip")),
             "default_trader": profile.get("consensus_default_trader", defaults.get("default_trader", "funding_carry")),
+            "dbc_curve_type": profile.get("dbc_curve_type", defaults.get("dbc_curve_type", None)),
+            "dbc_fee_bps": profile.get("dbc_fee_bps", defaults.get("dbc_fee_bps", 100)),
+            "dbc_graduation": profile.get("dbc_graduation", defaults.get("dbc_graduation", 0.5)),
         }
         
         self._profile_consensus_cache[profile_name] = settings

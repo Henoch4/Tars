@@ -134,6 +134,11 @@ class Settings(BaseSettings):
     max_concurrent_packages: PositiveInt = 3
     multi_leg_state_dir: str = "data/multi_leg_state"
 
+    # --- Meteora DBC integration (gate construction-time defaults) ---
+    dbc_curve_type: str = "flat"
+    dbc_fee_bps: int = 100
+    dbc_graduation: PositiveFloat = 0.5
+
     # --- Auth / exchange credentials (empty = unset) ---
     agent_api_token: str = ""
     okx_base_url: str = ""
@@ -172,6 +177,10 @@ class Settings(BaseSettings):
     # --- Moove billing (declared; consumed dynamically per-request) ---
     moove_api_key: str = ""
     moove_gate_hire: LenientFlag = False
+
+    # --- Panta API (prediction market infrastructure) ---
+    panta_api_key: str = ""
+    panta_timeout_seconds: PositiveInt = 30
 
     # --- Validation gate data (declared; consumed dynamically) ---
     validation_returns_path: str = ""

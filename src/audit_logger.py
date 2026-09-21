@@ -430,8 +430,8 @@ class OnchainLogger:
         """
         def build():
             return self.contract.functions.setRiskParams(
-                int(max_position_usd * 1e8),
-                int(max_daily_loss_usd * 1e8),
+                _to_fixed_point_1e8(max_position_usd),
+                _to_fixed_point_1e8(max_daily_loss_usd),
                 max_leverage_bps,
                 min_confidence_bps,
             )
