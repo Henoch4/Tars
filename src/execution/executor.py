@@ -304,7 +304,6 @@ class OrderExecutor:
             count_trade=not self.dry_run,
         )
         if not risk_check.approved:
-            _count_risk_rejection(risk_check.code)
             raise ExecutionError(
                 f"Risk gate rejected order: {risk_check.reason}. "
                 f"Code: {risk_check.code}"
@@ -324,6 +323,8 @@ class OrderExecutor:
                 error=None,
                 raw={"dry_run": True, **order.to_dict()},
             )
+            from ..metrics import inc as _metrics_inc
+            _metrics_inc("tars_orders_total", {"state": result.state.value})
             return self._verify_fill(order, result, reference_price=current_price)
 
         # --- Step 2: Submit to OKX via CLI ---
@@ -366,6 +367,8 @@ class OrderExecutor:
             fee_ccy=order_data.get("feeCcy", "USDT"),
             raw=result,
         )
+        from ..metrics import inc as _metrics_inc
+        _metrics_inc("tars_orders_total", {"state": order_result.state.value})
         # Market SWAP orders usually return no fillPx synchronously; without
         # it the post-fill slippage check below is inert. Poll a bounded
         # number of times for the fill before verifying; still no fillPx

@@ -541,6 +541,13 @@ dbc_curve_type: str = "flat",
             "activated_at": self._kill_switch_activated_at,
         }
 
+    def _reject(self, code: str, reason: str) -> RiskCheckResult:
+        """Return a rejected RiskCheckResult and increment the
+        tars_risk_rejections_total counter by closed code label."""
+        from ..metrics import inc as _metrics_inc
+        _metrics_inc("tars_risk_rejections_total", {"code": code})
+        return RiskCheckResult(approved=False, code=code, reason=reason)
+
     def observe_price(self, inst_id: str, price: float) -> None:
         """Feed a market price into the regime-throttle ring buffer.
 
@@ -823,11 +830,8 @@ dbc_curve_type: str = "flat",
         #    of a funding-arb package, e.g. BTC-USDT when BTC-USDT-SWAP is
         #    allowed).
         if not self._is_asset_allowed(order.inst_id):
-            return RiskCheckResult(
-                approved=False,
-                code="ASSET_NOT_ALLOWED",
-                reason=f"{order.inst_id} not in allowlist: {self.allowed_assets}",
-            )
+            return self._reject("ASSET_NOT_ALLOWED",
+                f"{order.inst_id} not in allowlist: {self.allowed_assets}")
 
         # 2. Confidence floor — the gate enforces it even if the strategy layer
         # forgets. Skipped only when the caller provides no confidence at all
@@ -1092,15 +1096,10 @@ dbc_curve_type: str = "flat",
             else float("inf")
         )
         if price_age > self.max_price_age_seconds:
-            return RiskCheckResult(
-                approved=False,
-                code="STALE_PRICE",
-                reason=(
-                    f"Reference price {current_price} is "
-                    f"{price_age:.1f}s old (cap {self.max_price_age_seconds:.0f}s). "
-                    f"Price feed is not fresh — refusing to trade on stale data."
-                ),
-            )
+            return self._reject("STALE_PRICE",
+                f"Reference price {current_price} is "
+                f"{price_age:.1f}s old (cap {self.max_price_age_seconds:.0f}s). "
+                f"Price feed is not fresh — refusing to trade on stale data.")
 
         # 10. Daily trade count — persisted so a restart mid-day does not
         #     reset this agent's tally against max_daily_trades. The store write
@@ -1125,6 +1124,11 @@ dbc_curve_type: str = "flat",
             count = self._daily_trade_count.get(key, 0) + 1
             self._daily_trade_count[key] = count
             self._counters.increment(key, "trade_count", 1)
+
+        # Decision metrics: count every decision by direction.
+        from ..metrics import inc as _metrics_inc
+        _metrics_inc("tars_decisions_total", {"direction": order.side.upper()})
+
         return RiskCheckResult(
             approved=True,
             code="APPROVED",

@@ -280,3 +280,92 @@ async def test_cycle_records_heartbeat_and_counts():
     assert hb["cycle_id"] == result.cycle_id
     assert hb["outcome"] in (OUTCOME_NO_TRADES, OUTCOME_REJECTED, OUTCOME_TRADED)
     assert hb["outcome"] != OUTCOME_ERROR
+
+
+class TestDecisionAndOrderMetrics:
+    """P2.2: tars_decisions_total and tars_orders_total are recorded
+    for every approved decision and order lifecycle state."""
+
+    def test_decisions_total_incremented_on_approved_order(self):
+        import time as _time
+        from src.execution import RiskGate
+        from src.execution.models import OrderRequest
+
+        gate = RiskGate(allowed_assets=["BTC-USDT-SWAP"])
+        order = OrderRequest(
+            inst_id="BTC-USDT-SWAP", side="buy", order_type="market",
+            size="100", confidence_bps=8000,
+        )
+        result = gate.check_order(order, "default",
+                                   current_price=50000,
+                                   current_price_timestamp=_time.time())
+        assert result.approved is True
+        snap = metrics.snapshot()
+        assert snap["counters"]['tars_decisions_total{direction="BUY"}'] == 1
+
+    def test_orders_total_filled_on_dry_run(self):
+        import time as _time
+        from src.execution import OrderExecutor, RiskGate
+        from src.execution.models import OrderRequest
+        from src.okx_cli import OkxCli, OkxCliConfig
+
+        gate = RiskGate(allowed_assets=["BTC-USDT-SWAP"])
+        cli = OkxCli(OkxCliConfig(demo=True))
+        ex = OrderExecutor(cli=cli, risk_gate=gate, dry_run=True)
+        order = OrderRequest(
+            inst_id="BTC-USDT-SWAP", side="buy", order_type="market",
+            size="100", confidence_bps=8000,
+        )
+        import asyncio
+        result = asyncio.run(ex.place_order(
+            order, current_price=50000,
+            current_price_timestamp=_time.time(),
+        ))
+        snap = metrics.snapshot()
+        assert snap["counters"]['tars_orders_total{state="filled"}'] == 1
+
+    def test_all_rejection_codes_counted(self):
+        """Every rejection code in RiskGate.check_order produces a
+        tars_risk_rejections_total entry."""
+        import time as _time
+        from src.execution import RiskGate
+        from src.execution.models import OrderRequest
+
+        gate = RiskGate(allowed_assets=["BTC-USDT-SWAP"])
+        ts = _time.time()
+        order = OrderRequest(
+            inst_id="BTC-USDT-SWAP", side="buy", order_type="market",
+            size="100", confidence_bps=8000,
+        )
+        # Trigger ASSET_NOT_ALLOWED by using a disallowed asset
+        bad_order = OrderRequest(
+            inst_id="UNKNOWN-USDT-SWAP", side="buy", order_type="market",
+            size="100", confidence_bps=8000,
+        )
+        gate.check_order(bad_order, "default",
+                          current_price=50000,
+                          current_price_timestamp=ts)
+        snap = metrics.snapshot()
+        rejections = {k: v for k, v in snap["counters"].items()
+                      if k.startswith("tars_risk_rejections_total")}
+        assert any("ASSET_NOT_ALLOWED" in k for k in rejections)
+
+    def test_decisions_total_skipped_on_rejection(self):
+        """tars_decisions_total is NOT incremented for rejected orders."""
+        import time as _time
+        from src.execution import RiskGate
+        from src.execution.models import OrderRequest
+
+        gate = RiskGate(allowed_assets=["BTC-USDT-SWAP"])
+        bad_order = OrderRequest(
+            inst_id="UNKNOWN-USDT-SWAP", side="buy", order_type="market",
+            size="100", confidence_bps=8000,
+        )
+        ts = _time.time()
+        gate.check_order(bad_order, "default",
+                          current_price=50000,
+                          current_price_timestamp=ts)
+        snap = metrics.snapshot()
+        decisions = {k: v for k, v in snap["counters"].items()
+                     if k.startswith("tars_decisions_total")}
+        assert len(decisions) == 0
