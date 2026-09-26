@@ -687,15 +687,26 @@ if _STATIC_DIR.exists():
 
     @app.get("/", include_in_schema=False)
     def landing():
-        return FileResponse(str(_STATIC_DIR / "landing.html"))
+        # no-store: this shell changes on deploys; browsers must not sit on
+        # a stale copy (immutable caching stays on /static/* assets only).
+        return FileResponse(
+            str(_STATIC_DIR / "landing.html"),
+            headers={"cache-control": "no-store, max-age=0"},
+        )
 
     @app.get("/dashboard", include_in_schema=False)
     def dashboard():
-        return FileResponse(str(_STATIC_DIR / "index.html"))
+        return FileResponse(
+            str(_STATIC_DIR / "index.html"),
+            headers={"cache-control": "no-store, max-age=0"},
+        )
 
     @app.get("/depositor", include_in_schema=False)
     def depositor_page():
-        return FileResponse(str(_STATIC_DIR / "depositor.html"))
+        return FileResponse(
+            str(_STATIC_DIR / "depositor.html"),
+            headers={"cache-control": "no-store, max-age=0"},
+        )
 
 
 # --- Trading Agent Setup ---
