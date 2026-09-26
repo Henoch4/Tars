@@ -37,7 +37,7 @@ class DBCCurveType:
 @dataclass
 class DBCCurveConfig:
     """Configuration for a Meteora Dynamic Bonding Curve."""
-    curve_type: DBCCurveType
+    curve_type: str
     scale: float = 1.0  # Scale factor for the curve
     fee_bps: int = 100  # Fee in basis points (1% = 100 bps)
     graduation_threshold: float = 0.5  # Threshold for DAMM v2 migration

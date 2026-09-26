@@ -37,12 +37,14 @@ class PantaClient:
 
     def __init__(self, api_key: Optional[str] = None, base_url: str = "https://live-api.panta.market/api/v1"):
         self.base_url = base_url.rstrip("/")
+        self.api_key: Optional[str] = None
         # Resolve api_key: explicit arg > env var from settings
         if api_key:
             self.api_key = api_key
         else:
             settings = get_settings()
-            self.api_key = getattr(settings, "panta_api_key", None)
+            value = getattr(settings, "panta_api_key", None)
+            self.api_key = value if isinstance(value, str) else None
         settings = get_settings()
         timeout = getattr(settings, "panta_timeout_seconds", 30) or 30
         self._client = httpx.AsyncClient(

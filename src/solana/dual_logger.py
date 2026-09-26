@@ -27,17 +27,26 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Optional
 
 logger = logging.getLogger(__name__)
 
+_chain_for_asset_impl: Optional[Callable[[str | None], str]] = None
 try:
-    from .chain_router import chain_for_asset, EVM as CHAIN_EVM, SOLANA as CHAIN_SOL
+    from .chain_router import (
+        chain_for_asset as _imported_chain_for_asset,
+        EVM as CHAIN_EVM,
+        SOLANA as CHAIN_SOL,
+    )
+    _chain_for_asset_impl = _imported_chain_for_asset
 except Exception:  # pragma: no cover - router is stdlib-only, this is belt & braces
     CHAIN_EVM, CHAIN_SOL = "evm", "solana"
 
-    def chain_for_asset(asset) -> str:
+
+def chain_for_asset(asset: str | None) -> str:
+    if _chain_for_asset_impl is None:
         return CHAIN_EVM
+    return _chain_for_asset_impl(asset)
 
 _ZERO_EVM = "0x" + "00" * 20
 _ZERO_HASH = "0x" + "00" * 32

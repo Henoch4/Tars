@@ -575,7 +575,7 @@ def dbc_curve_signal(
 
     # Determine direction based on funding sign and curve shape
     if funding_rate > threshold:
-        direction = "SHORT"
+        direction: SignalDirection = "SHORT"
         rationale = (
             f"Funding rate {funding_rate:.6f} above threshold {threshold} "
             f"with {curve_type} curve → contrarian short on funding reversion."

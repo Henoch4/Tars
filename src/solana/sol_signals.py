@@ -17,13 +17,16 @@ import math
 import statistics
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from .bsm import bs_price, bs_price_merton, greeks
 from .stock_carry import tokenized_stock_carry_signal, vault_9010_allocation
 
 try:
-    from .regime_hmm import RegimeHMM, infer_regime_simple
+    from .regime_hmm import RegimeHMM as _RegimeHMM
+    from .regime_hmm import infer_regime_simple as _infer_regime_simple
+    RegimeHMM: Any = _RegimeHMM
+    infer_regime_simple: Any = _infer_regime_simple
 except ImportError:
     RegimeHMM = None
     infer_regime_simple = None

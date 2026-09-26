@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,7 +34,7 @@ class MeteoraExecutor:
     def _run_ts(self, script: str, *args: str) -> dict[str, Any]:
         """Run a TS script via node, return parsed JSON."""
         env = {
-            **subprocess.os.environ,
+            **os.environ,
             "RPC_URL": self.rpc_url,
         }
         if self.keypair_path:

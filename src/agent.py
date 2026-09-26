@@ -18,7 +18,7 @@ import os
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Literal, Optional
+from typing import Callable, Literal, Optional
 
 from .signals import (
     Signal,
@@ -54,11 +54,20 @@ from .execution import (
     ExecutionError,
 )
 from .audit_logger import OnchainLogger, DecisionPayload
+_router_chain_for_asset: Optional[Callable[[str | None], str]] = None
 try:
-    from .solana.chain_router import chain_for_asset as _chain_for_asset
-except Exception:  # solana sidecar absent -> every asset audits to evm
-    def _chain_for_asset(asset) -> str:
+    from .solana.chain_router import (
+        chain_for_asset as _imported_chain_for_asset,
+    )
+    _router_chain_for_asset = _imported_chain_for_asset
+except Exception:
+    pass
+
+
+def _chain_for_asset(asset: str | None) -> str:
+    if _router_chain_for_asset is None:  # solana sidecar absent -> audit to evm
         return "evm"
+    return _router_chain_for_asset(asset)
 from .okx_cli import OkxCli, OkxCliConfig, OkxCliError
 from .audit_trail import AuditLog
 from .curator import CuratorAgent, apply_env_overrides
@@ -1537,6 +1546,9 @@ class AutonomousTradingAgent:
         Returns None for normal assets so the usual trading path
         continues untouched.
         """
+        client = self.panta_client
+        if client is None:
+            return None
         base = asset[:-5] if asset.endswith("-SWAP") else asset
 
         if base.startswith("PANTA_CREATE_"):
@@ -1545,13 +1557,13 @@ class AutonomousTradingAgent:
             try:
                 rest = base[len("PANTA_CREATE_"):]
                 parts = rest.split("_")
-                usdc_amount = int(parts[-1])
+                create_amount = int(parts[-1])
                 outcome_b = parts[-2]
                 outcome_a = "_".join(parts[:-2])
-                quote = await self.panta_client.create_market_quote(
+                quote = await client.create_market_quote(
                     outcome_a=outcome_a,
                     outcome_b=outcome_b,
-                    usdc_amount=usdc_amount,
+                    usdc_amount=create_amount,
                 )
                 out["decisions"].append({
                     "decision_id": f"panta_dec_{uuid.uuid4().hex[:12]}",
@@ -1581,13 +1593,13 @@ class AutonomousTradingAgent:
             try:
                 rest = base[len("PANTA_BUY_"):]
                 parts = rest.split("_")
-                usdc_amount = parts[-1]
+                buy_amount: str = parts[-1]
                 outcome = parts[-2]
                 market_id = "_".join(parts[:-2])
-                quote = await self.panta_client.primary_buy_quote(
+                quote = await client.primary_buy_quote(
                     market_id=market_id,
                     outcome=outcome,
-                    usdc_amount=usdc_amount,
+                    usdc_amount=buy_amount,
                 )
                 out["decisions"].append({
                     "decision_id": f"panta_dec_{uuid.uuid4().hex[:12]}",

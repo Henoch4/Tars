@@ -169,7 +169,7 @@ def _derive_decision_pda(program_id: Pubkey, decision_id: bytes) -> tuple[Pubkey
     return Pubkey.find_program_address([b"decision", decision_id], program_id)
 
 
-def _idl_with_address(idl: dict, program_id: str) -> dict:
+def _idl_with_address(idl: dict[str, Any], program_id: str) -> dict[str, Any]:
     """Return a copy of the hand-shaped IDL with metadata.address set.
 
     anchorpy's Idl.from_json validates the Anchor IDL-JSON schema; our const
@@ -180,12 +180,12 @@ def _idl_with_address(idl: dict, program_id: str) -> dict:
 
     full = copy.deepcopy(idl)
 
-    def _normalize(node: object) -> object:
+    def _normalize(node: Any) -> Any:
         # anchorpy 0.21 IDL parser rejects the "[u8; 32]" and "pubkey" shorthands —
         # normalize to {"array": ["u8", 32]} and "publicKey" (args + account fields).
         # Events use "fields", not "data".
         if isinstance(node, dict):
-            out = {}
+            out: dict[str, Any] = {}
             for k, v in node.items():
                 if k == "type" and v == "[u8; 32]":
                     out[k] = {"array": ["u8", 32]}

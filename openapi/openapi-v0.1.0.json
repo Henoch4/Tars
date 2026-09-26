@@ -478,6 +478,52 @@
         ]
       }
     },
+    "/api/v1/rails": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Multichain rail status for the dashboard (public, never leaks keys).",
+        "operationId": "rails_status",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/api/v1/injective/funding": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Live Injective funding readout for the dashboard (read-only, no key).",
+        "operationId": "injective_funding",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
     "/risk-stats": {
       "get": {
         "tags": [
