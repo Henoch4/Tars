@@ -743,6 +743,21 @@ def _make_onchain_logger() -> OnchainLogger | None:
         chain_id=settings.xlayer_chain_id,
     )
 
+def _make_solana_rail():
+    """Build the Solana second rail from env. None when disabled (default).
+
+    Lazy import keeps main importable when solana deps are absent; the rail
+    itself never raises (misconfigured = disabled with a warning).
+    """
+    try:
+        from .solana.dual_logger import make_solana_rail
+    except Exception:
+        return None
+    try:
+        return make_solana_rail()
+    except Exception:
+        return None
+
 def _make_curator() -> CuratorAgent | None:
     """Create the curator from config/profiles.yaml. None if the file is absent
     (the trading agent falls back to its neutral defaults)."""
@@ -755,6 +770,14 @@ _dry_run = settings.dry_run
 # Order matters: the onchain logger must exist before the risk gate is built,
 # so the gate can boot-strap daily counters against TradeAuditTrail at import.
 _onchain_logger = _make_onchain_logger()
+_solana_rail = _make_solana_rail()
+if _solana_rail is not None:
+    try:
+        from .solana.dual_logger import wrap_dual
+
+        _onchain_logger = wrap_dual(_onchain_logger, _solana_rail)
+    except Exception:
+        pass
 _risk_gate = _make_risk_gate(onchain_logger=_onchain_logger)
 _exchange = settings.exchange.lower()
 _cli = create_exchange_client(_exchange)
@@ -891,6 +914,78 @@ async def audit_stats(days: int = 7):
         return stats
     except Exception as e:
         raise HTTPException(500, f"Audit query failed: {e}")
+
+
+@app.get("/api/v1/rails")
+def rails_status():
+    """Multichain rail status for the dashboard (public, never leaks keys).
+
+    EVM = X-Layer audit contract, Solana = TradeAuditTrail program,
+    Injective = testnet gRPC + precompile. ``key_configured`` is presence
+    only — the same rule as every other status surface in this repo.
+    """
+    import os
+
+    logger = _onchain_logger
+    if logger is not None and hasattr(logger, "rails_summary"):
+        try:
+            summary = logger.rails_summary()
+        except Exception:
+            summary = {"evm": {"configured": True}, "solana": {"configured": False}}
+        evm_on = bool(summary.get("evm", {}).get("configured"))
+        sol_on = bool(summary.get("solana", {}).get("configured"))
+    else:
+        evm_on = logger is not None
+        sol_on = False
+    sol_rpc = (os.getenv("SOLANA_RPC_URL", "") or "").strip()
+    sol_program = (os.getenv("SOLANA_PROGRAM_ID", "") or "").strip()
+    try:
+        from .injective_client import config_from_env as _inj_cfg
+
+        inj = _inj_cfg()
+        inj_info = {
+            "testnet": inj.testnet,
+            "grpc": inj.grpc_endpoint,
+            "chain_id": inj.chain_id,
+            "markets": sorted(inj.markets),
+            "key_configured": bool(inj.private_key),
+        }
+    except Exception:
+        inj_info = {"testnet": True, "grpc": "", "chain_id": 1439,
+                    "markets": [], "key_configured": False}
+    return {
+        "exchange": settings.exchange,
+        "evm": {"configured": evm_on, "chain_id": settings.xlayer_chain_id},
+        "solana": {
+            "enabled": sol_on,
+            "rpc_url": sol_rpc or None,
+            "program_id": sol_program or None,
+            "explorer": ("https://solscan.io/account/" + sol_program + "?cluster=devnet"
+                         if sol_program else None),
+        },
+        "injective": inj_info,
+    }
+
+
+@app.get("/api/v1/injective/funding")
+async def injective_funding(asset: str = "BTC-USDT-SWAP"):
+    """Live Injective funding readout for the dashboard (read-only, no key)."""
+    try:
+        from .injective_client import InjectiveClient, config_from_env
+    except Exception as e:
+        raise HTTPException(500, f"Injective client unavailable: {e}")
+    try:
+        client = InjectiveClient(config_from_env())
+        market_id = client.resolve_market(asset)
+        rate = await client.get_funding_rate(asset, timeout=10.0)
+        return {
+            "asset": asset,
+            "market_id": market_id,
+            "funding_rate": rate.get("fundingRate", "0"),
+            "testnet": client.config.testnet,
+        }
+    except Exception as e:
+        raise HTTPException(502, f"Injective funding query failed: {e}")
 
 
 @app.get("/risk-stats")

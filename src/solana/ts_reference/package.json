@@ -1,0 +1,23 @@
+{
+  "name": "stockulus-ts",
+  "version": "0.1.0",
+  "description": "TypeScript Meteora DBC SDK wrapper for Stockulus",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node src/index.ts",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@meteora-ag/dynamic-bonding-curve-sdk": "^1.0.0",
+    "@solana/web3.js": "^1.90.0",
+    "@solana/spl-token": "^0.4.0",
+    "bn.js": "^5.2.1"
+  },
+  "devDependencies": {
+    "@types/bn.js": "^5.1.5",
+    "@types/node": "^20.10.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.0"
+  }
+}

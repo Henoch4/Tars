@@ -335,6 +335,12 @@ body {
       </div>
     </div>
 
+    <!-- Solana audit rail status (read-only; tokenized-equity decisions audit here) -->
+    <div class="card" style="margin-top: var(--space-4);">
+      <div class="card-title">Solana Audit Rail</div>
+      <div id="solana-rail-body" style="font-size:0.82rem; color:var(--text-muted);">Loading rail status…</div>
+    </div>
+
     <!-- Tabs: Deposit / Withdraw / Position -->
     <div class="tabs" role="tablist" aria-label="Vault actions">
       <button type="button" class="tab active" id="tabbtn-deposit" data-tab="deposit" role="tab" aria-selected="true" aria-controls="tab-deposit" onclick="switchTab('deposit')">Deposit</button>
@@ -519,7 +525,63 @@ body {
         }
       }
 
+      async function finishConnect(wp) {
+        provider = new BrowserProvider(wp);
+        signer = await provider.getSigner();
+        userAddress = await signer.getAddress();
+
+        document.getElementById('wallet-label').style.display = 'none';
+        document.getElementById('wallet-addr').style.display = 'inline';
+        document.getElementById('wallet-addr').textContent =
+          userAddress.slice(0, 6) + '...' + userAddress.slice(-4);
+        document.getElementById('wallet-status').style.display = 'inline';
+        document.getElementById('btn-connect').textContent = 'Connected';
+        document.getElementById('btn-connect').disabled = true;
+        document.getElementById('btn-deposit').disabled = false;
+        document.getElementById('btn-request-withdraw').disabled = false;
+
+        if (vaultInfo && vaultInfo.abi && vaultInfo.address) {
+          vaultContract = new Contract(vaultInfo.address, vaultInfo.abi, signer);
+          if (vaultInfo.usdt_address) {
+            usdtContract = new Contract(vaultInfo.usdt_address, [
+              'function approve(address,uint256) returns (bool)',
+              'function allowance(address,address) view returns (uint256)',
+              'function balanceOf(address) view returns (uint256)',
+              'function decimals() view returns (uint8)',
+            ], signer);
+          }
+        }
+
+        await loadPosition();
+        await loadPendingWithdrawals();
+      }
+
+      // Called by the Reown AppKit module script below on wallet connect.
+      window.__tarsOnReownAccount = async function(addr, wp) {
+        try {
+          var bp = new BrowserProvider(wp);
+          var net = await bp.getNetwork();
+          if (Number(net.chainId) !== X_LAYER_CHAIN_ID && window.__tarsModal) {
+            await window.__tarsModal.switchNetwork(window.__tarsXLayer);
+            wp = window.__tarsWalletProvider() || wp;
+          }
+          await finishConnect(wp);
+        } catch (e) {
+          console.error('Reown connect failed:', e);
+          setStatus('deposit-status', 'Wallet connection failed: ' + (e.message || e), 'error');
+        }
+      };
+
       async function connectWallet() {
+        // Prefer Reown AppKit (multi-wallet modal) when its module loaded.
+        if (window.__tarsModal) {
+          try {
+            await window.__tarsModal.open();
+            return;
+          } catch (e) {
+            console.warn('Reown modal open failed, falling back to window.ethereum:', e);
+          }
+        }
         if (!window.ethereum) {
           setStatus('deposit-status', 'No wallet detected. Install MetaMask or another EIP-1193 wallet.', 'error');
           return;
@@ -547,33 +609,7 @@ body {
             }
           }
 
-          provider = new BrowserProvider(window.ethereum);
-          signer = await provider.getSigner();
-
-          document.getElementById('wallet-label').style.display = 'none';
-          document.getElementById('wallet-addr').style.display = 'inline';
-          document.getElementById('wallet-addr').textContent =
-            userAddress.slice(0, 6) + '...' + userAddress.slice(-4);
-          document.getElementById('wallet-status').style.display = 'inline';
-          document.getElementById('btn-connect').textContent = 'Connected';
-          document.getElementById('btn-connect').disabled = true;
-          document.getElementById('btn-deposit').disabled = false;
-          document.getElementById('btn-request-withdraw').disabled = false;
-
-          if (vaultInfo && vaultInfo.abi && vaultInfo.address) {
-            vaultContract = new Contract(vaultInfo.address, vaultInfo.abi, signer);
-            if (vaultInfo.usdt_address) {
-              usdtContract = new Contract(vaultInfo.usdt_address, [
-                'function approve(address,uint256) returns (bool)',
-                'function allowance(address,address) view returns (uint256)',
-                'function balanceOf(address) view returns (uint256)',
-                'function decimals() view returns (uint8)',
-              ], signer);
-            }
-          }
-
-          await loadPosition();
-          await loadPendingWithdrawals();
+          await finishConnect(window.ethereum);
         } catch (e) {
           console.error('Wallet connect failed:', e);
           setStatus('deposit-status', 'Wallet connection failed: ' + (e.message || e), 'error');
@@ -776,7 +812,27 @@ body {
         document.getElementById('verify').scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth' });
       };
 
+      async function loadSolanaRail() {
+        var el = document.getElementById('solana-rail-body');
+        try {
+          const res = await fetch('/api/v1/rails');
+          if (!res.ok) throw new Error('rails request failed');
+          const r = await res.json();
+          const sol = r.solana || {};
+          if (sol.enabled && sol.program_id) {
+            el.innerHTML = 'Enabled — tokenized-equity decisions audit on Solana devnet.<br>' +
+              '<span style="font-family:monospace;">' + sol.program_id.slice(0, 8) + '…' + sol.program_id.slice(-8) + '</span> ' +
+              '<a href="' + sol.explorer + '" target="_blank" rel="noopener">View program on Solscan &#8599;</a>';
+          } else {
+            el.textContent = 'Not configured — all decisions currently audit to EVM. Set SOLANA_* env to enable.';
+          }
+        } catch (e) {
+          el.textContent = 'Rail status unavailable.';
+        }
+      }
+
       loadVaultInfo().then(loadStats);
+      loadSolanaRail();
 
       // Theme toggle
       function toggleTheme() {
@@ -817,6 +873,79 @@ body {
         });
       }
     })();
+  </script>
+  <!-- Reown AppKit (multi-wallet modal) — same stack as botchain-builds frontends.
+       Optional: without a project ID below, Connect falls back to window.ethereum. -->
+  <script type="importmap">
+  {
+    "imports": {
+      "ethers": "https://esm.sh/ethers@6.13.2",
+      "@reown/appkit": "https://esm.sh/@reown/appkit@1.8.21",
+      "@reown/appkit-adapter-ethers": "https://esm.sh/@reown/appkit-adapter-ethers@1.8.21"
+    }
+  }
+  </script>
+  <script type="module">
+    import { createAppKit } from '@reown/appkit';
+    import { EthersAdapter } from '@reown/appkit-adapter-ethers';
+
+    // Reown Cloud project ID (public identifier, not a secret).
+    // Free at https://cloud.reown.com — paste it here to enable the modal.
+    const REOWN_PROJECT_ID = 'f018499b1e4a94d961ab67aeeeff3254';
+
+    const xLayerTestnet = {
+      id: 1952,
+      chainNamespace: 'eip155',
+      caipNetworkId: 'eip155:1952',
+      name: 'X Layer Testnet',
+      nativeCurrency: { name: 'OKB', symbol: 'OKB', decimals: 18 },
+      rpcUrls: { default: { http: ['https://testrpc.xlayer.tech/terigon'] } },
+      blockExplorers: { default: { name: 'OKLink', url: 'https://www.oklink.com/xlayer-testnet' } },
+    };
+
+    try {
+      if (REOWN_PROJECT_ID && REOWN_PROJECT_ID !== 'REPLACE_WITH_REOWN_CLOUD_ID') {
+        const modal = createAppKit({
+          adapters: [new EthersAdapter()],
+          networks: [xLayerTestnet],
+          defaultNetwork: xLayerTestnet,
+          projectId: REOWN_PROJECT_ID,
+          metadata: {
+            name: 'TARS Depositor',
+            description: 'Deposit into the TARS trading vault on X Layer',
+            url: window.location.origin,
+            icons: [window.location.origin + '/static/favicon.svg'],
+          },
+          themeVariables: { '--w3m-accent': '#7c3aed' },
+          features: { analytics: false },
+        });
+        window.__tarsModal = modal;
+        window.__tarsXLayer = xLayerTestnet;
+        let walletProvider = null;
+        window.__tarsWalletProvider = function() {
+          if (walletProvider) return walletProvider;
+          try {
+            const p = (modal.getWalletProvider && (modal.getWalletProvider('eip155') || modal.getWalletProvider())) || null;
+            if (p) walletProvider = p;
+          } catch (e) {}
+          return walletProvider;
+        };
+        modal.subscribeProviders(function(state) {
+          if (state && state['eip155']) walletProvider = state['eip155'];
+        });
+        modal.subscribeAccount(async function(state) {
+          if (state && state.isConnected && state.address) {
+            const wp = window.__tarsWalletProvider();
+            if (wp && window.__tarsOnReownAccount) {
+              try { await window.__tarsOnReownAccount(state.address, wp); }
+              catch (e) { console.error('TARS Reown account sync failed:', e); }
+            }
+          }
+        });
+      }
+    } catch (e) {
+      console.warn('Reown AppKit init failed; classic window.ethereum flow remains:', e);
+    }
   </script>
 </body>
 </html>

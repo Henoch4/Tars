@@ -1,0 +1,13 @@
+{
+  "calm": {
+    "config": "3WDNBkpE67v2wzMWY1mgyyAuE4eugFBbgniRa1tqojFY",
+    "fee": "linear 120bps -> 100bps, 60 periods",
+    "regimeScale": 1.0
+  },
+  "stress": {
+    "config": "7rhZYfkUHcbHYkkv2FBGqE8KnQC8f66WsGM8fBuv7P2W",
+    "fee": "exponential 900bps -> 100bps, 60 periods",
+    "regimeScale": 0.7,
+    "tx": "42CRBsgKCy72ZbvHEj3FsRxdLP1EWwGxovhgUBu8kEfXM3vSnc89wSQumDQW9GWLer9upHqAu37pUkgwuA6e8GAa"
+  }
+}

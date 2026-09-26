@@ -1,0 +1,44 @@
+# Fixed, human-reviewed profile allowlist for the curator agent.
+# The curator selects a NAME from this file. It never writes raw parameters.
+# Any name the curator emits that isn't a key here is rejected, not coerced.
+#
+# Adapted for tokenized stock carry vault:
+# - confidence floors in basis points (bps, 0..10000) to match
+#   RiskGate.min_confidence_bps and Signal.confidence_bps.
+# - enabled_signals uses strategy names from signals.py
+# - max_leverage=1.0 for stocks (no leverage on equity)
+
+profiles:
+  conservative:
+    position_size_multiplier: 0.35
+    confidence_floor_bps: 7500
+    enabled_signals: ["stock_carry"]
+    max_leverage: 1.0
+
+  standard:
+    position_size_multiplier: 0.65
+    confidence_floor_bps: 6000
+    enabled_signals: ["stock_carry"]
+    max_leverage: 1.0
+
+  aggressive:
+    position_size_multiplier: 1.0
+    confidence_floor_bps: 5000
+    enabled_signals: ["stock_carry", "mean_reversion", "momentum"]
+    max_leverage: 1.0
+
+  defensive:
+    position_size_multiplier: 0.10
+    confidence_floor_bps: 9000
+    enabled_signals: []          # no new trades opened, only unwinds
+    max_leverage: 1.0
+
+default_profile: standard
+
+# Curator cannot switch more often than this (cooldown).
+cooldown_cycles: 12
+
+# If a switch underperforms the prior profile's trailing PnL over this many
+# trades since the switch, auto-revert without waiting for a human.
+auto_revert_lookback_trades: 8
+auto_revert_threshold_pnl: -0.01   # revert if trailing PnL since switch < -1%

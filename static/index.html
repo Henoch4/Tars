@@ -296,6 +296,12 @@
     .badge-short, .badge-rejected { background: var(--danger-dim); color: var(--danger); }
     .badge-neutral { background: var(--neutral-dim); color: var(--ink-soft); }
     .badge-dryrun { background: var(--warning-dim); color: var(--warning); }
+    .badge-evm { background: rgba(99,102,241,0.13); color: #818cf8; }
+    .badge-solana { background: rgba(20,184,166,0.13); color: #2dd4bf; }
+    .badge-injective { background: rgba(168,85,247,0.15); color: #c084fc; }
+    .chain-filter { background: var(--bg-soft); color: var(--ink-soft); border: 1px solid var(--border, #2a2d34); border-radius: 8px; font-size: 0.75rem; padding: 0.25rem 0.5rem; font-family: 'Geist Mono', monospace; }
+    .tx-link { color: var(--ink-faint); text-decoration: none; }
+    .tx-link:hover { color: var(--ink); text-decoration: underline; }
 
     .hash-btn { background: none; border: none; color: var(--ink-faint); font-family: 'Geist Mono', monospace; font-size: 0.76rem; cursor: pointer; padding: 0; border-radius: 3px; }
     .hash-btn:hover { color: var(--ink); text-decoration: underline; }
@@ -400,6 +406,8 @@
         <div class="controls-row">
           <button class="run-btn" id="runBtn" onclick="runCycle()">Run Trading Cycle</button>
           <span class="dot ok" id="liveDot" title="Connecting…"></span>
+          <span class="badge badge-neutral" id="railsPill" title="Audit rails status">rails…</span>
+          <span class="help-text" id="exchangeLabel" style="margin-left:0.4rem;"></span>
         </div>
         <div class="token-row">
           <input id="agentToken" class="token-input" type="password" placeholder="Agent API token (live mode)" autocomplete="off" aria-label="Agent API token" spellcheck="false" />
@@ -428,6 +436,11 @@
         <div id="fundingArbBody" class="empty-state">No funding data yet. Run a cycle to populate.</div>
       </div>
 
+      <div class="card" id="injectiveCard">
+        <h2 class="card-title">Injective <span class="badge badge-injective" style="margin-left:0.4rem; vertical-align: middle;">Testnet</span></h2>
+        <div id="injectiveBody" class="empty-state">Loading Injective markets…</div>
+      </div>
+
       <div class="card" id="regimeCard">
         <h2 class="card-title">Regime Status</h2>
         <div id="regimeBody" class="empty-state">Regime throttle disabled or no data yet.</div>
@@ -452,10 +465,17 @@
 
       <div class="card">
         <h2 class="card-title">Recent Decisions</h2>
+        <div style="margin-bottom:0.6rem;">
+          <select id="auditChainFilter" class="chain-filter" onchange="renderAuditRows()" aria-label="Filter decisions by audit chain">
+            <option value="all">All chains</option>
+            <option value="evm">EVM only</option>
+            <option value="solana">Solana only</option>
+          </select>
+        </div>
         <table class="table">
-          <thead><tr><th>Asset</th><th>Signal</th><th class="num">Size</th><th class="num">Pkg</th><th class="num">Hash</th></tr></thead>
+          <thead><tr><th>Asset</th><th>Signal</th><th class="num">Size</th><th class="num">Pkg</th><th class="num">Hash</th><th>Chain</th></tr></thead>
           <tbody id="auditBody">
-            <tr><td colspan="5" class="empty-state">Loading...</td></tr>
+            <tr><td colspan="6" class="empty-state">Loading...</td></tr>
           </tbody>
         </table>
       </div>
@@ -621,6 +641,103 @@
       }
     }
 
+    // Multichain helpers (mirror src/solana/chain_router.py rules client-side).
+    function chainForAsset(asset) {
+      const s = String(asset || '').trim().toUpperCase();
+      if (!s) return 'evm';
+      if (s.endsWith('-SWAP') || s.indexOf('-USDT') !== -1 || s.indexOf('-USD-') !== -1) return 'evm';
+      if (s.indexOf('-') === -1 && s.endsWith('X')) return 'solana';
+      return 'evm';
+    }
+    function chainBadge(chain) {
+      const c = (chain || 'evm').toLowerCase();
+      const cls = c === 'solana' ? 'badge-solana' : 'badge-evm';
+      return '<span class="badge ' + cls + '">' + escapeHtml(c) + '</span>';
+    }
+    function explorerTxUrl(tx, chain) {
+      if (!tx) return null;
+      if ((chain || 'evm').toLowerCase() === 'solana') {
+        return 'https://solscan.io/tx/' + tx + '?cluster=devnet';
+      }
+      return 'https://www.oklink.com/xlayer-testnet/tx/' + tx;
+    }
+    function txCell(tx, chain) {
+      if (!tx) return 'N/A';
+      const url = explorerTxUrl(tx, chain);
+      const short = shortHash(tx);
+      if (!url) return short;
+      return '<a class="tx-link log-hash num" href="' + url + '" target="_blank" rel="noopener">' + short + ' &#8599;</a>';
+    }
+
+    let lastAuditDecisions = [];
+    function renderAuditRows() {
+      const body = document.getElementById('auditBody');
+      if (!body) return;
+      const sel = document.getElementById('auditChainFilter');
+      const filter = sel ? sel.value : 'all';
+      const rows = lastAuditDecisions.filter(d => filter === 'all' || (d.audit_chain || 'evm') === filter);
+      if (rows.length > 0) {
+        body.innerHTML = rows.slice(0, 10).map(d => {
+          const pkg = isZeroHash(d.packageId) ? '&ndash;' : hashCell(d.packageId);
+          const size = (d.sizeUsd || 0).toFixed(0);
+          return '<tr><td>' + escapeHtml(d.asset) + '</td><td>' + badgeFor('signal', d.signal) + '</td><td class="num">' + size + '</td><td class="num">' + pkg + '</td><td class="log-hash num">' + hashCell(d.riskHash) + '</td><td>' + chainBadge(d.audit_chain) + '</td></tr>';
+        }).join('');
+      } else if (lastAuditDecisions.length > 0) {
+        body.innerHTML = '<tr><td colspan="6" class="empty-state">No decisions on this chain yet</td></tr>';
+      } else {
+        body.innerHTML = '<tr><td colspan="6" class="empty-state">No on-chain decisions yet</td></tr>';
+      }
+    }
+
+    async function loadRails() {
+      try {
+        const res = await fetch('/api/v1/rails');
+        if (!res.ok) return;
+        const r = await res.json();
+        const pill = document.getElementById('railsPill');
+        if (pill) {
+          const evmOn = r.evm && r.evm.configured;
+          const solOn = r.solana && r.solana.enabled;
+          const parts = [(evmOn ? 'EVM &#9679;' : 'EVM &#9675;'), (solOn ? 'SOL &#9679;' : 'SOL &#9675;')];
+          pill.innerHTML = parts.join(' ');
+          pill.className = 'badge ' + ((evmOn || solOn) ? 'badge-evm' : 'badge-neutral');
+          pill.title = 'EVM chain ' + (r.evm ? r.evm.chain_id : '?') + (solOn ? ' · Solana ' + (r.solana.program_id || '').slice(0, 8) + '…' : ' · Solana off');
+        }
+        const ex = document.getElementById('exchangeLabel');
+        if (ex) ex.textContent = 'exchange: ' + (r.exchange || '?');
+      } catch (e) { /* rails pill stays neutral */ }
+    }
+
+    async function loadInjective() {
+      const el = document.getElementById('injectiveBody');
+      if (!el) return;
+      try {
+        const railsRes = await fetch('/api/v1/rails');
+        const rails = railsRes.ok ? await railsRes.json() : null;
+        const markets = (rails && rails.injective && rails.injective.markets) || ['BTC-USDT-SWAP'];
+        const rows = [];
+        for (const m of markets.slice(0, 5)) {
+          try {
+            const res = await fetch('/api/v1/injective/funding?asset=' + encodeURIComponent(m));
+            if (!res.ok) { rows.push({ m, rate: null }); continue; }
+            const j = await res.json();
+            rows.push({ m, rate: parseFloat(j.funding_rate) });
+          } catch (e) { rows.push({ m, rate: null }); }
+        }
+        let html = '<table class="table"><thead><tr><th>Market</th><th class="num">Funding</th><th>Status</th></tr></thead><tbody>';
+        rows.forEach(rw => {
+          const rateTxt = (rw.rate === null || isNaN(rw.rate)) ? '&ndash;' : (rw.rate * 100).toFixed(5) + '%';
+          const st = (rw.rate !== null && !isNaN(rw.rate))
+            ? '<span class="badge badge-injective">live</span>'
+            : '<span class="badge badge-neutral">unreachable</span>';
+          html += '<tr><td>' + escapeHtml(rw.m) + '</td><td class="num">' + rateTxt + '</td><td>' + st + '</td></tr>';
+        });
+        el.innerHTML = html + '</tbody></table>';
+      } catch (e) {
+        el.innerHTML = '<div class="empty-state">Injective status unavailable</div>';
+      }
+    }
+
     async function runCycle() {
       if (halted || cycling) return;
       const btn = document.getElementById('runBtn');
@@ -690,10 +807,10 @@
 
       html += '<h2 class="card-title" style="margin-top: 1.5rem;">Risk Decisions</h2>';
       if (result.decisions && result.decisions.length > 0) {
-        html += '<table class="table"><thead><tr><th>Asset</th><th>Side</th><th class="num">Size (USD)</th><th class="num">Confidence</th><th>Status</th><th class="num">Hash</th></tr></thead><tbody>';
+        html += '<table class="table"><thead><tr><th>Asset</th><th>Side</th><th class="num">Size (USD)</th><th class="num">Confidence</th><th>Status</th><th>Chain</th><th class="num">Hash</th></tr></thead><tbody>';
         result.decisions.forEach(dec => {
           const rowCls = dec.status === 'rejected' ? ' class="flagged"' : '';
-          html += '<tr' + rowCls + '><td>' + escapeHtml(dec.asset) + '</td><td>' + escapeHtml(dec.side || '-') + '</td><td class="num">' + (dec.size_usd ? dec.size_usd.toFixed(0) : '-') + '</td><td class="num">' + Math.round((dec.confidence || 0) * 100) + '%</td><td>' + badgeFor('status', dec.status) + '</td><td class="log-hash num">' + hashCell(dec.risk_hash) + '</td></tr>';
+          html += '<tr' + rowCls + '><td>' + escapeHtml(dec.asset) + '</td><td>' + escapeHtml(dec.side || '-') + '</td><td class="num">' + (dec.size_usd ? dec.size_usd.toFixed(0) : '-') + '</td><td class="num">' + Math.round((dec.confidence || 0) * 100) + '%</td><td>' + badgeFor('status', dec.status) + '</td><td>' + chainBadge(dec.audit_chain || chainForAsset(dec.asset)) + '</td><td class="log-hash num">' + hashCell(dec.risk_hash) + '</td></tr>';
         });
         html += '</tbody></table>';
       } else {
@@ -704,7 +821,7 @@
       if (result.executions && result.executions.length > 0) {
         html += '<table class="table"><thead><tr><th>Asset</th><th>Side</th><th class="num">Size (USD)</th><th class="num">Price</th><th class="num">Tx Hash</th><th>Status</th></tr></thead><tbody>';
         result.executions.forEach(ex => {
-          html += '<tr><td>' + escapeHtml(ex.asset) + '</td><td>' + escapeHtml(ex.side || '-') + '</td><td class="num">' + (ex.size_usd ? ex.size_usd.toFixed(0) : '-') + '</td><td class="num">' + (ex.fill_price || '-') + '</td><td class="log-hash num">' + hashCell(ex.tx_hash) + '</td><td>' + badgeFor('status', ex.status) + '</td></tr>';
+          html += '<tr><td>' + escapeHtml(ex.asset) + '</td><td>' + escapeHtml(ex.side || '-') + '</td><td class="num">' + (ex.size_usd ? ex.size_usd.toFixed(0) : '-') + '</td><td class="num">' + (ex.fill_price || '-') + '</td><td class="log-hash num">' + txCell(ex.tx_hash, chainForAsset(ex.asset)) + '</td><td>' + badgeFor('status', ex.status) + '</td></tr>';
         });
         html += '</tbody></table>';
       } else {
@@ -760,19 +877,12 @@
         const auditRes = await fetch('/audit-stats?days=7');
         if (!auditRes.ok) throw new Error('audit-stats request failed');
         const audit = await auditRes.json();
-        const body = document.getElementById('auditBody');
-        if (audit.decisions && audit.decisions.length > 0) {
-          body.innerHTML = audit.decisions.slice(0, 10).map(d => {
-            const pkg = isZeroHash(d.packageId) ? '&ndash;' : hashCell(d.packageId);
-            const size = (d.sizeUsd || 0).toFixed(0);
-            return '<tr><td>' + escapeHtml(d.asset) + '</td><td>' + badgeFor('signal', d.signal) + '</td><td class="num">' + size + '</td><td class="num">' + pkg + '</td><td class="log-hash num">' + hashCell(d.riskHash) + '</td></tr>';
-          }).join('');
-        } else {
-          body.innerHTML = '<tr><td colspan="5" class="empty-state">No on-chain decisions yet</td></tr>';
-        }
+        // /audit-stats reads the EVM contract: every row here audited to evm.
+        lastAuditDecisions = (audit.decisions || []).map(d => Object.assign({ audit_chain: 'evm' }, d));
+        renderAuditRows();
       } catch (err) {
         const body = document.getElementById('auditBody');
-        if (body) body.innerHTML = '<tr><td colspan="5" class="empty-state">Stats unavailable: ' + escapeHtml(err.message) + '</td></tr>';
+        if (body) body.innerHTML = '<tr><td colspan="6" class="empty-state">Stats unavailable: ' + escapeHtml(err.message) + '</td></tr>';
         document.getElementById('riskParamsBody').innerHTML = '<tr><td colspan="2" class="empty-state">Stats unavailable: ' + escapeHtml(err.message) + '</td></tr>';
       }
     }
@@ -977,6 +1087,8 @@
       loadPositions();
       loadFundingArb();
       loadReconciliation();
+      loadRails();
+      loadInjective();
     }
 
     let toastTimer = null;

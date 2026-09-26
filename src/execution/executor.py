@@ -27,11 +27,6 @@ def _count_response_failure(method: str, kind: str) -> None:
     inc("tars_exchange_response_errors_total", {"method": method, "kind": kind})
 
 
-def _count_risk_rejection(code: str) -> None:
-    """S3: risk-gate rejections by closed check code."""
-    inc("tars_risk_rejections_total", {"code": code})
-
-
 def _float_or(value: object, default: float) -> float:
     """Parse a CLI string field as float; fall back to `default` on ''/None."""
     try:

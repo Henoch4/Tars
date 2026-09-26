@@ -47,10 +47,11 @@ _load_dotenv()
 def create_exchange_client(exchange: str | None = None):
     """Create an exchange client based on the EXCHANGE env var.
 
-    Returns either OkxCli or BinanceClient — both implement the same async
-    interface (run, check_auth, balance_all, positions, smartmoney_signal).
+    Returns OkxCli, BinanceClient, or InjectiveClient — all implement the
+    same async interface (run, check_auth, balance_all, positions,
+    smartmoney_signal).
 
-    EXCHANGE env var: "okx" (default) or "binance".
+    EXCHANGE env var: "okx" (default), "binance", or "injective".
     """
     # Chained `or` with a final literal keeps this str under every mypy
     # version (single-arg getenv is str | None; the literal closes it).
@@ -74,6 +75,17 @@ def create_exchange_client(exchange: str | None = None):
         return BinanceClient(config)
 
     # Default: OKX
+    if exchange == "injective":
+        from .injective_client import InjectiveClient, config_from_env
+
+        inj_config = config_from_env()
+        logger.info(
+            f"Using Injective client (testnet={inj_config.testnet}, "
+            f"grpc={inj_config.grpc_endpoint}, "
+            f"key={'SET' if inj_config.private_key else 'MISSING'})"
+        )
+        return InjectiveClient(inj_config)
+
     from .okx_cli import OkxCli, OkxCliConfig
 
     # Distinct name from the BinanceConfig above — reusing `config` makes

@@ -54,6 +54,11 @@ from .execution import (
     ExecutionError,
 )
 from .audit_logger import OnchainLogger, DecisionPayload
+try:
+    from .solana.chain_router import chain_for_asset as _chain_for_asset
+except Exception:  # solana sidecar absent -> every asset audits to evm
+    def _chain_for_asset(asset) -> str:
+        return "evm"
 from .okx_cli import OkxCli, OkxCliConfig, OkxCliError
 from .audit_trail import AuditLog
 from .curator import CuratorAgent, apply_env_overrides
@@ -899,6 +904,7 @@ class AutonomousTradingAgent:
                 "package_id": package_id,
                 "asset": payload.asset,
                 "tx_hash": log_txs[i],
+                "audit_chain": _chain_for_asset(payload.asset),
                 "signal": payload.signal,
                 "confidence_bps": payload.confidence_bps,
                 "confidence": payload.confidence_bps / 10000.0,
@@ -1402,6 +1408,7 @@ class AutonomousTradingAgent:
                     "decision_id": decision_payload.decision_id,
                     "asset": asset,
                     "tx_hash": log_tx,
+                    "audit_chain": _chain_for_asset(decision_payload.asset),
                     "signal": ensemble.direction,
                     "confidence_bps": ensemble.confidence_bps,
                     "confidence": ensemble.confidence_bps / 10000.0,
@@ -1421,6 +1428,7 @@ class AutonomousTradingAgent:
                 "decision_id": decision_payload.decision_id,
                 "asset": asset,
                 "tx_hash": None,
+                "audit_chain": _chain_for_asset(asset),
                 "signal": ensemble.direction,
                 "confidence_bps": ensemble.confidence_bps,
                 "confidence": ensemble.confidence_bps / 10000.0,
@@ -1809,6 +1817,7 @@ class AutonomousTradingAgent:
                     "decision_id": decision_payload.decision_id,
                     "asset": asset,
                     "tx_hash": log_tx,
+                    "audit_chain": _chain_for_asset(decision_payload.asset),
                     "signal": consensus.direction,
                     "confidence_bps": consensus.consensus_confidence_bps,
                     "confidence": consensus.consensus_confidence_bps / 10000.0,
@@ -1827,6 +1836,7 @@ class AutonomousTradingAgent:
                 "decision_id": decision_payload.decision_id,
                 "asset": asset,
                 "tx_hash": None,
+                "audit_chain": _chain_for_asset(asset),
                 "signal": consensus.direction,
                 "confidence_bps": consensus.consensus_confidence_bps,
                 "confidence": consensus.consensus_confidence_bps / 10000.0,
