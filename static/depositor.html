@@ -336,7 +336,7 @@ body {
     </div>
 
     <!-- Solana audit rail status (read-only; tokenized-equity decisions audit here) -->
-    <div class="card" style="margin-top: var(--space-4);">
+    <div class="card" id="solana-rail-card" style="margin-top: var(--space-4); display:none;">
       <div class="card-title">Solana Audit Rail</div>
       <div id="solana-rail-body" style="font-size:0.82rem; color:var(--text-muted);">Loading rail status…</div>
     </div>
@@ -813,6 +813,7 @@ body {
       };
 
       async function loadSolanaRail() {
+        var card = document.getElementById('solana-rail-card');
         var el = document.getElementById('solana-rail-body');
         try {
           const res = await fetch('/api/v1/rails');
@@ -820,14 +821,14 @@ body {
           const r = await res.json();
           const sol = r.solana || {};
           if (sol.enabled && sol.program_id) {
+            card.style.display = '';
             el.innerHTML = 'Enabled — tokenized-equity decisions audit on Solana devnet.<br>' +
               '<span style="font-family:monospace;">' + sol.program_id.slice(0, 8) + '…' + sol.program_id.slice(-8) + '</span> ' +
               '<a href="' + sol.explorer + '" target="_blank" rel="noopener">View program on Solscan &#8599;</a>';
-          } else {
-            el.textContent = 'Not configured — all decisions currently audit to EVM. Set SOLANA_* env to enable.';
           }
+          // Disabled rail: card stays hidden — operator config is not user content.
         } catch (e) {
-          el.textContent = 'Rail status unavailable.';
+          // Status unknown: keep hidden rather than show an error to users.
         }
       }
 

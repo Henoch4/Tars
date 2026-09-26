@@ -720,21 +720,20 @@
           try {
             const res = await fetch('/api/v1/injective/funding?asset=' + encodeURIComponent(m));
             if (!res.ok) {
-              let det = '';
-              try { det = (await res.json()).detail || ('HTTP ' + res.status); } catch (e) { det = 'HTTP ' + res.status; }
-              rows.push({ m, rate: null, err: det });
+              try { console.warn('Injective funding unavailable:', await res.text()); } catch (e) {}
+              rows.push({ m, rate: null });
               continue;
             }
             const j = await res.json();
             rows.push({ m, rate: parseFloat(j.funding_rate) });
-          } catch (e) { rows.push({ m, rate: null, err: String((e && e.message) || e) }); }
+          } catch (e) { console.warn('Injective funding error:', e); rows.push({ m, rate: null }); }
         }
         let html = '<table class="table"><thead><tr><th>Market</th><th class="num">Funding</th><th>Status</th></tr></thead><tbody>';
         rows.forEach(rw => {
           const rateTxt = (rw.rate === null || isNaN(rw.rate)) ? '&ndash;' : (rw.rate * 100).toFixed(5) + '%';
           const st = (rw.rate !== null && !isNaN(rw.rate))
             ? '<span class="badge badge-injective">live</span>'
-            : '<span class="badge badge-neutral" title="' + escapeHtml(rw.err || 'no data') + '">unreachable</span>';
+            : '<span class="badge badge-neutral">unavailable</span>';
           html += '<tr><td>' + escapeHtml(rw.m) + '</td><td class="num">' + rateTxt + '</td><td>' + st + '</td></tr>';
         });
         el.innerHTML = html + '</tbody></table>';
