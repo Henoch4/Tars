@@ -50,6 +50,39 @@ unwind path.
 **Decision requested:** pick (a), (b), or (c); if (a), approve the
 amount-aware unwind spec implied above as the contract for implementation.
 
+**DECIDED 2026-10-01 — Option (a) with quantity-first refinement (independent reviewer):**
+
+> **Core invariant:** No code path may transition a multi-leg package to `LOCK` unless actual filled quantities establish that the hedge invariant is satisfied.
+
+**Architectural adjustment over original spec:** Make **actual filled quantity/exposure** the source of truth; treat `fill_ratio` as derived metadata, not the core accounting primitive.
+
+1. **Extend `LegResult` with quantity fields** (source of truth):
+   ```python
+   requested_qty: float      # what was asked for
+   filled_qty: float         # what actually filled (from exchange accFillSz)
+   remaining_qty: float      # requested - filled (derived, stored for audit)
+   fill_ratio: float         # filled / requested (derived, kept for compat)
+   avg_fill_price: float | None
+   ```
+   Unwind uses `unwind_qty = actual_filled_qty`, NOT `requested_qty * fill_ratio`.
+
+2. **Separate three concepts** (never conflate):
+   - `order status` — PARTIALLY_FILLED / FILLED / CANCELED (exchange-reported)
+   - `execution completeness` — `remaining_qty <= max(abs_tol, requested_qty * rel_tol)` (quantity-based, respects exchange min/step size; no magic 0.999)
+   - `package hedge validity` — combined actual positions satisfy intended hedge (economic exposure, not blind ratio)
+
+3. **Unwind in economic exposure terms:** resolve `current net exposure → 0` (within tolerance), not "multiply each leg by ratio." Accounts for different contract multipliers, prices, quantities per leg.
+
+4. **Required regression tests** (all assert post-resolution `net directional exposure == 0`):
+   ```
+   10%/100%, 100%/10%, 50%/50%, 0%/100%, 100%/0%,
+   both partial different quantities, partial→additional fill→FILLED,
+   partial→cancel, cancel→late fill, duplicate fill events,
+   slippage breach after partial, min-order/rounding residual
+   ```
+
+**Status:** Approved for implementation. Blocks live multi-leg capital until complete.
+
 ---
 
 ## Decision 2 — Kill-switch durability across restarts
