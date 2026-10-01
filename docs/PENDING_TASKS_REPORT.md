@@ -1,6 +1,6 @@
 # TARS Pending Tasks & Constraints Report
 
-**Generated:** 2026-09-04 · Updated 2026-09-12  
+**Generated:** 2026-09-04 · Updated 2026-09-12 · Updated 2026-10-01 (VPS provisioned, 641 tests green)  
 **Status:** Keys rotated 2026-09-12 — new `AGENT_WALLET_PRIVATE_KEY` + OKX/Binance creds active in `.env` (old `0x4E80…` from `829576c` permanently invalidated)
 
 ---
@@ -45,11 +45,12 @@
 - **Old key:** `0x4E80…` (commit `829576c`) permanently invalidated — scrubbed from history, gitleaks guards in place
 - **Verification:** `git diff` clean, `.env` gitignored, `scripts/preflight_check.py` passes `AGENT_WALLET_PRIVATE_KEY valid` without printing key
 
-### 2. **PERSISTENT HOST PROVISIONING**
-- **Decision:** Contabo VPS (€4.50/mo, 4 vCPU/8GB/100GB SSD)
+### 2. **PERSISTENT HOST PROVISIONING — DONE 2026-10-01**
+- **Status:** ✅ Contabo Cloud VPS 4 provisioned (4 vCPU, 8 GB RAM, 100 GB SSD, Ubuntu 24.04, UK region)
+- **IP:** `80.190.82.127` | **Instance:** `vmi3624433` | **Order ID:** `15478597` | **$9.90/mo** (1-month term)
+- **Deploy:** `scripts/deploy_vps.sh` executed (patched for Python 3.12 on Ubuntu 24.04, commit `141bba2`)
+- **Verified:** 641 tests pass (`python -m pytest tests/ -q`), durable dirs (`/data/risk_state`, `/data/audit_log`, `/var/log/tars`), env (`DRY_RUN=true`, `ALLOW_LIVE=false`), firewall (UFW)
 - **Runbook:** `docs/PERSISTENT_HOST_DECISION.md`
-- **Deploy script:** `scripts/deploy_vps.sh` (tested)
-- **Blocker:** Manual VPS provisioning on Contabo required
 
 ### 3. **PUBLIC REPO SYNC**
 - **Blocker:** Local `.env` has real credentials; must rotate keys BEFORE sync
@@ -91,8 +92,8 @@
 ### ✅ DONE 2026-09-12 / ❌ REMAINING
 - [x] Binance API keys rotated 2026-09-12 (active in `.env`)
 - [x] OKX API keys rotated 2026-09-12 (active in `.env`)
-- [ ] VPS provisioned (Contabo, per `docs/PERSISTENT_HOST_DECISION.md`)
-- [ ] `scripts/deploy_vps.sh` executed on fresh Ubuntu 22.04
+- [x] VPS provisioned 2026-10-01 (Contabo Cloud VPS 4, `80.190.82.127`, 641 tests green)
+- [x] `scripts/deploy_vps.sh` executed on Ubuntu 24.04 (patched for Python 3.12)
 - [ ] Public repo synced (`git push` after secret scan)
 - [ ] Phase 4: Professional audit ($15-30K)
 - [ ] Phase 5: Legal memo, fee structure, first-loss capital
@@ -145,11 +146,12 @@
 ## 🚀 IMMEDIATE NEXT STEPS
 
 1. **Keys rotated 2026-09-12** — verified `preflight_check.py` + `git diff` clean
-2. **Provision Contabo VPS** - Use `docs/PERSISTENT_HOST_DECISION.md`
-3. **Run deploy** - `sudo ./scripts/deploy_vps.sh` on fresh Ubuntu 22.04
-4. **Sync repo** - `git push` after secret scan (no `.env`/secrets)
-5. **Phase 4** - Audit + bug bounty ($15-30K)
-6. **Phase 5** - Legal, fee structure, first-loss capital
+2. **VPS provisioned 2026-10-01** — `80.190.82.127`, 641 tests green ✅
+3. **Fix Decision 1** — multi-leg partial-fill accounting (`OPEN_DECISIONS.md` #1, amount-aware unwinds)
+4. **Phase 1 hardening** — kill-switch durability, dual ledger reconciliation, fill verification, equity attest, audit logger hardening, volume enforcement, allowlist semantics
+5. **Sync repo** - `git push` after secret scan (no `.env`/secrets)
+6. **Phase 4** - Audit + bug bounty ($15-30K)
+7. **Phase 5** - Legal, fee structure, first-loss capital
 
 ---
 
