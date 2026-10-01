@@ -15,7 +15,7 @@ TARS_USER="tars"
 TARS_HOME="/opt/tars"
 TARS_REPO="https://github.com/Henoch4/Tars.git"
 TARS_BRANCH="main"
-PYTHON_VERSION="3.11"
+PYTHON_VERSION="3.12"
 
 log() {
     echo -e "${GREEN}[$(date '+%Y-%m-%d %H:%M:%S')] $*${NC}"
@@ -40,7 +40,7 @@ install_system_packages() {
     log "Installing system packages..."
     apt-get update
     apt-get install -y \
-        python3.11 python3.11-venv python3.11-dev \
+        python3.12 python3.12-venv python3.12-dev \
         python3-pip \
         git \
         curl \
@@ -87,7 +87,7 @@ install_python() {
     cd "$TARS_HOME"
     
     # Create virtual environment
-    sudo -u "$TARS_USER" python3.11 -m venv venv
+    sudo -u "$TARS_USER" python3.12 -m venv venv
     
     # Upgrade pip
     sudo -u "$TARS_USER" "$TARS_HOME/venv/bin/pip" install --upgrade pip setuptools wheel
