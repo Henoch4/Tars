@@ -567,11 +567,27 @@ class OnchainLogger:
     def is_kill_switch_active(self) -> bool:
         return bool(self.contract.functions.killSwitchActive(self.agent_address).call())
 
-    def get_decision(self, decision_id: str) -> dict:
-        """Query a decision from the contract by ID."""
+    def get_decision(
+        self, decision_id: str, from_block: int | None = None,
+        lookback_days: int = 30,
+    ) -> dict:
+        """Query a decision from the contract by ID.
+
+        D6.3: bounded by default — scans back `lookback_days` of blocks
+        (via the measured blocks-per-day rate) instead of from genesis, so
+        a routine lookup is not O(chain length). Pass `from_block=0`
+        explicitly to opt into a full genesis scan; history semantics are
+        unchanged, only the default window is bounded.
+        """
         decision_id_hash = Web.keccak(text=decision_id)
         try:
-            events = self.contract.events.DecisionLogged.get_logs(from_block=0)
+            if from_block is None:
+                from_block = max(
+                    0, self.w3.eth.block_number - lookback_days * self._blocks_per_day
+                )
+            events = self.contract.events.DecisionLogged.get_logs(
+                from_block=from_block
+            )
             for evt in events:
                 if evt["args"].get("decisionId") == decision_id_hash:
                     return dict(evt["args"])

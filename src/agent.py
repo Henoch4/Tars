@@ -613,6 +613,16 @@ class AutonomousTradingAgent:
 
         side_map: dict[str, Literal["buy", "sell"]] = {"LONG": "buy", "SHORT": "sell"}
 
+        # D3: fail-closed intended_price — a market order without the agent's
+        # signal-time price view cannot pass the pre-trade collar, so refuse
+        # construction rather than emitting an order that bypasses it.
+        if signal.entry_price is None or signal.entry_price <= 0:
+            logger.warning(
+                f"No order for {signal.asset}: {signal.direction} "
+                f"(no valid signal entry_price for pre-trade collar)"
+            )
+            return None
+
         return OrderRequest(
             inst_id=signal.asset,
             side=side_map[signal.direction],
@@ -625,6 +635,7 @@ class AutonomousTradingAgent:
             # the unwind path, not by mislabeling entries.
             reduce_only=False,
             confidence_bps=signal.confidence_bps,
+            intended_price=signal.entry_price,
         )
 
     def _funding_arb_opportunity(
@@ -823,11 +834,13 @@ class AutonomousTradingAgent:
             inst_id=asset, side="sell", order_type="market",
             size=f"{leg_notional:.2f}", reduce_only=False,
             confidence_bps=confidence_bps,
+            intended_price=perp_price,
         )
         spot_order = OrderRequest(
             inst_id=spot_inst, side="buy", order_type="market",
             size=f"{leg_notional:.2f}", reduce_only=False,
             confidence_bps=confidence_bps,
+            intended_price=spot_price,
         )
         checks = [
             self.risk_gate.check_order(
@@ -1760,6 +1773,18 @@ class AutonomousTradingAgent:
         if side is None:
             logger.info(f"No order for {asset} (direction {consensus.direction})")
             return out
+        asset_prices = self._extract_prices(md)
+        current_price = asset_prices[-1] if asset_prices else None
+
+        # D3: fail-closed intended_price — refuse the consensus order when
+        # there is no valid price view instead of emitting an order that
+        # bypasses the pre-trade collar.
+        if current_price is None or current_price <= 0:
+            out["errors"].append(
+                f"No order for {asset} (no valid reference price for pre-trade collar)"
+            )
+            return out
+
         order = OrderRequest(
             inst_id=asset,
             side=side,
@@ -1768,11 +1793,9 @@ class AutonomousTradingAgent:
             client_oid=f"consensus_{asset}_{uuid.uuid4().hex[:8]}",
             reduce_only=False,
             confidence_bps=consensus.consensus_confidence_bps,
+            intended_price=current_price,
         )
-        
-        asset_prices = self._extract_prices(md)
-        current_price = asset_prices[-1] if asset_prices else None
-        
+
         async with self._risk_lock:
             if current_price is not None:
                 self.risk_gate.observe_price(asset, current_price)

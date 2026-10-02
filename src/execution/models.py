@@ -80,6 +80,12 @@ class OrderRequest:
     # price deviates more than max_slippage_pct from the fresh reference
     # price, the order is rejected. This catches "agent computed on garbage
     # data" cases before a bad market order prints.
+    # Units: gate-percent (compared against RiskGate.max_slippage_pct where
+    # 1.0 = 1%) — NOT the fractional units of multi_leg Step.max_slippage_pct.
+    # D3 invariant: every production market order must carry a valid
+    # intended_price; a missing reference fail-closes (NO_PRICE_REFERENCE /
+    # order refusal at construction), never silently bypasses. Market orders
+    # are never auto-converted to limit orders.
     intended_price: float | None = None
 
     def __post_init__(self):

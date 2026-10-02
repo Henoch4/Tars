@@ -405,6 +405,22 @@ dbc_curve_type: str = "flat",
         """
         if not self._counters.enabled:
             return
+        # D2: restore the file-persisted kill switch so a restart recovers
+        # the halt immediately (fail-closed) instead of waiting for the next
+        # loss/order/onchain event. Onchain sync below can only trip, never
+        # clear, so this cannot weaken an onchain halt.
+        try:
+            ks_active = self._counters.get("__kill_switch__", "active", False)
+            if ks_active:
+                self._kill_switch_active = True
+                self._kill_switch_reason = self._counters.get(
+                    "__kill_switch__", "reason", None
+                )
+                self._kill_switch_activated_at = self._counters.get(
+                    "__kill_switch__", "timestamp", None
+                )
+        except Exception as e:
+            logger.warning(f"RiskGate: unable to rehydrate kill switch state: {e}")
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         loaded = False
         for raw_key in self._counters.keys_with_prefix(""):
@@ -1183,9 +1199,10 @@ dbc_curve_type: str = "flat",
             "volume": self._daily_volume.get(key, 0.0),
             "loss": self._daily_loss.get(key, 0.0),
             "trade_count": self._daily_trade_count.get(key, 0),
-            # Informational projection only — NOT an enforced control. No code
-            # path in check_order sums volume against this; it exists so a
-            # dashboard can show "worst case gross volume" for context.
+            # Informational projection only — NOT the enforced control. The
+            # enforced daily-volume cap is max_daily_volume_usd (check 4b,
+            # DAILY_VOLUME_LIMIT_EXCEEDED); this field exists so a dashboard
+            # can show "worst case gross volume" for context.
             "volume_limit": self.max_position_usd * self.max_daily_trades,
             "loss_limit": self.max_daily_loss_usd,
             "trade_count_limit": self.max_daily_trades,

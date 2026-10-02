@@ -141,8 +141,16 @@ IDL = {
 
 
 def _to_u64_1e8(value: float) -> int:
-    """Convert float to 1e8 fixed-point (matches on-chain scaling)."""
-    return int(round(value * 1e8))
+    """Convert float to 1e8 fixed-point (matches on-chain scaling).
+
+    D6.1: Decimal-string path with ROUND_DOWN, identical semantics to the
+    EVM `_to_fixed_point_1e8` (audit_logger.py) — the old
+    `int(round(value * 1e8))` did binary-float math first, so an independent
+    verifier recomputing from decimal strings could hit a forensic mismatch.
+    """
+    from decimal import Decimal, ROUND_DOWN
+
+    return int(Decimal(str(value)).scaleb(8).to_integral_value(rounding=ROUND_DOWN))
 
 
 def _ctx(accounts: dict):
