@@ -110,6 +110,11 @@ can pass that the pre-crash state would have blocked. The onchain
 **Decision requested:** which durability model is the product standard?
 (Recommendation from the review: (a) now, (b) before real capital.)
 
+**DECIDED 2026-10-02 — Option (a), required before live:** the file-persisted
+kill switch (`__kill_switch__` in `DurableDailyCounters`) is restored into the
+gate during `_rehydrate_store` so a restart recovers the halt immediately;
+onchain sync is retained and `require_onchain_sync` stays fatal in live mode.
+
 ---
 
 ## Decision 3 — Fat-finger check for MARKET orders
@@ -135,6 +140,14 @@ after the bad fill already happened).
 **Decision requested:** (a), (b), or (c) — and if (a)/(c), the deviation
 threshold (candidate: reuse `max_slippage_pct`).
 
+**DECIDED 2026-10-02 — Option (a) with fail-closed invariant, required before
+live:** every production market order carries `intended_price` (signal
+entry/reference price at construction); missing reference fail-closes
+(`NO_PRICE_REFERENCE` / order refusal at construction). Threshold is
+`max_slippage_pct` in **gate-percent units** (`1.0` = 1%, distinct from
+`Step` fractional units). Market orders are never auto-converted to limit
+orders. Post-fill verification stays as complementary control.
+
 ---
 
 ## Decision 4 — Volume limit: enforce or delete the claim
@@ -150,6 +163,12 @@ enforced control" (display-only). READMEs imply limits are enforced.
 
 **Decision requested:** (a) or (b). If (a): where does volume sit relative to
 the trade-count quota (independent cap vs. additional gate)?
+
+**DECIDED 2026-10-02 — Option (a), ratified:** independent daily-volume cap
+(`DAILY_VOLUME_LIMIT_EXCEEDED`, check 4b) alongside trade-count; unwind legs
+bypass. Code already enforces this; stale "NOT an enforced control" comments
+corrected to distinguish the enforced `max_daily_volume_usd` from the
+informational `volume_limit` projection in `get_daily_stats`.
 
 ---
 
@@ -173,6 +192,11 @@ defines what the agent can trade without any operator action.
 - (c) Keep current behavior; fix the docstring to match reality.
 
 **Decision requested:** which semantics are intended?
+
+**DECIDED 2026-10-02 — Option (a), ratified:** exact-match allowlist
+(`allowed_assets` + explicitly declared `allowed_companions`, no base-family
+matching). Multi-leg strategies must list every companion asset. No semantic
+change; code already enforces this.
 
 ---
 
@@ -201,6 +225,13 @@ defines what the agent can trade without any operator action.
 **Decision requested:** approve all three as one hardening batch, or pick a
 subset.
 
+**DECIDED 2026-10-02 — Full batch, required hardening:** (1a) EVM
+Decimal packing kept, Solana `_to_u64_1e8` converted to the identical
+Decimal/ROUND_DOWN path; (2a) existing failover WARN + chain reseed and
+broadcast-failure reseed verified in place, no change needed; (3a) measured
+block-time window kept, `get_decision` bounded to `lookback_days` (default 30)
+with explicit `from_block=0` opt-in for genesis scans.
+
 ---
 
 ## Decision 7 — Curator auto-revert behavior
@@ -222,6 +253,11 @@ profile that caused the drawdown that forced `defensive` — a ping-pong risk.
 
 **Decision requested:** which behavior is intended?
 
+**DECIDED 2026-10-02 — Option (a), ratified:** trailing `pnl_window` capped by
+`lookback_trades`, full-window evidence required for revert, never auto-revert
+out of `forced_defensive` (manual exit). `_apply_switch(forced)` is
+authoritative. No semantic change; code already enforces this.
+
 ---
 
 ## Decision 8 — vault_api latency hardening
@@ -236,11 +272,18 @@ single-operator API and document the limit.
 
 **Decision requested:** harden now or document?
 
+**DECIDED 2026-10-02 — Option (d), non-blocking:** keep capped synchronous
+`audit_recent` (max 20, offset pagination), documented. TTL caching is the
+next performance follow-up; async/gather only if measured latency warrants.
+
 ---
 
 ## Decision 9 — Hygiene batch before the repo goes public (T3N submission)
 
 Low-risk, no semantics. Approve as a batch?
+
+**DECIDED 2026-10-02 — Batch approved:** hygiene only, no runtime behavior
+change; each removed artifact confirmed unused before deletion.
 1. Add `requirements-ml.txt` (`lightgbm`, `pandas`, `scikit-learn`) — the ML
    path (`ml/pipeline.py`, `scripts/train_carry_model.py`) needs them but
    no requirements file lists them.

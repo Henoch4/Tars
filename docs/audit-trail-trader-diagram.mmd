@@ -45,12 +45,11 @@ graph LR
 
 | Artifact | Location | Description |
 |----------|----------|-------------|
-| `audit-trail-trader.svg` | `docs/audit-trail-trader.svg` | Crisp vector diagram for docs/blog posts |
-| `audit-trail-trader.png` | `docs/audit-trail-trader.png` | Raster image for Twitter, presentations |
-| `audit-trail-trader.mmd` | `docs/audit-trail-trader.mmd` | Mermaid source — editable in any editor |
-| `audit-trail-trader.excalidraw` | `docs/audit-trail-trader.excalidraw` | Editable scene at <https://excalidraw.com> |
+| `audit-trail-trader-diagram.mmd` | `docs/audit-trail-trader-diagram.mmd` | Mermaid source — editable in any editor |
 
-> **To regenerate:** Run the diagram skill with the `.mmd` source, or open the `.excalidraw` file at excalidraw.com and edit nodes/arrows — I can re-render from the edited scene.
+> **Note (2026-10-02):** no SVG/PNG/Excalidraw renderings are checked in;
+> render from the `.mmd` source on demand. Earlier revisions of this table
+> claimed artifacts that never existed — corrected per hygiene review.
 
 ## Twitter / Thread-Friendly Description (copy-paste)
 
@@ -71,6 +70,6 @@ graph LR
 > 
 > Every decision is signed with EIP-191 and submitted to **TradeAuditTrail.sol on X Layer****before** the order hits OKX. If logging fails, trading is blocked.
 > 
-> **343 tests, fully offline. No network needed.**
+> **640+ tests green on the persistent host (2026-10-01), fully offline. No network needed.**
 > 
 > GitHub: <https://github.com/Henoch4/Tars>

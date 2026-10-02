@@ -231,8 +231,9 @@ def vault_abi():
 def audit_recent(count: int = 10, offset: int = 0):
     """Recent on-chain decisions from TradeAuditTrail for depositor verification.
 
-    Capped at 20 decisions per request to bound RPC latency. Use `offset` for
-    pagination beyond the first page.
+    Capped at 20 decisions per request to bound RPC latency (D8: synchronous
+    reads retained for the single-operator API; TTL caching is the tracked
+    follow-up). Use `offset` for pagination beyond the first page.
     """
     count = min(count, 20)  # Cap at 20 to prevent worker pinning
     if not os.getenv("AUDIT_CONTRACT_ADDRESS", "").strip():
