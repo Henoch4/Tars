@@ -66,23 +66,6 @@ def load_dataset() -> pd.DataFrame:
     return df
 
 
-def walk_forward_windows(n: int, n_folds: int = N_FOLDS,
-                         train_frac: float = TRAIN_FRAC,
-                         embargo_ms: int = EMBARGO_MS):
-    """Purged walk-forward windows over sorted row timestamps.
-
-    Returns list of (train_start_idx, train_stop_idx, test_start_idx, test_stop_idx)
-    in terms of positions into the sorted unique timestamp array.
-    """
-    from src.validation import walk_forward_windows as _wfw
-    # The validation module's walk_forward_windows works on row-relative positions;
-    # we map it over the sorted timestamps.
-    # Re-implement simply here to avoid import-cycle risk:
-    row_ts_sorted = np.sort(df["ts"].unique())  # will be filled in main
-    # Actually we'll use the repo's function; just return placeholder below.
-    raise NotImplementedError("use src.validation.walk_forward_windows")
-
-
 def quantile_loss(y_true: np.ndarray, y_pred: np.ndarray, tau: float) -> float:
     """Pinball loss for quantile regression at quantile level tau."""
     err = y_true - y_pred
