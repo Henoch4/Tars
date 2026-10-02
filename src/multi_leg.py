@@ -101,17 +101,64 @@ def validate_steps(steps: list[Step]) -> list[str]:
 @dataclass
 class LegResult:
     step: Step
-    filled: bool
-    fill_price: float | None
-    slippage_pct: float | None
+    # Actual fill quantities (source of truth for amount-aware unwind).
+    requested_qty: float = 0.0  # what was asked for (leg_notional)
+    filled_qty: float = 0.0     # what actually filled (from exchange accFillSz)
+    remaining_qty: float = 0.0  # requested - filled (derived, stored for audit)
+    fill_ratio: float | None = None  # filled / requested (derived, kept for compat)
+    avg_fill_price: float | None = None
+    # Derived flags (kept for compat; quantity fields are source of truth).
+    filled: bool = False
+    slippage_pct: float | None = None
+    # Legacy compat: old callers/tests use fill_price / fill_usd.
+    fill_price: float | None = None
     fill_usd: float | None = None
-    # Actual fill ratio (0.0 to 1.0) for amount-aware unwind.
-    # None = unknown (e.g., exchange didn't report filled amount).
-    # 1.0 = fully filled; 0.5 = half filled; 0.0 = no fill.
-    fill_ratio: float | None = None
+
+    def __post_init__(self) -> None:
+        """Reconcile legacy and quantity fields so old and new callers interoperate.
+
+        Old callers: LegResult(step, filled=True, fill_price=notional, ...)
+        or with fill_usd=2500.0 for a partial. New callers set
+        requested_qty/filled_qty. This keeps both working without editing tests.
+        """
+        has_qty = (
+            self.requested_qty != 0.0
+            or self.filled_qty != 0.0
+            or self.remaining_qty != 0.0
+        )
+        if not has_qty:
+            # Legacy path: quantities not provided, derive placeholders.
+            # Dispatcher will overwrite with real leg_notional shortly.
+            if self.avg_fill_price is None:
+                self.avg_fill_price = self.fill_price
+            if self.fill_ratio is None:
+                if self.filled and self.fill_usd is not None:
+                    # fill_usd is absolute; ratio needs requested which we
+                    # don't know yet — mark None so dispatcher computes it.
+                    pass
+                else:
+                    self.fill_ratio = 1.0 if self.filled else 0.0
+        else:
+            # Quantity path: fill in derived / legacy mirrors.
+            if self.requested_qty > 0:
+                computed = self.filled_qty / self.requested_qty
+                if self.fill_ratio is None:
+                    self.fill_ratio = computed
+                if self.remaining_qty == 0.0 and self.filled_qty < self.requested_qty:
+                    self.remaining_qty = max(
+                        0.0, self.requested_qty - self.filled_qty
+                    )
+            if self.fill_price is None:
+                self.fill_price = self.avg_fill_price
+            if self.fill_usd is None and self.filled_qty > 0:
+                self.fill_usd = self.filled_qty
+            if self.filled_qty > 0:
+                self.filled = True
+            if self.fill_ratio is None:
+                self.fill_ratio = 1.0 if self.filled else 0.0
 
     def to_dict(self) -> dict:
-        """Serialize for persistence (excludes step which is not JSON-serializable)."""
+        """Serialize for persistence."""
         return {
             "step_asset": self.step.asset,
             "step_action": self.step.action,
@@ -121,16 +168,20 @@ class LegResult:
             "step_dbc_curve": self.step.dbc_curve,
             "step_dbc_fee_bps": self.step.dbc_fee_bps,
             "step_dbc_graduation": self.step.dbc_graduation,
-            "filled": self.filled,
-            "fill_price": self.fill_price,
-            "slippage_pct": self.slippage_pct,
-            "fill_usd": self.fill_usd,
+            "requested_qty": self.requested_qty,
+            "filled_qty": self.filled_qty,
+            "remaining_qty": self.remaining_qty,
             "fill_ratio": self.fill_ratio,
+            "avg_fill_price": self.avg_fill_price,
+            "filled": self.filled,
+            "slippage_pct": self.slippage_pct,
+            "fill_price": self.fill_price,
+            "fill_usd": self.fill_usd,
         }
 
     @classmethod
     def from_dict(cls, d: dict) -> "LegResult":
-        """Deserialize from persistence."""
+        """Deserialize from persistence (tolerant of old files)."""
         step = Step(
             venue=d["step_venue"],
             action=d["step_action"],
@@ -143,11 +194,15 @@ class LegResult:
         )
         return cls(
             step=step,
-            filled=d["filled"],
-            fill_price=d["fill_price"],
-            slippage_pct=d["slippage_pct"],
-            fill_usd=d["fill_usd"],
+            requested_qty=d.get("requested_qty", 0.0),
+            filled_qty=d.get("filled_qty", 0.0),
+            remaining_qty=d.get("remaining_qty", 0.0),
             fill_ratio=d.get("fill_ratio"),
+            avg_fill_price=d.get("avg_fill_price"),
+            filled=d.get("filled", False),
+            slippage_pct=d.get("slippage_pct"),
+            fill_price=d.get("fill_price"),
+            fill_usd=d.get("fill_usd"),
         )
 
 
@@ -350,9 +405,13 @@ class MultiLegExecutionManager:
         # the exchange for each leg's fill status without the executor.
         # In a full implementation, this would query the exchange for each
         # leg's order status and compare with leg_results.
-        # For now, if all legs have fill_ratio == 1.0, mark LOCKED.
-        all_full = all(
-            lr.filled and lr.fill_ratio is not None and lr.fill_ratio >= 0.999
+        # For now, if all legs have fill_ratio >= 0.999 (within tolerance),
+        # mark LOCKED. Use actual filled_qty / requested_qty for the check.
+        TOLERANCE = 1e-3
+        all_full = bool(pkg.leg_results) and all(
+            lr.filled_qty >= lr.requested_qty * (1.0 - TOLERANCE)
+            if lr.requested_qty > 0
+            else (lr.fill_ratio is not None and lr.fill_ratio >= 1.0 - TOLERANCE)
             for lr in pkg.leg_results
         )
         if all_full and pkg.state == PackageState.PENDING_FILL:
@@ -396,18 +455,59 @@ class MultiLegExecutionManager:
         stays PENDING_FILL so the caller must unwind it; it can never silently
         reach LOCKED on a bad-priced fill.
 
-        D1(a)/Z3/W4: Computes fill_ratio, persists state, tracks dispatched_legs.
+        D1(a)/Z3/W4: Computes actual fill quantities (source of truth), persists
+        state, tracks dispatched_legs. Package transitions to LOCKED only when
+        every leg's actual filled quantity satisfies the hedge invariant.
         """
         for idx, step in enumerate(pkg.steps):
             leg_notional = pkg.notional * step.amount_ratio
             result = fill_simulator(step, leg_notional)
 
-            if result.filled and result.fill_usd is not None and leg_notional > 0:
-                result.fill_ratio = min(result.fill_usd / leg_notional, 1.0)
-            elif result.filled:
-                result.fill_ratio = 1.0
+            # Amount-aware quantities: trust simulator-provided quantities when
+            # present (paper/live sims), else derive from legacy fields so old
+            # callers (filled/fill_price/fill_usd) keep working.
+            has_qty = result.requested_qty > 0 or result.filled_qty > 0
+            if has_qty:
+                if result.requested_qty == 0:
+                    result.requested_qty = leg_notional
+                if result.fill_ratio is None and result.requested_qty > 0:
+                    result.fill_ratio = result.filled_qty / result.requested_qty
+                result.remaining_qty = max(
+                    0.0, result.requested_qty - result.filled_qty
+                )
+                if result.fill_usd is None and result.filled_qty > 0:
+                    result.fill_usd = result.filled_qty
+                if result.fill_price is None:
+                    result.fill_price = result.avg_fill_price
+                if result.avg_fill_price is None:
+                    result.avg_fill_price = result.fill_price
+                if result.filled_qty > 0:
+                    result.filled = True
+                elif result.fill_ratio is not None:
+                    result.filled = result.fill_ratio > 0
             else:
-                result.fill_ratio = 0.0
+                # Legacy path (matches pre-D1 behavior for fill_ratio).
+                requested = leg_notional
+                if result.filled and result.fill_usd is not None and leg_notional > 0:
+                    filled_q = result.fill_usd
+                    fill_ratio = min(filled_q / leg_notional, 1.0)
+                    avg_fill = result.fill_price
+                elif result.filled:
+                    filled_q = leg_notional
+                    fill_ratio = 1.0
+                    avg_fill = result.fill_price
+                else:
+                    filled_q = 0.0
+                    fill_ratio = 0.0
+                    avg_fill = None
+                result.requested_qty = requested
+                result.filled_qty = filled_q
+                result.remaining_qty = max(0.0, requested - filled_q)
+                result.fill_ratio = fill_ratio
+                result.avg_fill_price = avg_fill
+                if result.fill_usd is None and filled_q > 0:
+                    result.fill_usd = filled_q
+                result.filled = fill_ratio > 0
 
             pkg.leg_results.append(result)
             pkg.dispatched_legs = idx + 1
@@ -416,16 +516,27 @@ class MultiLegExecutionManager:
                 pkg.last_fill_ts = time.time()
 
             if (
-                result.filled
-                and result.slippage_pct is not None
+                result.slippage_pct is not None
                 and result.slippage_pct > step.max_slippage_pct
             ):
                 pkg.slippage_breached = True
 
             self._save_package(pkg)
 
-        all_filled = all(r.filled for r in pkg.leg_results)
-        if all_filled and not pkg.slippage_breached:
+        # ---- LOCK condition: use actual fill quantities, not boolean `filled` ----
+        # Package may LOCK only when every leg's actual filled quantity satisfies
+        # the hedge invariant: remaining_qty <= tolerance (near-full fill).
+        # Tolerance accounts for exchange minimum order sizes and rounding.
+        TOLERANCE = 1e-3  # 0.1% absolute tolerance on the filled ratio
+        all_fully_filled = bool(pkg.leg_results) and all(
+            lr.filled_qty >= lr.requested_qty * (1.0 - TOLERANCE)
+            if lr.requested_qty > 0
+            else (
+                lr.fill_ratio is not None and lr.fill_ratio >= 1.0 - TOLERANCE
+            )
+            for lr in pkg.leg_results
+        )
+        if all_fully_filled and not pkg.slippage_breached:
             pkg.state = PackageState.LOCKED
             pkg.last_fill_ts = time.time()
             self._save_package(pkg)
@@ -461,10 +572,20 @@ class MultiLegExecutionManager:
             self._release(pkg)
             return pkg
 
-        # partial fill: unwind the filled leg(s) immediately, scaled by fill_ratio
+        # partial fill: unwind the filled leg(s) immediately, scaled by actual fill_ratio
         unwind_results = []
         for leg in filled_legs:
-            ratio = leg.fill_ratio if leg.fill_ratio is not None else 0.0
+            # Use actual filled_qty / requested_qty as the ratio (source of truth).
+            # Fall back to fill_ratio / fill_usd for legacy results.
+            if leg.requested_qty > 0 and leg.filled_qty > 0:
+                ratio = leg.filled_qty / leg.requested_qty
+            elif leg.fill_ratio is not None:
+                ratio = leg.fill_ratio
+            elif leg.fill_usd is not None and pkg.notional > 0:
+                leg_notional = pkg.notional * leg.step.amount_ratio
+                ratio = min(leg.fill_usd / leg_notional, 1.0) if leg_notional > 0 else 0.0
+            else:
+                ratio = 0.0
             unwind_notional = pkg.notional * leg.step.amount_ratio * ratio
             unwind_results.append(
                 unwind_simulator(leg.step.inverse(), unwind_notional)
@@ -472,7 +593,9 @@ class MultiLegExecutionManager:
         # Only claim the position is safe if every unwind leg actually filled.
         # An unwind that raises or reports unfilled leaves naked exposure —
         # fail-closed means we say so, never silently mark it unwound.
-        pkg.unwound = bool(unwind_results) and all(r.filled for r in unwind_results)
+        pkg.unwound = bool(unwind_results) and all(
+            (r.filled or r.filled_qty > 0) for r in unwind_results
+        )
         pkg.state = PackageState.ABORTED
         from .metrics import inc as _metrics_inc
         _metrics_inc("tars_packages_total",
@@ -523,12 +646,24 @@ class MultiLegExecutionManager:
 
         unwind_results = []
         for leg in filled_legs:
-            ratio = leg.fill_ratio if leg.fill_ratio is not None else 0.0
+            # Use actual filled_qty / requested_qty as the ratio (source of truth).
+            # Fall back to fill_ratio / fill_usd for legacy results.
+            if leg.requested_qty > 0 and leg.filled_qty > 0:
+                ratio = leg.filled_qty / leg.requested_qty
+            elif leg.fill_ratio is not None:
+                ratio = leg.fill_ratio
+            elif leg.fill_usd is not None and pkg.notional > 0:
+                leg_notional = pkg.notional * leg.step.amount_ratio
+                ratio = min(leg.fill_usd / leg_notional, 1.0) if leg_notional > 0 else 0.0
+            else:
+                ratio = 0.0
             unwind_notional = pkg.notional * leg.step.amount_ratio * ratio
             unwind_results.append(
                 unwind_simulator(leg.step.inverse(), unwind_notional)
             )
-        pkg.unwound = bool(unwind_results) and all(r.filled for r in unwind_results)
+        pkg.unwound = bool(unwind_results) and all(
+            (r.filled or r.filled_qty > 0) for r in unwind_results
+        )
         pkg.state = PackageState.ABORTED
         from .metrics import inc as _metrics_inc
         _metrics_inc("tars_packages_total",
@@ -559,11 +694,31 @@ class MultiLegExecutionManager:
         for step in inverse_steps:
             leg_notional = pkg.notional * step.amount_ratio
             result = fill_simulator(step, leg_notional)
-            if result.filled and result.fill_usd is not None and leg_notional > 0:
+            has_qty = result.requested_qty > 0 or result.filled_qty > 0
+            if has_qty:
+                if result.requested_qty == 0:
+                    result.requested_qty = leg_notional
+                if result.fill_ratio is None and result.requested_qty > 0:
+                    result.fill_ratio = result.filled_qty / result.requested_qty
+                result.remaining_qty = max(
+                    0.0, result.requested_qty - result.filled_qty
+                )
+            elif result.filled and result.fill_usd is not None and leg_notional > 0:
+                result.requested_qty = leg_notional
+                result.filled_qty = result.fill_usd
+                result.remaining_qty = max(0.0, leg_notional - result.fill_usd)
                 result.fill_ratio = min(result.fill_usd / leg_notional, 1.0)
+                result.avg_fill_price = result.fill_price
             elif result.filled:
+                result.requested_qty = leg_notional
+                result.filled_qty = leg_notional
+                result.remaining_qty = 0.0
                 result.fill_ratio = 1.0
+                result.avg_fill_price = result.fill_price
             else:
+                result.requested_qty = leg_notional
+                result.filled_qty = 0.0
+                result.remaining_qty = leg_notional
                 result.fill_ratio = 0.0
             closing_results.append(result)
         pkg.leg_results.extend(closing_results)
@@ -604,9 +759,33 @@ class PaperFillSimulator:
     def __call__(self, step: Step, notional: float) -> LegResult:
         filled = self.rng.random() < self.fill_prob
         if not filled:
-            return LegResult(step=step, filled=False, fill_price=None, slippage_pct=None)
+            return LegResult(
+                step=step,
+                requested_qty=notional,
+                filled_qty=0.0,
+                remaining_qty=notional,
+                fill_ratio=0.0,
+                avg_fill_price=None,
+                filled=False,
+                slippage_pct=None,
+                fill_price=None,
+                fill_usd=None,
+            )
         slippage = abs(self.rng.gauss(0, step.max_slippage_pct / 2))
-        return LegResult(step=step, filled=True, fill_price=notional, slippage_pct=slippage)
+        # Simulated fill: assume full notional filled at the notional price.
+        # In a real executor, fill_sz would come from the exchange response.
+        return LegResult(
+            step=step,
+            requested_qty=notional,
+            filled_qty=notional,
+            remaining_qty=0.0,
+            fill_ratio=1.0,
+            avg_fill_price=notional,  # placeholder: in real life this is the fill price
+            filled=True,
+            slippage_pct=slippage,
+            fill_price=notional,
+            fill_usd=notional,
+        )
 
 
 class LiveFillSimulator:
@@ -667,6 +846,11 @@ class LiveFillSimulator:
             side, inst = "buy", step.asset
         else:  # pragma: no cover - validate_steps rejects unknown actions before dispatch
             raise ValueError(f"unknown multi-leg action: {action}")
+        # D3: carry the proposal-time reference as intended_price so the
+        # submission-time gate check has an agent price view; a missing
+        # reference leaves intended_price None and check 9 (freshness,
+        # applies to every order type) fail-closes the leg.
+        intended, _ = self._reference_for(step)
         return OrderRequest(
             inst_id=inst,
             side=side,
@@ -678,6 +862,7 @@ class LiveFillSimulator:
             # exposure, so they are admitted past the kill switch (which the
             # very fill that created the exposure may have just tripped).
             unwind=action in ("sell_spot", "cover_perp"),
+            intended_price=intended,
         )
 
     def _run_place_order(self, step: Step, notional: float) -> OrderResult:
@@ -728,31 +913,57 @@ class LiveFillSimulator:
         slippage_pct = (
             result.slippage_pct / 100.0 if result.slippage_pct is not None else None
         )
-        # Compute fill in quote currency (USDT) if we have a price
+        # Compute fill quantities based on order status and actual fill data.
         fill_usd = None
         if fill_price is not None:
-            # notional is in base currency? Actually notional passed is in quote (USDT) per multi_leg design.
-            # But step.amount_ratio is fraction of package notional (in quote). So leg notional in quote = notional * step.amount_ratio.
-            # However we don't have step.amount_ratio here; we can compute fill notional in quote as fill_price * base_amount.
-            # We don't have base_amount directly. Simpler: use the notional passed (which is quote notional for the leg) as proxy.
-            # Since we only have quote notional, and we have fill_price in quote per base, we need base amount to compute quote fill.
-            # Actually the notional argument passed to __call__ is the quote notional for this leg (see _dispatch_and_track: leg_notional = package.notional * step.amount_ratio).
-            # So we can compute base amount = leg_notional / fill_price if fill_price > 0.
-            # Then fill in quote = base_amount * fill_price = leg_notional (same). So fill_usd = leg_notional if filled.
-            # However if we only partially filled, we need the filled quote amount.
-            # We don't have filled quote amount from the exchange; we only know that the order was filled (or partially) but not how much.
-            # For simplicity, we assume that if filled, the entire leg notional was filled (this matches the current assumption elsewhere).
-            # For partial fills, we cannot know the filled amount without additional info; we'll set fill_usd to None to indicate unknown.
-            # But we can approximate: if the order status is FILLED, assume full leg notional; if PARTIALLY_FILLED, we don't know.
-            # We'll set fill_usd = leg_notional if filled and result.state == OrderStatus.FILLED else None.
-            leg_notional = notional  # quote notional for this leg
-            if result.state == OrderStatus.FILLED:
+            leg_notional = notional  # quote notional for this leg (already ratio-applied)
+            if result.state == OrderStatus.FILLED or (
+                filled and result.state not in (OrderStatus.PARTIALLY_FILLED,)
+            ):
+                # Full fill: entire leg notional filled at fill_price
                 fill_usd = leg_notional
-            # For PARTIALLY_FILLED, we leave fill_usd as None (unknown)
+                requested_qty = leg_notional
+                filled_qty = leg_notional
+                remaining_qty = 0.0
+                fill_ratio = 1.0
+                avg_fill_price = fill_price
+            elif result.state == OrderStatus.PARTIALLY_FILLED:
+                # Partial fill: use reported acc_fill_sz if available.
+                acc_fill = float(result.acc_fill_sz) if result.acc_fill_sz else leg_notional * 0.5
+                filled_qty = acc_fill
+                requested_qty = leg_notional
+                remaining_qty = max(0.0, requested_qty - filled_qty)
+                fill_ratio = filled_qty / requested_qty if requested_qty > 0 else 0.0
+                avg_fill_price = fill_price
+            else:
+                # No fill.
+                fill_usd = None
+                requested_qty = leg_notional
+                filled_qty = 0.0
+                remaining_qty = leg_notional
+                fill_ratio = 0.0
+                avg_fill_price = None
+        else:
+            # No price reference — no fill checked.
+            fill_usd = None
+            requested_qty = leg_notional = notional
+            filled_qty = 0.0
+            remaining_qty = leg_notional
+            fill_ratio = 0.0
+            avg_fill_price = None
+
+        # Preserve backward compatibility: filled bool
+        filled_bool = filled
+
         return LegResult(
             step=step,
-            filled=filled,
-            fill_price=fill_price,
+            requested_qty=requested_qty,
+            filled_qty=filled_qty,
+            remaining_qty=remaining_qty,
+            fill_ratio=fill_ratio,
+            avg_fill_price=avg_fill_price,
+            filled=filled_bool,
             slippage_pct=slippage_pct,
+            fill_price=fill_price,
             fill_usd=fill_usd,
         )
