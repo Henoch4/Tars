@@ -346,6 +346,12 @@ def agent_card():
         "chain": manifest.get("chain"),
         "capabilities": manifest.get("capabilities", []),
         "live_mode_enabled": ALLOW_LIVE,
+        # I1: on-chain registry pointer. Null until AgentRegistry.sol is
+        # deployed — a configured address must be queryable, never a
+        # placeholder (honest-null invariant).
+        "registry": {
+            "contract": os.getenv("REGISTRY_CONTRACT_ADDRESS", "").strip() or None,
+        },
         "entry_points": {
             "hire": "/hire",
             "manifest": "/manifest",
@@ -384,14 +390,19 @@ def health():
     """Liveness + heartbeat (S2): distinguishes "no cycle ran" (heartbeat
     None) from "ran, no trades" / "rejected" / "traded" (heartbeat outcome)
     so a silent period is never mistaken for a healthy idle loop."""
-    from .metrics import get_gauge, get_heartbeat, snapshot
+    from .metrics import check_loop_stall, get_gauge, get_heartbeat, snapshot
     hb = get_heartbeat()
+    # S1 external watchdog: judge the persisted heartbeat by age HERE, in
+    # the watcher process — the loop cannot report its own death. Default
+    # bound 1800s = 2x the 15min scheduler interval. check_loop_stall sets
+    # the gauge as a side effect (idempotent gauge write, safe per scrape)
+    # so /api/v1/metrics exposes the same condition.
+    stall_bound_s = float(os.getenv("LOOP_STALL_MAX_AGE_S", "1800"))
     return {
         "status": "ok",
         "heartbeat": hb,
         "kill_switch_active": get_gauge("tars_kill_switch_active"),
-        "loop_stalled": get_gauge(
-            "tars_loop_stopped_contributing_condition_active"),
+        "loop_stalled": check_loop_stall(stall_bound_s),
         "counters": snapshot()["counters"],
     }
 
@@ -402,6 +413,15 @@ def api_metrics():
     bridged ML degradations. Scrape-safe (pure reads, no side effects)."""
     from .metrics import snapshot
     return snapshot()
+
+
+@app.get("/api/v1/rpc-fast-status")
+def api_rpc_fast_status():
+    """RPC Fast sidetrack surface (7.1): configured?, plan, per-call
+    latency (measured on fetch, null here), and usage totals. Honest-null
+    when unconfigured — never zeros dressed as measurements."""
+    from .solana_rpc import rpc_fast_status
+    return rpc_fast_status()
 
 
 @app.get("/api/v1/pricing")
@@ -708,6 +728,22 @@ if _STATIC_DIR.exists():
             headers={"cache-control": "no-store, max-age=0"},
         )
 
+    # 5.4: five-screen progressive disclosure as deep-linkable routes. Each
+    # serves the same page (sections already exist: hero/stats/deposit/
+    # withdraw/position/verify); client JS activates the matching tab and
+    # scrolls to it, so every screen is independently functional from its
+    # own URL. include_in_schema=False like /depositor — UI, not API, and
+    # the manifest doctor demands manifest == live API routes exactly.
+    @app.get("/depositor/{screen}", include_in_schema=False)
+    def depositor_screen(screen: str):
+        if screen not in ("hero", "stats", "deposit", "withdraw",
+                          "my-position", "verify", "activity", "safety"):
+            raise HTTPException(404, f"unknown depositor screen {screen!r}")
+        return FileResponse(
+            str(_STATIC_DIR / "depositor.html"),
+            headers={"cache-control": "no-store, max-age=0"},
+        )
+
 
 # --- Trading Agent Setup ---
 # W2/S9: the trade universe lives in src/assets.py — this module iterates
@@ -725,6 +761,8 @@ def _make_risk_gate(onchain_logger=None) -> RiskGate:
         max_leverage=settings.max_leverage,
         min_confidence_bps=settings.min_confidence_bps,
         max_price_age_seconds=settings.max_price_age_seconds,
+        max_slippage_pct=settings.max_slippage_pct,
+        max_reference_velocity_pct_per_s=settings.max_reference_velocity_pct_per_s,
         loss_cooldown_minutes=settings.loss_cooldown_minutes,
         drawdown_window_days=settings.drawdown_window_days,
         drawdown_loss_mult=settings.drawdown_loss_mult,

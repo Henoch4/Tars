@@ -1,0 +1,19 @@
+# Vercel deploy: exclude everything the FastAPI function never reads.
+# Runtime-critical paths must stay: src/, static/, config/, proto/, ml/,
+# scripts/, contracts/ (ABI JSONs), vercel.json, requirements.txt.
+data/
+.mypy_cache/
+.pytest_cache/
+__pycache__/
+node_modules/
+model-inspiration/
+hf-space/
+notebooks/
+ml_data/
+ml_output/
+t3n/
+models/
+tars-lora-repo/
+mermail-trading-skill/
+.vercel/
+uv.lock

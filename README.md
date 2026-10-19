@@ -4,8 +4,6 @@
 
 *Trade Audit & Risk System — The most trustworthy robot in cinema, survives everything, humor setting 40%.*
 
-*Built for OKX Build X AI Season Hackathon 2026 (Aug 7–21)*
-
 A multi-agent AI trading system that combines Wall Street risk management principles with onchain transparency — every trading decision is logged to local audit **before** execution, creating an immutable, verifiable audit trail. Before every trade, the decision is written to a public ledger — written first, traded second — if the write fails, no trade happens. Records cannot be edited or deleted after the fact.
 
 ## Backronym: Trade Audit & Risk System

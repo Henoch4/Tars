@@ -251,6 +251,34 @@ body {
     }
     .badge-open { background: var(--success-dim); color: var(--success); }
     .badge-closed { background: var(--danger-dim); color: var(--danger); }
+    .badge-long { background: var(--success-dim); color: var(--success); }
+    .badge-short { background: var(--danger-dim); color: var(--danger); }
+    .badge-mode { background: var(--warning-dim); color: var(--warning); }
+    .badge-pass { background: var(--success-dim); color: var(--success); }
+    .badge-pending { background: var(--warning-dim); color: var(--warning); }
+    .badge-fail { background: var(--danger-dim); color: var(--danger); }
+    .ledger-note { font-size: 0.75rem; color: var(--text-muted); margin-top: var(--space-3); line-height: 1.5; }
+
+    /* Receipts tables (Activity tab) */
+    .ledger { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    .ledger th {
+      text-align: left; padding: var(--space-2); font-size: 0.7rem; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted);
+      border-bottom: 1px solid var(--border); white-space: nowrap;
+    }
+    .ledger td {
+      padding: var(--space-2); border-bottom: 1px solid var(--border); vertical-align: top;
+    }
+    .ledger tr:last-child td { border-bottom: none; }
+    .ledger .num { font-size: 0.78rem; }
+
+    /* Safety meters (usage vs daily caps) */
+    .meter { height: 6px; border-radius: 999px; background: var(--neutral-dim); overflow: hidden; margin-top: var(--space-1); }
+    .meter-fill { height: 100%; border-radius: 999px; background: var(--accent); transition: width 0.3s ease; }
+    .meter-fill.hot { background: var(--danger); }
+    .meter-wrap { margin-bottom: var(--space-4); }
+    .meter-row { display: flex; justify-content: space-between; font-size: 0.78rem; color: var(--text-secondary); }
+    .mode-line { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-2); }
 
     /* Footer */
     .footer {
@@ -346,6 +374,8 @@ body {
       <button type="button" class="tab active" id="tabbtn-deposit" data-tab="deposit" role="tab" aria-selected="true" aria-controls="tab-deposit" onclick="switchTab('deposit')">Deposit</button>
       <button type="button" class="tab" id="tabbtn-withdraw" data-tab="withdraw" role="tab" aria-selected="false" aria-controls="tab-withdraw" onclick="switchTab('withdraw')">Withdraw</button>
       <button type="button" class="tab" id="tabbtn-position" data-tab="position" role="tab" aria-selected="false" aria-controls="tab-position" onclick="switchTab('position')">My Position</button>
+      <button type="button" class="tab" id="tabbtn-activity" data-tab="activity" role="tab" aria-selected="false" aria-controls="tab-activity" onclick="switchTab('activity')">Activity</button>
+      <button type="button" class="tab" id="tabbtn-safety" data-tab="safety" role="tab" aria-selected="false" aria-controls="tab-safety" onclick="switchTab('safety')">Safety</button>
     </div>
 
     <!-- Deposit Tab -->
@@ -403,6 +433,35 @@ body {
         <p id="pos-empty" style="font-size:0.85rem; color:var(--text-muted); margin-top:var(--space-4); display:none;">
           No position. Connect wallet and deposit to get started.
         </p>
+      </div>
+    </div>
+
+    <!-- Activity Tab (receipts: live positions + on-chain decision log) -->
+    <div class="tab-content" id="tab-activity" role="tabpanel" aria-labelledby="tabbtn-activity">
+      <div class="card">
+        <div class="card-title">Open Positions</div>
+        <div id="positions-body" style="font-size:0.85rem; color:var(--text-muted);">Loading&hellip;</div>
+      </div>
+      <div class="card">
+        <div class="card-title">On-Chain Decision Log</div>
+        <div id="audit-body" style="font-size:0.85rem; color:var(--text-muted);">Loading&hellip;</div>
+        <div class="ledger-note">Written first, traded second: every decision is recorded on the audit chain before execution, and cannot be edited or deleted after the fact.</div>
+      </div>
+    </div>
+
+    <!-- Safety Tab (gates: mode, validation, risk limits, kill switch) -->
+    <div class="tab-content" id="tab-safety" role="tabpanel" aria-labelledby="tabbtn-safety">
+      <div class="card">
+        <div class="card-title">Strategy Validation Gate</div>
+        <div id="validation-body" style="font-size:0.85rem; color:var(--text-muted);">Loading&hellip;</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Daily Risk Limits &amp; Usage</div>
+        <div id="risk-body" style="font-size:0.85rem; color:var(--text-muted);">Loading&hellip;</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Kill Switch</div>
+        <div id="killswitch-body" style="font-size:0.85rem; color:var(--text-muted);">Loading&hellip;</div>
       </div>
     </div>
 
@@ -796,6 +855,200 @@ body {
       window.doDeposit = doDeposit;
       window.doRequestWithdraw = doRequestWithdraw;
 
+      // ---- Shard: Activity tab (receipts) + Safety tab (gates) ----
+      function escapeHtml(s) {
+        return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) {
+          return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+        });
+      }
+
+      function fmtNum(v, dp) {
+        var n = Number(v);
+        if (!isFinite(n) || n === null) return '--';
+        return n.toLocaleString(undefined, {
+          minimumFractionDigits: dp, maximumFractionDigits: dp,
+        });
+      }
+
+      function gateBadge(state, pass, fail, pending) {
+        var cls = state === true ? 'badge-pass' : (state === false ? 'badge-fail' : 'badge-pending');
+        var text = state === true ? pass : (state === false ? fail : pending);
+        return '<span class="badge ' + cls + '">' + escapeHtml(text) + '</span>';
+      }
+
+      function meterHtml(label, value, pct) {
+        return '<div class="meter-wrap"><div class="meter-row"><span>' + escapeHtml(label) +
+          '</span><span class="num">' + value + '</span></div>' +
+          '<div class="meter"><div class="meter-fill' + (pct >= 90 ? ' hot' : '') +
+          '" style="width:' + Math.min(100, Math.max(0, pct)) + '%;"></div></div></div>';
+      }
+
+      async function loadActivity() {
+        var posEl = document.getElementById('positions-body');
+        var auditEl = document.getElementById('audit-body');
+
+        // Live exchange positions. Empty in dry-run mode is the expected,
+        // safe state — shown as the plain truth it is, never as an excuse.
+        try {
+          var res = await fetch('/positions');
+          var data = await res.json();
+          var positions = data.positions || [];
+          if (data.error && !positions.length) {
+            posEl.textContent = 'Live position data is unavailable right now. Nothing is shown rather than something fake.';
+          } else if (positions.length) {
+            var html = '<table class="ledger"><thead><tr><th>Asset</th><th>Side</th><th>Size</th>' +
+              '<th>Entry</th><th>uPnL</th><th>Notional (u)</th></tr></thead><tbody>';
+            for (var i = 0; i < positions.length; i++) {
+              var p = positions[i];
+              html += '<tr><td>' + escapeHtml(p.asset) +
+                '</td><td><span class="badge ' + (p.side === 'long' ? 'badge-long' : 'badge-short') +
+                '">' + escapeHtml(p.side) + '</span></td>' +
+                '<td class="num">' + fmtNum(p.size, 2) + '</td>' +
+                '<td class="num">' + fmtNum(p.avg_price, 4) + '</td>' +
+                '<td class="num" style="color:var(' + (p.unrealized_pnl >= 0 ? '--success' : '--danger') + ');">' +
+                fmtNum(p.unrealized_pnl, 2) + '</td>' +
+                '<td class="num">' + fmtNum(p.notional_usd, 2) + '</td></tr>';
+            }
+            posEl.innerHTML = html + '</tbody></table>';
+          } else {
+            posEl.textContent = 'No open positions right now.';
+          }
+        } catch (e) {
+          console.warn('positions load failed:', e);
+          posEl.textContent = 'Live position data is unavailable right now.';
+        }
+
+        // On-chain decision log (last 7 days), newest first, capped at 20 rows.
+        try {
+          var aRes = await fetch('/audit-stats?days=7');
+          var stats = await aRes.json();
+          if (stats.error) {
+            auditEl.textContent =
+              'The on-chain audit rail is not connected on this deployment yet. Decisions appear here the moment an audit contract is configured.';
+          } else if (!(stats.decisions || []).length) {
+            auditEl.textContent = 'No decisions on-chain in the last 7 days.';
+          } else {
+            var rows = stats.decisions;
+            var t = '<table class="ledger"><thead><tr><th>ID</th><th>Asset</th><th>Signal</th>' +
+              '<th>Conf</th><th>Size (u)</th></tr></thead><tbody>';
+            var shown = Math.min(20, rows.length);
+            for (var j = rows.length - 1; j >= rows.length - shown; j--) {
+              var d = rows[j];
+              t += '<tr><td class="num">' + escapeHtml(String(d.decisionId).slice(0, 8)) + '&hellip;</td>' +
+                '<td>' + escapeHtml(d.asset) + '</td>' +
+                '<td>' + escapeHtml(d.signal) + '</td>' +
+                '<td class="num">' + escapeHtml(String(d.confidence)) + '</td>' +
+                '<td class="num">' + fmtNum(Number(d.sizeUsd) / 1e8, 2) + '</td></tr>';
+            }
+            auditEl.innerHTML = t + '</tbody></table><div class="ledger-note">Last ' + shown +
+              ' of ' + rows.length + ' decisions in the past 7 days.</div>';
+          }
+        } catch (e) {
+          console.warn('audit-stats load failed:', e);
+          auditEl.textContent = 'On-chain audit rail is unreachable right now.';
+        }
+      }
+
+      async function loadSafety() {
+        var valEl = document.getElementById('validation-body');
+        var riskEl = document.getElementById('risk-body');
+        var ksEl = document.getElementById('killswitch-body');
+
+        // Validation gate: pending is rendered honestly — unproven is never
+        // smoothed into a pass.
+        var dryRun = null;
+        try {
+          var vRes = await fetch('/api/v1/validation');
+          var v = await vRes.json();
+          dryRun = v.dry_run;
+          if (!v.gate_configured) {
+            valEl.innerHTML = gateBadge(null, 'Cleared', 'Not cleared', 'Not configured') +
+              '<div class="ledger-note">The validation gate (walk-forward, PBO, out-of-sample Calmar above ' +
+              escapeHtml(String(v.calmar_bar)) + ') has no historical returns configured on this deployment, ' +
+              'so the strategy has not yet proven it earns anything. A missing proof is displayed as pending, never as a pass.</div>';
+          } else {
+            var r = v.last_report || {};
+            var o = r.out_of_sample || {};
+            var pbo = r.pbo_analysis;
+            var t = '<table class="ledger"><thead><tr><th>Out-of-sample</th><th>Value</th></tr></thead><tbody>' +
+              '<tr><td>CAGR</td><td class="num">' + fmtNum(o.cagr, 4) + '</td></tr>' +
+              '<tr><td>Sharpe</td><td class="num">' + fmtNum(o.sharpe, 2) + '</td></tr>' +
+              '<tr><td>Max drawdown</td><td class="num">' + fmtNum(o.max_drawdown, 4) + '</td></tr>' +
+              '<tr><td>Calmar (bar ' + escapeHtml(String(v.calmar_bar)) + ')</td><td class="num">' + fmtNum(o.calmar, 2) + '</td></tr>' +
+              (pbo ? '<tr><td>PBO (max ' + escapeHtml(String(v.pbo_max)) + ')</td><td>' +
+                 gateBadge(pbo.pbo_pass, 'Pass', 'Fail', 'Unknown') + '</td></tr>' : '') +
+              '</tbody></table>' +
+              '<div style="margin-top:var(--space-3);">' + gateBadge(v.cleared_for_paper_trading, 'Cleared', 'Not cleared', 'Unknown') + '</div>' +
+              '<div class="ledger-note">Paper trading is only permitted when the walk-forward out-of-sample ' +
+              'Calmar clears the bar, the OOS stream actually traded (no vacuous pass), and PBO is under the max.</div>';
+            valEl.innerHTML = t;
+          }
+        } catch (e) {
+          console.warn('validation load failed:', e);
+          valEl.textContent = 'Validation status is unavailable right now.';
+        }
+
+        // Risk limits: the caps are hard-wired; the meters show how much of
+        // today's budget the agent has spent against them.
+        try {
+          var rRes = await fetch('/risk-stats');
+          var s = await rRes.json();
+          if (dryRun === null) dryRun = s.dry_run;
+          var lossPct = s.max_daily_loss_usd > 0 ? s.daily_loss_usd / s.max_daily_loss_usd * 100 : 0;
+          var tradePct = s.max_daily_trades > 0 ? s.daily_trade_count / s.max_daily_trades * 100 : 0;
+          riskEl.innerHTML =
+            '<div class="mode-line">' + renderModeBadge(dryRun) + '</div>' +
+            meterHtml('Daily loss', '$' + fmtNum(s.daily_loss_usd, 2) + ' / $' + fmtNum(s.max_daily_loss_usd, 2), lossPct) +
+            meterHtml('Trades today', s.daily_trade_count + ' / ' + s.max_daily_trades, tradePct) +
+            '<table class="ledger"><tbody>' +
+            '<tr><td>Max position</td><td class="num">$' + fmtNum(s.max_position_usd, 2) + '</td></tr>' +
+            '<tr><td>Max leverage</td><td class="num">' + fmtNum(s.max_leverage, 0) + '&times;</td></tr>' +
+            '<tr><td>Min confidence</td><td class="num">' + escapeHtml(String(s.min_confidence_bps)) + ' bps</td></tr>' +
+            '<tr><td>Loss cooldown</td><td class="num">' + escapeHtml(String(s.loss_cooldown_minutes)) + ' min</td></tr>' +
+            '</tbody></table>';
+        } catch (e) {
+          console.warn('risk-stats load failed:', e);
+          riskEl.textContent = 'Risk limits are unavailable right now.';
+        }
+
+        // Kill switch: off-chain layer first; on-chain layer labelled when
+        // this deployment has one. Either layer can halt, independently.
+        try {
+          var kRes = await fetch('/kill-switch');
+          var k = await kRes.json();
+          var parts = [];
+          if (k.active) {
+            parts.push('<div style="color:var(--danger); font-weight:700; font-size:0.9rem;">ACTIVE &mdash; all trading halted</div>');
+            if (k.reason) parts.push('<div class="ledger-note">' + escapeHtml(k.reason) + '</div>');
+          } else {
+            parts.push('<div style="color:var(--success); font-weight:700; font-size:0.9rem;">INACTIVE &mdash; trading allowed within the limits above</div>');
+          }
+          if (Object.prototype.hasOwnProperty.call(k, 'onchain_active') &&
+              k.onchain_active !== null && k.onchain_active !== undefined) {
+            parts.push('<div class="ledger-note">On-chain kill switch: ' + (k.onchain_active ? 'ACTIVE' : 'inactive') + '.</div>');
+          }
+          ksEl.innerHTML = parts.join('');
+        } catch (e) {
+          console.warn('kill-switch load failed:', e);
+          ksEl.textContent = 'Kill switch status is unavailable right now.';
+        }
+      }
+
+      function renderModeBadge(dryRun) {
+        if (dryRun === true) {
+          return '<span class="badge badge-mode">Paper mode</span>' +
+            '<span style="font-size:0.78rem; color:var(--text-secondary);">Orders are simulated. No deposits are at risk. Live trading stays off until every gate clears and a human deliberately flips the flag.</span>';
+        }
+        if (dryRun === false) {
+          return '<span class="badge badge-pass">Live</span>' +
+            '<span style="font-size:0.78rem; color:var(--text-secondary);">Real exchange execution, within the limits above.</span>';
+        }
+        return gateBadge(null, 'Live', 'Paper mode', 'Unknown');
+      }
+
+      window.loadActivity = loadActivity;
+      window.loadSafety = loadSafety;
+
       window.switchTab = function(name) {
         document.querySelectorAll('.tab').forEach(function(t) {
           var on = t.dataset.tab === name;
@@ -805,6 +1058,8 @@ body {
         document.querySelectorAll('.tab-content').forEach(function(c) { c.classList.toggle('active', c.id === 'tab-' + name); });
         if (name === 'position') loadPosition();
         if (name === 'withdraw') loadPendingWithdrawals();
+        if (name === 'activity') loadActivity();
+        if (name === 'safety') loadSafety();
       };
 
       window.scrollToVerify = function() {
@@ -834,6 +1089,25 @@ body {
 
       loadVaultInfo().then(loadStats);
       loadSolanaRail();
+
+      // 5.4 deep-link: /depositor/<screen> activates its tab/section so
+      // each progressive-disclosure screen is independently functional
+      // from its own URL. Unknown segments are ignored (server 404s).
+      (function deepLinkScreen() {
+        var m = window.location.pathname.match(/^\/depositor\/([\w-]+)\/?$/);
+        if (!m) return;
+        var screen = m[1];
+        var tabs = { deposit: 'deposit', withdraw: 'withdraw', 'my-position': 'position', activity: 'activity', safety: 'safety' };
+        if (tabs[screen]) { window.switchTab(tabs[screen]); }
+        var targets = { hero: 'wallet-label', stats: 'stat-tvl', deposit: 'tab-deposit',
+                        withdraw: 'tab-withdraw', 'my-position': 'tab-position', verify: 'verify',
+                        activity: 'tab-activity', safety: 'tab-safety' };
+        var el = targets[screen] && document.getElementById(targets[screen]);
+        if (el && el.scrollIntoView) {
+          var reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+          el.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
+        }
+      })();
 
       // Theme toggle
       function toggleTheme() {
