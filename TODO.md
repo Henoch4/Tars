@@ -97,6 +97,7 @@ These are currently broken, crashed, or actively blocking the system.
 - **Source:** `docs/OPEN_DECISIONS.md:71-75`
 
 ### 1.9 — Persistent host: durable multi-leg package state
+- **Status:** VERIFIED DONE 2026-10-13 — full chain: atomic save/load/recover in `multi_leg.py`, `main.py:811` passes `persist_dir=settings.multi_leg_state_dir` (not temp), `/opt/tars/data/multi_leg_state/` exists tars-owned on VPS.
 - **Problem:** A freeze between arb legs = naked position. Package state must survive restart.
 - **Fix:** Persist package state machine to durable storage (same `DurableDailyCounters` or dedicated JSONL)
 - **Verification:** `test_multi_leg.py` — package state survives restart simulation
@@ -107,70 +108,130 @@ These are currently broken, crashed, or actively blocking the system.
 ## Phase 2 — Risk Gate Hardening (P1): Safety and Correctness
 
 ### 2.1 — `max_slippage_pct` enforcement in multi-leg dispatch path
+- **Status:** VERIFIED DONE 2026-10-13 — dispatch path enforces the cap and unwinds on breach (recheck, was already fixed at port time; doc was stale).
 - **Problem:** AGENTS.md explicitly notes `max_slippage_pct` must be enforced in the multi-leg dispatch path. Two ported bugs were fixed but this is the ongoing regression risk.
 - **Fix:** Ensure `max_slippage_pct` is checked in `multi_leg.py` dispatch, not just in `risk_gate.py`
 - **Verification:** `test_multi_leg.py::test_dispatch_unwinds_on_slippage_breach`
 - **Source:** `AGENTS.md`, `docs/zinger-core-stealables.md:Z1`
 
 ### 2.2 — `PaperFillSimulator` must never clamp slippage
+- **Status:** VERIFIED DONE 2026-10-13 — no clamp; gaussian tail can breach (recheck, was already fixed at port time; doc was stale).
 - **Problem:** `PaperFillSimulator` clamps slippage — a regression that masks real fill behavior.
 - **Fix:** Remove the clamp; let `gauss(0, max_slippage_pct/2)` produce unbounded results
 - **Verification:** `test_multi_leg.py::test_paper_fill_simulator_can_actually_breach_slippage`
 - **Source:** `AGENTS.md`, `docs/zinger-core-stealables.md:Z1`
 
 ### 2.3 — Read `ok`, not truthiness — audit for result-object bugs
-- **Problem:** Treating a result object's presence as its meaning (same family as the zinger bug). A refusal is truthy just like a fill.
-- **Fix:** Audit `src/multi_leg.py` and `src/okx_cli.py` for places that test result truthiness instead of reading an explicit `ok` field
-- **Verification:** Regression test per corrected site — a declined leg is recorded as NOT filled
+- **Status:** VERIFIED DONE — `multi_leg.py` reads explicit `.filled`/`.state`
+  fields; `executor.py::_await_fill` keys off `fill_px` + terminal `OrderStatus`.
+- **Verification:** `test_multi_leg.py::test_z2_read_ok_not_truthiness_declined_leg_not_filled`
+  — a declined leg is recorded as NOT filled (verified 2026-10-07)
 - **Source:** `docs/zinger-core-stealables.md:Z2`
 
 ### 2.4 — Consensus divergence quarantine (resurrected)
-- **Problem:** `ConsensusGate` has no outlier/divergence detection. One bad trader can silently flip the majority.
-- **Fix:** Implement per-trader health tracking in `consensus.py` — running agreement-with-later-outcome score, quarantine on N consecutive divergences or degenerate output
-- **Verification:** `tests/test_consensus_quarantine.py` — one diverging trader cannot dominate
-- **Source:** `docs/ika-stealables.md:308-332`, `src/consensus.py` (already partially implemented)
+- **Status:** VERIFIED DONE — per-trader health tracking in `consensus.py`
+  (divergence streaks, NaN/lockstep quarantine, `quarantine_factor` weight cut,
+  never excluded).
+- **Verification:** `tests/test_consensus_quarantine.py` — one diverging trader cannot dominate (verified 2026-10-07)
+- **Source:** `docs/ika-stealables.md:308-332`, `src/consensus.py`
 
 ### 2.5 — Signed-exposure gate (sign handling)
-- **Problem:** Earlier exposure checks compared magnitude against signed quantity — a same-size wrong-direction position could pass.
-- **Fix:** Compare signed quantity vs direction in `risk_gate.py` exposure checks
-- **Verification:** `test_risk_gate.py` — wrong-direction exposure rejected
+- **Status:** VERIFIED DONE — symmetric flip guard in `risk_gate.py` check 8
+  (`REDUCE_ONLY_VIOLATION` both directions: sell-vs-long AND buy-vs-short),
+  backed by live position-side reads in `executor.py::_live_position_side`.
+- **Verification:** `test_risk_gate_properties.py::test_reduce_only_enforced_symmetrically`
+  + `test_execution.py::test_reduce_only_violation_rejected` (verified 2026-10-07)
 - **Source:** `docs/vibe-trading-stealables.md:V4`
 
 ### 2.6 — Mandate gate fail-closed on empty reads
-- **Problem:** Empty order-book reads treated as valid no-ops, flattened to `status:ok`.
-- **Fix:** Empty reads become a distinct, non-tradeable state — risk gate must handle `EMPTY_BOOK` explicitly
-- **Verification:** `test_risk_gate.py` — empty book returns distinct error, not ok
+- **Status:** COVERED BY ANALOG (verified 2026-10-07) — the live path has no
+  order-book read to return EMPTY_BOOK for; every analogous empty/missing
+  read already fail-closes with a distinct code: `risk_gate.py`
+  `NO_PRICE_REFERENCE` (missing/non-positive price), `data_integrity.py`
+  `HARD_BLOCK` (stale feed, NaN funding, missing signal fields),
+  `agent.py` `ml_missing_prices` degradation blocks the package, and
+  `executor.py` counts `missing_data` response failures instead of
+  flattening to ok. Adding an unwired EMPTY_BOOK code would violate the
+  honesty invariant — re-open literally if an order-book read is added.
 - **Source:** `docs/vibe-trading-stealables.md:V5`
 
 ### 2.7 — Commit-time mandate widening prevention
-- **Problem:** Mandates widened at commit time by stringified numbers and `True`-as-1 coercion.
-- **Fix:** Validate numerics/types at commit boundary in `risk_gate.py` order construction
-- **Verification:** `test_risk_gate.py` — stringified mandate values rejected
+- **Status:** DONE 2026-10-07 — `RiskGate._validate_mandate_types` runs as
+  check 0a (right after the kill switch, before every value check):
+  `confidence_bps` exact-int (bool/str rejected — previously `"8000" < 7000`
+  raised TypeError mid-trade); `size`/`px` str-int-float minus bool plus
+  finite (NaN passed every magnitude check before); `leverage`/
+  `intended_price` int-float minus bool plus finite (previously
+  `intended_price="50000"` raised TypeError at line 998). Rejections use
+  distinct code `INVALID_MANDATE_TYPE`. Pinned fall-throughs preserved:
+  `size=None`/unparseable → `INVALID_ORDER_SIZE`, `confidence=None` →
+  `CONFIDENCE_MISSING` (warn path), `leverage=None` → undeclared path.
+- **Verification:** `test_risk_gate_properties.py::TestMandateTypeValidation`
+  (13 tests: stringified/True-as-1/non-finite rejected, well-typed approved,
+  kill-switch-still-first) — 152 passed with `test_execution.py`
 - **Source:** `docs/vibe-trading-stealables.md:V6`
 
 ### 2.8 — Signal shift-by-1 in backtest (anti-lookahead)
-- **Problem:** Option backtests filled same-bar — leaking future data.
-- **Fix:** Every signal computed on candle N must only act at candle N+1's open. Verify TARS's own backtest does this.
-- **Verification:** `test_validation.py` — next-bar fill rule enforced
+- **Status:** DONE 2026-10-07 — `executed_positions()` shifts the decision
+  series one bar forward in `scripts/run_validation_gate.py::net_bar_returns`
+  + `::episode_stats` (signal on N earns from close[N+1] onward; final-bar
+  signal never trades). Full gate RE-RUN same day on identical 2y data
+  (`reports/validation-gate-2026-10-07.md`): SOL `funding_persistence_z`
+  repriced 28 trades / 57% win / **+2.6% net** (was +13.6% same-bar),
+  OOS Sharpe **1.505** (was 2.206), OOS Calmar **6.522** (was 16.125),
+  IS Sharpe **-0.208** (edge entirely OOS — thinner than reported, flag for
+  the paper-trade watch); SOL fpz PBO 0.00; verdict still
+  `cleared_for_paper_trading=true`. Falsified theses unchanged (MR/momentum
+  still deep FAIL). `backtest_simple` untouched (caller-aligned unit harness,
+  tests pin it); `ml_spike.py` untouched (dated research artifact).
+- **Verification:** `test_validation.py::TestNextBarFillRule` (4 tests) —
+  27 passed with `test_validation_gate.py` + `test_backtest_costs.py`
 - **Source:** `docs/freqtrade-stealables.md:Free4`, `docs/vibe-trading-stealables.md:V7`
 
 ### 2.9 — Per-asset on-chain circuit breaker
-- **Problem:** TARS has global risk params + kill switch on `TradeAuditTrail.sol` but no per-asset rate-limited breaker.
-- **Fix:** Add `RateLimitedEscrowFactory`-style per-asset breaker under off-chain daily counters
-- **Verification:** Contract test — per-asset cap enforced
+- **Status:** DONE 2026-10-07 — `TradeAuditTrail.sol`: per-(agent,asset-hash)
+  daily volume cap + accumulator + day bucket (`assetVolumeCap` /
+  `assetDailyVolume` / `assetDailyBucket`, 1e8 fixed point), `setAssetCap`
+  (tightening-only like `setRiskParams`: down-only, never back to 0),
+  `logDecision` enforces `ASSET_CAP_EXCEEDED` (unset cap = global checks
+  only, backward compatible), `getAssetDailyStats` view + `AssetCapUpdated`
+  event. Off-chain: `OnchainLogger.set_asset_cap` /
+  `get_asset_daily_stats` + hand-synced `_ABI` entries (no payload-hash or
+  struct change — signature path untouched).
+- **Verification:** `tests/test_asset_breaker.py` (4 tests on a real EVM:
+  boundary enforcement, unset-asset compat, tightening-only, per-asset +
+  per-agent isolation — compiling the contract is the recompile check)
+- **Operator path** (ported from tars-base 2026-10-07):
+  `scripts/set_risk_params.py` (the runbook-referenced script Tarstrade
+  never had) — X Layer defaults, `--dry-run` preview, repeatable
+  `--asset-cap ASSET:USD`, pre-flight tightening warnings; 16 tests in
+  `tests/test_set_risk_params.py` (no network)
 - **Source:** `docs/stealables-2026-9-repos.md`, `docs/PATH_FORWARD.md:120`
 
 ### 2.10 — Reference-price velocity clamp (fairswap)
-- **Problem:** No slot-aware reference-price velocity guard on the live execution path.
-- **Fix:** Clamp fills against a monotonically constrained reference per slot in `executor.py` fill verification
-- **Verification:** `tests/test_execution.py::test_*_slippage_*`
-- **Source:** `docs/stealables-2026-9-repos.md`, `docs/freqtrade-stealables.md:Free10`
+- **Status:** DONE 2026-10-07 — `RiskGate` check 9b `_check_reference_velocity`
+  (new param `max_reference_velocity_pct_per_s=0.1`, fail-closed positive at
+  construction, in `compute_risk_hash`): per-instrument trusted-reference
+  watermark advances at most at bound velocity; an observation beyond the
+  bound is rejected with `REFERENCE_VELOCITY_EXCEEDED` (no kill-switch trip
+  — data suspicion, not a bad fill) while the watermark still advances at
+  bound velocity toward it (sustained real moves converge, single bursts
+  stay clamped). First observation initializes (no velocity info yet);
+  unwind legs admitted past it (flattening never waits); hour-apart cycle
+  observations get a huge bound and always pass. Placed in the gate (not
+  the executor) as the single enforcement point for reference trust —
+  `_verify_fill` only ever sees a vetted reference.
+- **Verification:** `tests/test_execution.py::TestReferenceVelocityClamp`
+  (8 tests: first-trusted, slow-drift, burst-rejected, same-snapshot,
+  catch-up, unwind-admitted, hash-covered, bad-config) — 103 passed in file
+- **Source:** `docs/stealables-2026-09-repos.md` Tier D, `docs/freqtrade-stealables.md:Free10`
 
 ---
 
 ## Phase 3 — Observability & Metrics (P2): What Gets Measured Gets Managed
 
 ### 3.1 — External loop-stall watchdog (S1)
+- **Status:** DONE 2026-10-13 — `metrics.check_loop_stall(max_age_s)` runs in the watcher (API) process against the persisted heartbeat: fresh→False/gauge 0.0, stale→True/gauge 1.0 (`tars_loop_stopped_contributing_condition_active`), never-started→None/gauge untouched. Wired into `/health` (`LOOP_STALL_MAX_AGE_S`, default 1800s = 2x scheduler interval). 4 new tests in `TestExternalStallWatchdog` (29/29 file green). In-loop `LoopWatchdog` transitions were already covered.
 - **Problem:** If the trading loop deadlocks or hangs on an RPC, the inside of the loop cannot tell you it stopped. No external heartbeat.
 - **Fix:** External watchdog samples `last_cycle_completed_at` from outside the loop. Fires "loop stopped contributing" when bound trips.
 - **Verification:** Watchdog fires on simulated stall; `tars_loop_stopped_contributing_condition_active` gauge set
@@ -205,21 +266,45 @@ These are currently broken, crashed, or actively blocking the system.
 - **Status:** DONE
 
 ### 3.6 — Independent-verification release gates (S7)
+- **Note 2026-10-14:** `scripts/check_release.py` now covers the MECHANICAL half (gitleaks-or-visible-skip, full pytest, manifest doctor, hermetic artifact round-trips, printed manual remainder; first certification 953 passed). The specified half — separate runner/evaluator with signed bundles — remains open.
 - **Problem:** No independent verification means no release. Self-validation is banned.
 - **Fix:** Model eval: runner and evaluator separate; Ed25519 signatures over subject + runtime + receipts + rubric judgments
 - **Verification:** Signed evaluation bundle verified by independent party
 - **Source:** `docs/claude-ads-stealables.md:CA13`, `AGENTS.md`
 
 ### 3.7 — Deterministic scoring engine (CA6)
-- **Problem:** No single scoring/validation engine. Weights can drift.
-- **Fix:** Versioned scoring profile whose category weights must total exactly 100 (validated invariant). Category health = `100*sum(pass_weight)/sum(known_weight)`.
-- **Verification:** Invariant check on every scoring run; hard-fail if weights don't sum to 100
+- **Status:** DONE 2026-10-07 — versioned `SCORING_PROFILE` (v1) in
+  `src/execution/risk_gate.py`: whole-point weights (daily_loss 30,
+  trailing_drawdown 25, cooldown 15, leverage 15, confidence 15) totaling
+  exactly 100, enforced by `validate_scoring_weights` (rejects drift,
+  bool-as-weight, negative, non-numeric) hard-failed at `RiskGate`
+  construction; `score_order` computes from the profile (bit-identical
+  math, pinned). Exported via `src/execution/__init__.py`.
+- **Verification:** `tests/test_risk_dynamic.py::TestScoringProfileInvariant`
+  (5 tests: totals-100, drifted/bool/negative/stringified rejected,
+  construction fails on tamper, scores unchanged) — 185 passed with
+  `test_execution.py` + `test_risk_gate_properties.py`
 - **Source:** `docs/claude-ads-stealables.md:CA6`
 
 ### 3.8 — Mutation gate (CA7)
-- **Problem:** No write-gate for production mutations. Every write needs: capability manifest, snapshot + proposed change, before/after diff, owner approval within ceilings, idempotency key + audit record + rollback, verification.
-- **Fix:** Implement mutation lifecycle for `RiskGate` / `multi_leg.py` / kill-switch surfaces
-- **Verification:** Regression tests cover preview, approval, apply, repeated apply, verify, failure, audit, rollback
+- **Status:** DONE 2026-10-07 — `src/mutation_gate.py`: proposal envelope
+  (idempotency key; duplicate propose returns the existing proposal)
+  over the real control-plane surfaces (`kill_switch` activate/deactivate
+  both layers with snapshot rollback; `risk_params.set` /
+  `asset_cap.set` via `OnchainLogger` with operator USD ceilings, rollback
+  explicitly IRREVERSIBLE since the chain forbids loosening).
+  Lifecycle preview (read-only diff) → approve (ceilings + recorded
+  self-approval) → apply (once; replays cached receipt) → verify
+  (re-read match, mismatch = FAILED) → rollback; every transition audited
+  (`mutation_*` records, PROOF_EXECUTION). Existing endpoints untouched
+  (their pinned tests stay green); the envelope is the operator path with
+  real appliers. Per-trade counter increments deliberately ungated (they
+  are the audited activity, not config changes); curator switches already
+  carry their own allowlist/cooldown/revert lifecycle.
+- **Verification:** `tests/test_mutation_gate.py` (12 tests: preview purity,
+  ceiling reject, once-only apply + replay, approval required, verify,
+  failure + audit, kill-switch rollback, tightening irreversibility,
+  duplicate-key, unknown refs, self-approval flag, full audit trail)
 - **Source:** `docs/claude-ads-stealables.md:CA7`, `docs/claude-ads-stealables.md:CA12`
 
 ---
@@ -244,33 +329,85 @@ These are currently broken, crashed, or actively blocking the system.
 - **Source:** `docs/ML_ROADMAP_REVISED.md`, `docs/ML_ROADMAP_ZERO_COST_STRATEGY.md`, `docs/MATH_CONCEPTS.md`
 
 ### 4.4 — Data pipeline: extend carry dataset
+- **Status:** VERIFICATION DONE 2026-10-13 — pipeline existed (fetch ~60-70 symbols, build with embargo assertion + baselines in `main()`); added `tests/test_carry_dataset.py` 6/6 on synthetic CSVs: per-8h normalization, trailing exclusivity, feature-stability-under-append (NaN-aware), y_win bar both sides. OPEN FINDING (not fixed — needs ML owner): tail rows carry TRUNCATED 7d labels (skip fires only on zero forward data; e.g. last row's "7d" label sums 1 period), pinned by `test_tail_labels_truncated_documents_behavior`. Changing it alters the validated model's training set.
 - **Problem:** The 2y funding input is Binance USDT-perp funding as a cross-venue proxy for OKX. OKX public funding history caps ~3 months.
 - **Action:** `scripts/fetch_carry_data.py` extended to 70 symbols; `scripts/build_carry_dataset.py` built `data/carry/dataset.csv` (52,320 rows × 29 cols). Re-run on extended tier.
 - **Verification:** Embargo assertion, zero/persistence RMSE baselines, `y_win` rate verified
 - **Source:** `docs/DATASETS.md`, `docs/ML_ROADMAP_REVISED.md`
 
 ### 4.5 — Feature-drift hard-fail on model reuse
-- **Problem:** If the carry-feature set drifts, a stale model silently produces garbage.
-- **Fix:** Persist the feature list with the model; hard-fail on drift at load.
-- **Verification:** `test_ml_inference.py` — feature mismatch raises
+- **Status:** DONE 2026-10-07 — `ml/carry_inference.py`: `FeatureDriftError`
+  (RuntimeError, flows into the S5 `ml_unavailable:` degradation path);
+  `validate_feature_schema` (non-empty unique string list) enforced at load;
+  `prepare_features_for_inference` raises on missing/None/non-numeric/bool
+  keys (no more silent zero-fill — the live path passed 6 keys against a
+  26-col model); NaN passes through (native to LightGBM, stop faking
+  completeness); `predict_q20/q50` width-checked + missing-model raises
+  instead of predicting zeros; absent artifacts raise instead of warning;
+  deleted the stale 22-col inference `FEATURE_COLS` (training list + 26-col
+  artifact are the single source). Verified live: same 6-col call now
+  yields NEUTRAL + `ml_unavailable:FeatureDriftError`, never a zero-fed
+  LONG. Re-exported via `src/ml_inference.py`.
+- **Verification:** `tests/test_ml_inference.py` (23 tests, hermetic —
+  models/ is gitignored so artifact checks skip when absent; includes
+  train↔artifact AST parity + live-row-gap documentation) — 31 passed
+  with `test_ml_degradation.py`, zero breakage
 - **Source:** `docs/freqtrade-stealables.md:Free2`, `docs/MATH_CONCEPTS.md:5`
 
 ### 4.6 — `do_predict` inference shield (per-row novelty gate)
-- **Problem:** `src/ml_inference.py` has no per-row novelty gate — NaN or OOD row yields raw prediction with no shield.
-- **Fix:** Implement `do_predict` int array flagging every shielded row (0=shield, 1=ok, 2=expired model). Strategy must gate entry on it.
-- **Verification:** `test_ml_inference.py` — NaN row produces shield, not prediction
+- **Status:** DONE 2026-10-07 — `ml/carry_inference.py::do_predict` returns
+  an int flag array (1 ok / 0 shield / 2 expired): non-finite rows always
+  shield; optional `(lo, hi)` bounds shield out-of-range rows (no training
+  stats ship yet — without bounds only finiteness gates, documented in the
+  docstring, with the stats sidecar assigned to 4.9); explicit
+  `model_trained_at` + `max_model_age_s` expire all rows (no mtime inference
+  — checkout noise lies; absent timestamps never read as fresh OR expired).
+  Shape drift raises (caller bug, not novelty). `predict_carry_decision`
+  shields before the model (no prediction made, NaN q20, eligible False);
+  `CarryDecision` + both compat shims forward `shielded`/`novelty_flag`
+  (getattr-guarded so old test doubles read as unshielded);
+  `ml_funding_carry_signal` degrades shielded rows as
+  `ml_shielded:novelty_flag=N` (S5), which the package gate already blocks on.
+- **Verification:** `tests/test_ml_inference.py::TestDoPredictShield` +
+  strategy gating tests (14 tests: finiteness, batch, bounds, expiry,
+  width-raises, shield-never-reaches-model, clean-row eligible, strategy
+  degrades on shield, absent-keys backward compat) — 45 passed with
+  `test_ml_degradation.py`, zero breakage
 - **Source:** `docs/freqtrade-stealables.md:Free3`, `docs/ika-stealables.md:117-133`
 
 ### 4.7 — Isotonic calibration + decile plot
-- **Problem:** Model confidence does not rank trades (v2 52.5%→−90% flat curve signature).
-- **Fix:** Isotonic calibration on validation slice; evaluate with cross-sectional decile plot (predicted vs realized persistence by decile).
-- **Verification:** Calibration error below bound; reliability diagram over holdout split
+- **Status:** DONE 2026-10-07 — hardened `src/validation.py::
+  isotonic_calibration(q_pred, y_actual, tau=0.2)` from an untested,
+  unwired helper with a silent `{"error"}` fallback into a verdict gate:
+  monotone flag over decile actual means (the v2 flat-curve detector),
+  size-weighted ECE + max gap, quantile coverage vs tau with coverage_ok,
+  remainder-dealt deciling, NaN/inf/length/n<10 fail-closed raises (no
+  silent dicts), missing sklearn raises. Still unwired to any live model
+  (none exists post-falsification) — the gate is ready for the M2
+  calibration report when one does.
+- **Verification:** `tests/test_validation.py::TestIsotonicCalibrationGate`
+  (9 tests: calibrated pass, v2-flat monotone fail + huge ECE, coverage
+  miss flagged, decile structure incl. indivisible n, 4 bad-input raises)
+  — 26 passed in file, zero breakage
 - **Source:** `docs/MATH_CONCEPTS.md:5`, `docs/ML_ROADMAP_REVISED.md`
 
 ### 4.8 — Durable learning-state store (I12)
-- **Problem:** Model weights, eval dataset, learned carry thresholds, and curator profiles have no durable store. A restarted bot cannot resume with the last fitted model.
-- **Fix:** `src/learning_store.py` exists (LearningStore with Merkle root per cycle) — verify it's wired into the pipeline. Persist per-training-cycle artifacts (model files, metadata, feature list).
-- **Verification:** `test_learning_store.py` — model loads correctly after restart
+- **Status:** DONE 2026-10-07 — train/inference wired through a metadata
+  sidecar (the `LearningStore` cycle-Merkle shape did not fit carry
+  artifacts, so the durable per-training record lives next to them):
+  `ml/train_carry.py::build_model_metadata` (pure: schema, trained_at,
+  n_rows, symbols, dataset sha256 best-effort, git-sha-or-unknown) written
+  as `models/carry_quantile/meta.json` on `--save`;
+  `ml/carry_inference.py` loads it best-effort (absent/malformed pre-sidecar
+  artifacts load fine, age unassessed — never bricks), refuses on
+  sidecar↔artifact schema mismatch, exposes `get_model_metadata()`, and
+  feeds `trained_at` into the 4.6 expiry shield (`MODEL_MAX_AGE_S` = 30d
+  default, per-call override). A retrained model restarts its own clock;
+  until one exists, age stays honestly unknown.
+- **Verification:** `tests/test_ml_inference.py::TestModelMetadataSidecar`
+  (10 tests: load/expose, mismatch refuses, absent/malformed tolerated,
+  expired shields flag-2, fresh proceeds, override respected, no-meta
+  never expires, builder shape + honest-absent) — 47 passed in file
 - **Source:** `docs/PENDING_TASKS_REPORT.md:31`, `docs/oobe-sap-stealables.md:340-359`
 
 ### 4.9 — Data-drawer persistent artifact store
@@ -280,9 +417,21 @@ These are currently broken, crashed, or actively blocking the system.
 - **Source:** `docs/freqtrade-stealables.md:Free1`
 
 ### 4.10 — Funding-rate candle backtest realism
-- **Problem:** TARS trades funding-arb but presumably models funding as a fixed per-leg constant.
-- **Fix:** Charge funding from actual funding-rate history, direction-aware and accrual-based via `multi_leg.py`.
-- **Verification:** `test_multi_leg.py` — funding costs match actual history
+- **Status:** DONE 2026-10-07 — `src/multi_leg.py::accrue_funding`
+  (direction-aware per-period accrual from actual rate history: short
+  collects positive funding, long pays; negatives flip; empty history
+  accrues 0.0; bool/string/NaN/inf/negative-notional/unknown-side raise)
+  + `Package.funding_accrued_usd` (persisted, `.get` fallback keeps old
+  package files loadable) + `MultiLegExecutionManager.
+  record_package_funding` (short-side share only — deliberately no side
+  parameter, since the package vocabulary cannot express open longs;
+  backtests needing long legs call accrue_funding directly).
+  Known remainder (documented, not hidden): no live position/hold tracker
+  calls record_package_funding on a schedule yet — the economics primitive
+  and its persistence exist, the periodic accrual loop does not.
+- **Verification:** `tests/test_multi_leg.py::TestFundingAccrual`
+  (direction, flip, empty, 9 malformed-input raises, accumulate+persist+
+  reload, real Binance history match) — 37 passed in file
 - **Source:** `docs/freqtrade-stealables.md:Free5`
 
 ---
@@ -290,52 +439,60 @@ These are currently broken, crashed, or actively blocking the system.
 ## Phase 5 — Pooled Vault + Depositor UI (P1): Product Surface
 
 ### 5.1 — `TradingVault.sol` deployment and verification
-- **Status:** Contract exists (`contracts/contracts/TradingVault.sol`) but not yet deployed to X Layer mainnet.
+- **Status:** LOCAL VERIFICATION DONE 2026-10-13 — `tests/test_trading_vault.py` 36/36 green (covers every criterion: DepositTooSmall, MAX_TVL, donation resistance, two-step withdrawal, deadline expiry, rate limit). NOT YET DEPLOYED to any chain. Recommendation: deploy to X Layer **testnet** first; mainnet only with live track record + NAV pipeline (5.2) live.
 - **Fix:** Deploy to X Layer mainnet (chainId 1952). Verify ERC-4626 semantics, MIN_DEPOSIT/MAX_TVL enforcement, two-step withdrawal, settlement-window redemption.
 - **Verification:** `tests/test_vault.py` — deposit reverts on `DepositTooSmall`, deposit reverts at `MAX_TVL`, share-price donation attack resistance, two-step withdrawal, deadline expiry, rate limit
 - **Source:** `docs/DESIGN-external-vault.md`, `contracts/contracts/TradingVault.sol`
 
 ### 5.2 — Operator-attested NAV reconciliation
+- **Status:** DONE 2026-10-13 — module (`read_vault_state`, `read_okx_balance`, `reconcile` with discrepancy + suggested attestation + honest read-error surfacing), endpoints (`GET /api/v1/vault/reconciliation`, `POST /api/v1/vault/attest`), and `tests/test_reconciliation.py` 6/6 green. Live attestation awaits vault deployment (5.1 remainder).
 - **Problem:** `totalAssets` on the vault must equal what the agent actually holds in its OKX account. v1 uses operator-attested balance.
 - **Fix:** `src/reconciliation.py` exists — wire it to the agent's `attestTotalAssets` call. Ensure the attestation is clearly labeled "value reported by the operator, auditable on-chain" in the UI.
 - **Verification:** `test_reconciliation.py` — discrepancy detected and reported
 - **Source:** `docs/DESIGN-external-vault.md:4.2`, `src/reconciliation.py`
 
 ### 5.3 — Wallet connect for real (depositor surface)
+- **Status:** DONE 2026-10-13 — `static/depositor.html` calls `vaultContract.deposit/requestWithdraw/finalizeWithdraw` with approve flow + tx states (Reown AppKit connect). Was wired; doc was stale. Full end-to-end awaits vault deployment (5.1 remainder).
 - **Problem:** The depositor page's connect button is a placeholder.
 - **Fix:** Wire wagmi/viem (chain 1952) to `TradingVault.deposit` / `requestWithdraw` / `finalizeWithdraw`.
 - **Verification:** Deposit/withdraw call real contract; tx states surfaced honestly
 - **Source:** `docs/DESIGN-external-vault.md:5.4`
 
 ### 5.4 — Depositor surface: five-screen progressive disclosure
+- **Status:** DONE 2026-10-13 — all six screens existed as sections in `static/depositor.html`; added `/depositor/{hero,stats,deposit,withdraw,my-position,verify}` deep-link routes (each serves its section via tab-activate + scroll, unknown screens 404, `include_in_schema=False` so the manifest doctor holds) + `tests/test_depositor_screens.py` 9/9 green. Also fixed Reown X Layer chain ID 1952→195 (entry said testnet, config said mainnet).
 - **Fix:** `/depositor/hero`, `/depositor/stats`, `/depositor/deposit`, `/depositor/withdraw`, `/depositor/my-position`, `/depositor/verify`
 - **Verification:** Each screen independently functional
 - **Source:** `docs/complimentary-seedless-patterns.md:47-55`
 
 ### 5.5 — Rate limiting on withdrawals
+- **Status:** DONE 2026-10-13 — `WithdrawalRateLimited` already in `TradingVault.sol`; `test_request_withdraw_rate_limited` green in `tests/test_trading_vault.py` (36/36). Was implemented with the contract; doc was stale.
 - **Problem:** No per-depositor withdrawal rate limit (v1.1).
 - **Fix:** Add `WithdrawalRateLimited` error; max 1 withdrawal per 8h per depositor in `TradingVault.sol`.
 - **Verification:** Contract test — rate-limited withdrawal reverts
 - **Source:** `docs/complimentary-seedless-patterns.md:96-98`
 
 ### 5.6 — On-chain reputation/capability registry (I1)
+- **Status:** DONE 2026-10-13 (code + tests; DEPLOYMENT PENDING key call) — new `contracts/contracts/AgentRegistry.sol` (self-registration keyed by msg.sender, update/deactivate, `reputation()` view over `TradeAuditTrail.getAgentDailyStats` + kill-switch flag; audit-trail contract untouched); `tests/test_agent_registry.py` 9/9; registry pointer on the discovery card (honest-null until deployed); `compile_contract.py` + `deploy.py` extended (`AgentRegistry` target, chain ID now read from RPC instead of hardcoded); `REGISTRY_CONTRACT_ADDRESS` documented in `.env.example`.
 - **Problem:** `manifest.json` is a static file with no reputation, pricing, or discovery index.
 - **Fix:** Extend `TradeAuditTrail.sol` or add `AgentRegistry.sol` on chain 1952 with signed capability/pricing/reputation surface. Feed from `TradeAuditTrail.sol`'s `dailyLoss`/`dailyTrades`.
 - **Verification:** Discovery card served; on-chain registry queryable
 - **Source:** `docs/oobe-sap-stealables.md:37-58` (I1)
 
 ### 5.7 — x402 pricing tiers + spend caps + rate limiting (I3 + I6)
+- **Status:** DONE 2026-10-13 — all implemented in `main.py` (tiered card, `X402_MAX_USD_PER_CALL` fail-closed cap, `/api/v1/estimate`, global + per-tier per-IP token buckets); `tests/test_pricing.py` 9/9 green covering card/estimate/cap/buckets. Was implemented; doc was stale.
 - **Problem:** x402 middleware is binary (paid route or not); no pricing model, spend cap, or rate limit.
 - **Fix:** Tiered price card: Free (`/health`, `/manifest`, `/kill-switch`), Micro (`/positions`, `/funding-arb-status`), Premium (`/hire`, `/trade`, `/vault/*`). Add per-call max-usd cap + estimate endpoint + token-bucket rate limiting.
 - **Verification:** Price card served; rate limiting enforced; spend cap honored
 - **Source:** `docs/oobe-sap-stealables.md:78-153` (I3, I6)
 
 ### 5.8 — Discovery card + MCP surface (I4)
+- **Status:** DONE 2026-10-13 — full surface served (agent-card, x402, /docs, openapi.json; card entry points resolve; openapi covers /hire). Card/tools/payment shapes already pinned in `test_manifest.py::TestAgentDiscovery`; added `tests/test_discovery_surface.py` 3/3 for the complete set.
 - **Fix:** Serve `/.well-known/agent-card.json` + `/.well-known/x402` + `/docs` + `openapi.json`. Another AI agent can discover, read the price card, and call `/hire`.
 - **Verification:** Discovery card served at well-known URL; valid JSON structure
 - **Source:** `docs/oobe-sap-stealables.md:101-118` (I4)
 
 ### 5.9 — Two-tier audit retention: seal-on-settlement (I5)
+- **Status:** DONE 2026-10-13 — design already existed (JSONL working buffer, Merkle seal per cycle, transients never promoted); built the missing piece `AuditLog.rolloff(keep_cycles)` (atomic, seals never dropped, recency-based keep incl. unsealed tails) + seal-membership and 4 rolloff tests in `test_audit_trail.py` (12/12 green). On-chain gating (executed-only logDecision) covered by the signature-roundtrip suite.
 - **Problem:** On-chain `logDecision` writes every decision (gas-costly). JSONL is the working buffer. Need explicit two-tiering.
 - **Fix:** On-chain for sealed/permanent records (executed decisions), JSONL for working buffer that rolls off. Seal on settlement trigger.
 - **Verification:** Only executed decisions appear on-chain; JSONL working buffer rolls off correctly
@@ -346,12 +503,14 @@ These are currently broken, crashed, or actively blocking the system.
 ## Phase 6 — API & Developer Experience (P2)
 
 ### 6.1 — Schema-validate + auto-generate `manifest.json` (I7)
+- **Status:** DONE 2026-10-13 — `python scripts/check_manifest.py` reports healthy; `tests/test_manifest.py` green (doctor, schema, bidirectional route agreement). Was implemented; doc was stale.
 - **Problem:** `manifest.json` is hand-maintained with "unknown endpoint" descriptions. Drift risk.
 - **Fix:** Generate from FastAPI OpenAPI spec + CI check validates against schema + endpoint-exists check.
 - **Verification:** `python scripts/check_manifest.py` passes; every documented endpoint exists
 - **Source:** `docs/oobe-sap-stealables.md:154-169` (I7), `scripts/check_manifest.py`
 
 ### 6.2 — `src/mcp_bridge.py` wire to a real consumer (I13)
+- **Status:** DEFERRED 2026-10-13 (correctly open, not buildable) — bridge is complete + tested (8/8 `test_mcp_bridge.py`), zero live-path consumers by design: the module docstring forbids wiring without an external research input, and none exists yet. Wiring now would manufacture the dead code it guards against. Re-open when a research input arrives.
 - **Problem:** MCP bridge exists but is not wired into any live path.
 - **Fix:** When external research inputs arrive, wire `McpBridge` to consume them. Keep server surface `hire`-focused; client is separate.
 - **Verification:** `tests/test_mcp_bridge.py` — mocked client asserts quote→decision recording
@@ -369,9 +528,23 @@ These are currently broken, crashed, or actively blocking the system.
 - **Source:** `docs/vibe-trading-stealables.md:V18`
 
 ### 6.5 — Source of truth for risk constants (S9)
-- **Problem:** `max_slippage_pct` and other risk constants duplicated across `RiskGate`, `multi_leg.py`, `settings.py`.
-- **Fix:** Single source for each risk constant; multi-leg dispatch reads the same value the risk gate validates against.
-- **Verification:** Audit confirms no divergence; test detects mismatch
+- **Status:** DONE 2026-10-07 — `src/risk_defaults.py` (stdlib-only):
+  `RISK_DEFAULTS` (14 knobs, values == long-standing behavior) read by
+  `RiskGate.__init__` defaults AND `Settings` field defaults (the old
+  literals are gone from both), plus strict unit converters
+  (`slippage_pct_to_fraction` / inverse, bool/string/NaN/negative refuse).
+  `agent.py` dispatch collar converts the LIVE gate value through the
+  helper (no inline `/100`); `main.py::_make_risk_gate` now also passes
+  slippage + velocity from settings (previously gate-default-only, silent
+  — defaults identical, behavior unchanged); `.env.example` documents the
+  two newly-wired knobs. Step()'s tighter 0.003 default kept as deliberate
+  policy (dispatch binds first), pinned by test to never exceed the gate
+  collar — unifying it upward would loosen dispatch 3x and needs an
+  operator decision, not a refactor.
+- **Verification:** `tests/test_risk_single_source.py` (12 tests: table
+  pins behavior, gate attrs match, settings fields match statically,
+  roundtrip, 6 coercion rejections, live-collar equality, step-tightness
+  direction) — 28 passed with preflight + manifest suites
 - **Source:** `docs/ika-stealables.md:188-204` (S9)
 
 ---
@@ -379,21 +552,62 @@ These are currently broken, crashed, or actively blocking the system.
 ## Phase 7 — Community & Bounty (P3): RPC Fast + Panta
 
 ### 7.1 — RPC Fast Infrastructure Sidetrack
-- **Gap 0:** Chain mismatch (Tarstrade is EVM X Layer + OKX CEX; RPC Fast is Solana mainnet RPC/gRPC only)
-- **Action:** Add Solana data path via `src/solana_rpc.py`: `fetch_solana_market_snapshot()` via `rpc_fast_url`, optional Yellowstone/Shredstream consumer behind `rpc_fast_grpc_url`.
-- **Settings:** Add `RPC_FAST_URL`, `RPC_FAST_GRPC_URL`, `RPC_FAST_API_KEY`, `RPC_FAST_PLAN`, `RPC_FAST_TIMEOUT_SECONDS` to `src/settings.py`.
-- **Endpoint:** `GET /api/v1/rpc-fast-status` returning configured?, plan, latency comparison, usage totals.
-- **Metrics:** `tars_rpc_fast_usage_total{source,result}`, latency, fallback count.
-- **Community:** 2-3 posts/month × 2 months, follow `@rpcfast`, join TG/Discord, submit dual hackathon entry.
-- **Verification:** `tests/test_rpc_fast.py` — unconfigured → OKX path unchanged; RPC Fast error → fallback; status endpoint honest-null
+- **Status:** DONE 2026-10-09 (code; community tasks + live key remain) —
+  `src/solana_rpc.py`: `fetch_solana_market_snapshot()` (SOL/USD from the
+  on-chain Pyth push account + slot, magic-checked parser, any failure →
+  typed `RpcFastError` so callers keep the OKX path), usage/latency metrics,
+  `GET /api/v1/rpc-fast-status` (honest-null unconfigured; grpc honestly
+  `not-implemented` — Yellowstone needs a heavier client than stdlib HTTP).
+  Settings + `.env.example` carry the 5 keys. Unconfigured by default:
+  zero behavior change without keys.
+- **Remaining (operator-side):** RPC Fast key/plan, community tasks
+  (posts, follows, TG/Discord), dual hackathon entry.
+- **Verification:** `tests/test_rpc_fast.py` (5 tests: unconfigured raises,
+  magic gate, success shape + counting, error fallback + counting, route
+  honest-null) — green
 - **Source:** `docs/RPC_FAST_GAP_REPORT.md`
 
 ### 7.2 — Panta API Sidetrack
 - **Problem:** TARS has no prediction-market ability. Panta integration needed for the bounty.
-- **Status:** `src/panta_client.py` exists (~210 lines) + `src/settings.py` (+4 lines) + `src/agent.py` (+~100 lines for `_panta_phase()`).
-- **Action:** Verify endpoint paths against Panta docs; live quote test with real `PANTA_API_KEY`; wallet signing handoff; risk-gate + on-chain logging for Panta fills; regression test.
-- **Verification:** `python -c "import src.panta_client, src.settings"`; `ast.parse` of `src/agent.py`; mock regression test
+- **Status:** DONE 2026-10-09 (client + agent wiring; live quote/demo still operator-side) —
+  all 8 client paths rewritten to the published API (verified page-by-page
+  against docs.panta.market: the first revision guessed 6 wrong paths and
+  omitted wallet/build/submit entirely). `catalog`→`GET /markets/`,
+  quote→`POST /primaryorderquote/` (+required wallet), added
+  `primary_buy_build`/`primary_buy_submit`, positions→query param,
+  claims→singular `/claim/...`, report→`POST /trades/` with real fields,
+  full create quote→build→register trio; `PantaError` carries API codes;
+  agent `_panta_phase` takes wallet in the asset encoding and the
+  unwritable create-via-asset path retired with an explicit error.
+- **Remaining (needs operator key + wallet):** live quote test with real
+  `PANTA_API_KEY`; wallet signing handoff; risk-gate + onchain logging for
+  Panta fills; demo + dual submission (Colosseum + Earn).
+- **Verification:** `tests/test_panta_client.py` (14 tests, MockTransport —
+  every path/field + error codes + agent wiring) — green
 - **Source:** `docs/panta-integration-report.md`
+
+### 7.3 — Solami bounty ($3k, due ~Oct 13)
+- **Status:** CODE 2026-10-09 (key + Blur docs still operator-side) —
+  `fetch_via_solami()` in `src/solana_rpc.py` (same Pyth+slot snapshot
+  core as RPC Fast, `source=solami` in metrics; settings
+  `solami_api_key/rpc_url/plan`, official Edge shape
+  `rpc.solami.fast/sol?api_key=` assembled from the key unless an
+  explicit URL is set). Blur firehose client BUILT 2026-10-09
+  (`src/solami_blur.py`: documented `/data/subscribe` shapes only —
+  token_create/pool_create/graduation + launches/graduating/graduated
+  snapshots, narrow subscribe + bounded backfill, connect budget,
+  unknown shapes skipped-and-counted, DataApi-less keys refused
+  client-side): 5 hermetic tests. NOT live-verified (needs the DataApi
+  role on the operator key + a real socket run).
+  no documented REST surface found (only gRPC/WS streams per the Rust
+  SDK notes) — building the Blur client needs the endpoint docs from
+  the operator, not guesses. Trial/roles also unverified (dashboard key
+  shows no roles; Blur needs the Data API role).
+- **Remaining (operator-side):** confirm trial active, add Data API role
+  to the key, live socket run to verify shapes, demo + submission.
+- **Verification:** `tests/test_rpc_fast.py` (+2 Solami tests: unconfigured
+  raises, fetch counts source=solami) + `tests/test_solami_blur.py`
+  (5 tests) — green
 
 ---
 
@@ -406,13 +620,70 @@ These are currently broken, crashed, or actively blocking the system.
 - **Source:** `docs/stocks-onchain-research.md`, `docs/PATH_FORWARD.md:5`
 
 ### 8.2 — Memecoin satellite engine (Book 2, gated on G0-G3)
-- **Status:** Proposition documented. G0 = carry quarter validated. G1 = paper bot net-positive for weeks. G2 = own capital survives rug + delisting. G3 = before depositor money.
+- **Status:** Paper-only v1 BUILT 2026-10-07 (`src/meme_satellite.py`):
+  scream filter (11 checks, SKIP default on missing data), structural entry
+  on graduation confirmation, deterministic pivot exits (rug/time/peak/
+  tape/tax), RUG sentinel (LP drain + collapse velocity), time box,
+  post-model size clamp, cost-realistic paper blotter, seeded determinism.
+  No keys, no network, no swap path — G1 paper loop can start once a
+  snapshot feed (Bitquery/poll) is wired by the operator. Gates unchanged:
+  G0/G2/G3 still closed; Book-1 wall intact.
+- **Feed adapter** (`src/meme_feed.py`, 2026-10-07): Helius RPC →
+  TokenSnapshot (mint authorities from the 82-byte SPL layout, top-holder
+  share from largest accounts, operator extras for age/liquidity/tax/
+  creator/graduation, unobserved stays None). Ordered credentials
+  (explicit → HELIUS_RPC_URL → HELIUS_API_KEY), typed FeedError, bad mints
+  skip without aborting the round. Discovery is operator watchlist —
+  no sniper polling, per the slower/pickier doctrine.
+- **Discovery + enrichment** (`src/meme_discovery.py`, 2026-10-07):
+  DexScreener free keyless API, verified live — `token-profiles/latest/v1`
+  yields fresh `...pump` mints (pump.fun runs no official launch API; its
+  board is unofficial/gated), `/latest/dex/tokens/{mint}` enriches
+  (deepest SOL pool wins: liquidity, volume, txns, age from oldest pair,
+  graduation = liquid pool on raydium/orca/meteora/jupiter). Failures
+  raise DiscoveryError (zero candidates, never guesses). Live-verified:
+  BONK/WIF snapshot→verdict on mainnet; `scripts/meme_snapshot.py`
+  `discover` runs the full paper round.
 - **Design:** Rule/novelty archetype. Scream filter (reject ~95% pre-buy), structural entry on survival, deterministic pivot exits, RUG sentinel, time-boxed holds, size clamp post-model.
+- **Verification:** `tests/test_meme_satellite.py` (33 tests) +
+  `tests/test_meme_feed.py` (10 tests, faked transport) +
+  `tests/test_meme_discovery.py` (9 tests, faked HTTP) +
+  `tests/test_meme_execute.py` (13 tests, faked HTTP + stub signer) +
+  `tests/test_meme_venue_costs.py` (7 tests) — full suite green.
+  Live-verified 2026-10-09: real `/order` quote against mainnet returns
+  typed `Insufficient funds` for the unfunded Book-2 wallet (path +
+  error envelope proven, $0 moved).
+  Tiny-live execution (`src/meme_execute.py`, 2026-10-09): Swap V2
+  order→sign→execute with paper-by-default (confirm string required),
+  cost-hurdle guard, session caps, stub-injectable signer.
+  **FIRST LIVE TRADE EXECUTED 2026-10-10**: 0.005 SOL → 0.550948 USDC,
+  signature `3Xqb5ja2…ZT`, Book-2 wallet `38hpURXX…z2MbzY`, Jupiter
+  Swap V2 managed landing. Full pipeline proven end-to-end on mainnet:
+  funded wallet → quote (fees from response, no flat proxy) → hurdle
+  ($0.0055 costs vs $0.0551 allowed) → solders signing → execute →
+  on-chain balance verification. The $5 test budget is live.
+- **Oct 13-15 hardening sprint (live VPS paper loop, ~3.7k screens):**
+  evidence-ordered scream filter (holder floor, graduation-first,
+  creator-history, concentration, taxes, liquidity; LP/authorities/age
+  demoted to notes per grounded research), RugCheck feed (creator +
+  rugged verdict), adaptive sizing (0.1% liq / 1% vol / $5 dust),
+  deployer-history bootstrap (`src/meme_history.py`), bundle graph v1
+  (`src/meme_bundle.py`, 1-hop, fail-closed incomplete), satellite HALT
+  kill-switch, survivor observer, `--diagnose` instrumentation. G1 still
+  open: zero entries (creator-history supply is the single blocker).
 - **Source:** `docs/alpha-mode-memecoins.md`
 
 ### 8.3 — Hummingbot venue-aware execution
 - **Trigger:** After Book 1 validated quarter → alts same venue.
 - **Steal:** `slippage = f(size, liquidity)` per venue + MEV/Jito handling + `inventory skew` → replace flat `max_slippage_pct` with venue-aware model.
+- **First slice PORTED 2026-10-07** (Stockulus → satellite):
+  `src/meme_venue_costs.py` carries the DBC fee schedules
+  (calm linear 120→100bps / stress exponential 900→100bps, with regime
+  mults 1.0/1.2/2.0) selected by the ported HMM state, with AMM impact
+  as size/liquidity; `PaperBlotter.record_exit` accepts venue slippage
+  (flat proxy default unchanged). Mainnet schedules replace the devnet
+  numbers when the satellite leaves paper.
+- **Verification:** `tests/test_meme_venue_costs.py` (7 tests)
 - **Source:** `docs/STEALABLES.md:100-103`
 
 ### 8.4 — Chronos/TimesFM hazard upgrade
@@ -487,7 +758,8 @@ These are currently broken, crashed, or actively blocking the system.
 | Metrics (`src/metrics.py`) | ✅ Working (needs S3 expansion) |
 | Learning store (`src/learning_store.py`) | ✅ Working |
 | MCP bridge (`src/mcp_bridge.py`) | ✅ Working (unwired) |
-| Panta client (`src/panta_client.py`) | ✅ Working (needs verification) |
+| Panta client (`src/panta_client.py`) | ✅ Rewritten to documented API (14 tests) |
+| RPC Fast path (`src/solana_rpc.py`) | ✅ Built, honest-null unconfigured (5 tests) |
 | Signer interface (`src/signer.py`) | ✅ Working (D10 ready) |
 | Reconciliation (`src/reconciliation.py`) | ✅ Working |
 | Alerting (`src/alerting.py`) | ✅ Working |

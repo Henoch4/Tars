@@ -118,7 +118,7 @@ Type=simple
 User=tars
 WorkingDirectory=/opt/tars
 EnvironmentFile=/etc/tars/agent.env
-ExecStart=/opt/tars/venv/bin/python -m src.main
+ExecStart=/opt/tars/venv/bin/python -m uvicorn src.main:app --host 127.0.0.1 --port 8000
 Restart=always
 RestartSec=10
 StandardOutput=journal
@@ -128,6 +128,10 @@ LimitNOFILE=65536
 [Install]
 WantedBy=multi-user.target
 ```
+> 2026-10-08 correction: the unit previously ran `python -m src.main`,
+> which only imports the FastAPI app and exits 0 — verified on the live
+> box (3s silent run, nginx 502 behind it). uvicorn is now also pinned in
+> `requirements.txt` (it was missing from the venv entirely).
 
 ### `/etc/systemd/system/tars-scheduler.service`
 ```ini
@@ -150,24 +154,12 @@ WantedBy=multi-user.target
 ```
 
 ### `/etc/systemd/system/tars-ws-hub.service`
-```ini
-[Unit]
-Description=TARS WebSocket Hub
-After=network.target redis.service
-Wants=redis.service
 
-[Service]
-Type=simple
-User=tars
-WorkingDirectory=/opt/tars
-EnvironmentFile=/etc/tars/agent.env
-ExecStart=/opt/tars/venv/bin/python -m src.ws_hub
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
+> 2026-10-08 correction: DELETED — `src/ws_hub.py` does not exist, so this
+> unit could never run (`No module named src.ws_hub`). `/ws/cycles` is
+> served in-app by uvicorn (`src/main.py` `_CycleWebSocketHub`); the
+> scheduler self-loops, so no timer unit is needed either. If an old
+> deploy left the unit behind: `systemctl stop/disable tars-ws-hub`.
 
 ---
 
@@ -179,7 +171,7 @@ WantedBy=multi-user.target
 - [ ] Clone repo to `/opt/tars`, create venv, install deps
 - [ ] Configure `/etc/tars/agent.env` (chmod 600)
 - [ ] Create `/data/{risk_state,audit_log,learning}` dirs, chown tars:tars
-- [ ] Install systemd service files, `systemctl daemon-reload`
+- [ ] Install systemd service files, `systemctl daemon-reload` (ensure `uvicorn` is in the venv — pinned in `requirements.txt` since the Oct-1 deploy lacked it)
 - [ ] Configure Nginx reverse proxy with TLS (Let's Encrypt)
 - [ ] Test: `systemctl start tars-agent tars-scheduler tars-ws-hub`
 - [ ] Verify: `/health`, `/api/v1/metrics`, `/ws/cycles` work
