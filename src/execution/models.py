@@ -10,6 +10,15 @@ from __future__ import annotations
 
 import logging
 import uuid
+
+# S9 single source lives in src/risk_defaults.py (stdlib-only, so both the
+# execution layer and the settings layer can share it without import
+# cycles); re-exported here for the execution-layer import surface.
+from ..risk_defaults import (
+    RISK_DEFAULTS,
+    slippage_fraction_to_pct,
+    slippage_pct_to_fraction,
+)
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Literal

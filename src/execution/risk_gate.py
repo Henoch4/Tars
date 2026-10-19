@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import os
 import tempfile
 import threading
@@ -23,7 +24,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from .models import OrderRequest
+from .models import OrderRequest, RISK_DEFAULTS
 
 # Meteora DBC curve types — string constants, not an Enum, so they stay
 # JSON-serializable and comparable with plain strings from config/profiles.yaml.
@@ -195,6 +196,39 @@ class RiskScore:
     reasons: list
 
 
+# Versioned scoring profile (CA6): the category weights behind score_order
+# live here, exactly once, in whole points that MUST total 100. Inline
+# literals drift silently (a future edit can reweight risk without anyone
+# noticing); the __init__ hard-fail below makes drift a construction error.
+SCORING_PROFILE_VERSION = 1
+SCORING_WEIGHTS = {
+    "daily_loss": 30,
+    "trailing_drawdown": 25,
+    "cooldown": 15,
+    "leverage": 15,
+    "confidence": 15,
+}
+
+
+def validate_scoring_weights(weights: dict) -> None:
+    """Fail-closed invariant: weights are non-negative numbers (never bool)
+    totaling exactly 100 points. Raises ValueError on any drift."""
+    for name, w in weights.items():
+        if isinstance(w, bool) or not isinstance(w, (int, float)):
+            raise ValueError(
+                f"scoring weight {name!r} has type {type(w).__name__}, "
+                f"expected int/float"
+            )
+        if w < 0:
+            raise ValueError(f"scoring weight {name!r} is negative ({w})")
+    total = sum(weights.values())
+    if total != 100:
+        raise ValueError(
+            f"scoring weights total {total}, must total exactly 100 "
+            f"(profile v{SCORING_PROFILE_VERSION})"
+        )
+
+
 
 class RiskGate:
     """
@@ -209,13 +243,17 @@ class RiskGate:
 
     def __init__(
         self,
-        max_position_usd: float = 5000,
-        max_daily_loss_usd: float = 500,
-        max_daily_trades: int = 10,
-        max_daily_volume_usd: float = 50000,
-        max_leverage: float = 5.0,
-        max_slippage_pct: float = 1.0,
-        min_confidence_bps: int = 7000,
+        # S9: every default below reads RISK_DEFAULTS (models.py) — the one
+        # table shared with Settings and the dispatch conversion. Same
+        # values as the old literals; changing a number here is now
+        # impossible without changing it for everyone.
+        max_position_usd: float = RISK_DEFAULTS["max_position_usd"],
+        max_daily_loss_usd: float = RISK_DEFAULTS["max_daily_loss_usd"],
+        max_daily_trades: int = int(RISK_DEFAULTS["max_daily_trades"]),
+        max_daily_volume_usd: float = RISK_DEFAULTS["max_daily_volume_usd"],
+        max_leverage: float = RISK_DEFAULTS["max_leverage"],
+        max_slippage_pct: float = RISK_DEFAULTS["max_slippage_pct"],
+        min_confidence_bps: int = int(RISK_DEFAULTS["min_confidence_bps"]),
         allowed_assets: list[str] | None = None,
         allowed_companions: list[str] | None = None,
         # --- Max price age: how old a market price can be before it stops
@@ -224,7 +262,20 @@ class RiskGate:
         # ahead, but the gate refuses to trade against a price feed it cannot
         # trust. A missing OR stale price rejects the order — there is no
         # "skip the freshness check" path, only a configurable threshold.
-        max_price_age_seconds: float = 60.0,
+        max_price_age_seconds: float = RISK_DEFAULTS["max_price_age_seconds"],
+        # --- Reference velocity clamp (fairswap high-watermark steal) ---
+        # Slot-aware anti-burst constraint on the reference price itself: the
+        # slippage collar verifies fills against the reference, so a reference
+        # that jumps violently between observations (bad print, burst,
+        # manipulation) would launder a bad fill into a pass. The trusted
+        # reference (watermark) may only advance at this velocity; an
+        # observation beyond the bound is rejected AND only advances the
+        # watermark at bound velocity (clamped catch-up: sustained real moves
+        # converge, single bursts stay clamped). 0.1 %/s = 6 %/min — normal
+        # per-second moves are ~0.001-0.01 %; only bursts trip it. Hour-apart
+        # observations (normal cycle cadence) get a huge bound and always
+        # pass. Unwind legs are admitted past it (flattening must never wait).
+        max_reference_velocity_pct_per_s: float = RISK_DEFAULTS["max_reference_velocity_pct_per_s"],
         # --- I8 journal-driven dynamic risk (cooldown + trailing drawdown) ---
         # Cooldown: block new entries for `loss_cooldown_minutes` after any
         # reported loss (revenge-trading guard). 0 disables. Unwind orders
@@ -233,10 +284,10 @@ class RiskGate:
         # reaches `drawdown_loss_mult` x the daily limit, trip the kill
         # switch (multi-day bleeding the intraday limit misses). Either 0
         # disables. Both derive from reported losses, never from prices.
-        loss_cooldown_minutes: float = 30.0,
-        drawdown_window_days: int = 3,
-        drawdown_loss_mult: float = 2.0,
-        # --- Regime throttle (high-volatility governor) ---
+        loss_cooldown_minutes: float = RISK_DEFAULTS["loss_cooldown_minutes"],
+        drawdown_window_days: int = int(RISK_DEFAULTS["drawdown_window_days"]),
+        drawdown_loss_mult: float = RISK_DEFAULTS["drawdown_loss_mult"],
+# --- Regime throttle (high-volatility governor) ---
         # Borrowed from trading engines that auto-scale exposure ahead of a
         # crash instead of waiting for the kill switch. When recent price
         # moves exceed `regime_band_pct`, the effective position cap for new
@@ -246,35 +297,35 @@ class RiskGate:
         # only full-halt control. Deterministic and testable — no ML, no state
         # beyond the ring buffer below.
         regime_throttle: bool = False,
-         regime_band_pct: float = 5.0,
-         regime_size_scale: float = 0.8,
-         regime_buffer: int = 20,
-         # --- Crash-safe daily counters (see safety invariant at the top of ---
-         # When enabled (default off here; main.py opts in), in-memory daily
-         # trade/loss/volume accumulators are persisted to a JSON file and
-         # reloaded at construction so a restart does not zero the counters
-         # mid-day. Off by default so unit tests stay isolated from one another
-         # (they share agent_id="default" on the same UTC day); pass
-         # counter_store=an explicit DurableDailyCounters (or enabled=False) in
-         # tests, or counters_durable=True at the application entry point.
-         counter_store: DurableDailyCounters | None = None,
+        regime_band_pct: float = RISK_DEFAULTS["regime_band_pct"],
+        regime_size_scale: float = RISK_DEFAULTS["regime_size_scale"],
+        regime_buffer: int = 20,
+        # --- Crash-safe daily counters (see safety invariant at the top of ---
+        # When enabled (default off here; main.py opts in), in-memory daily
+        # trade/loss/volume accumulators are persisted to a JSON file and
+        # reloaded at construction so a restart does not zero the counters
+        # mid-day. Off by default so unit tests stay isolated from one another
+        # (they share agent_id="default" on the same UTC day); pass
+        # counter_store=an explicit DurableDailyCounters (or enabled=False) in
+        # tests, or counters_durable=True at the application entry point.
+        counter_store: DurableDailyCounters | None = None,
         counter_store_path: str | None = None,
         counters_durable: bool = False,
-         # --- Onchain source-of-truth hook (optional) ---
-         # When an OnchainLogger is supplied, the gate reconciles its in-memory
-         # daily accumulators against TradeAuditTrail.getAgentDailyStats at boot
-         # and cross-checks on every counter write: the contract is authoritative
-         # for the *halt* and the *loss floor*; the file is authoritative for the
-         # in-process running totals between restarts.
-          onchain_logger=None,
-          # --- Meteora DBC integration (construction-time, non-overridable) ---
-          # Curve/fee/graduation defaults for DBC legs. The agent may select
-          # a curve per package via Step fields; the gate holds the default.
-dbc_curve_type: str = "flat",
-           dbc_fee_bps: int = 100,
-           dbc_graduation: float = 0.5,
-           require_onchain_sync: bool = False,
-     ):
+        # --- Onchain source-of-truth hook (optional) ---
+        # When an OnchainLogger is supplied, the gate reconciles its in-memory
+        # daily accumulators against TradeAuditTrail.getAgentDailyStats at boot
+        # and cross-checks on every counter write: the contract is authoritative
+        # for the *halt* and the *loss floor*; the file is authoritative for the
+        # in-process running totals between restarts.
+        onchain_logger=None,
+        # --- Meteora DBC integration (construction-time, non-overridable) ---
+        # Curve/fee/graduation defaults for DBC legs. The agent may select
+        # a curve per package via Step fields; the gate holds the default.
+        dbc_curve_type: str = "flat",
+        dbc_fee_bps: int = 100,
+        dbc_graduation: float = 0.5,
+        require_onchain_sync: bool = False,
+    ):
         self.max_position_usd = max_position_usd
         self.max_daily_loss_usd = max_daily_loss_usd
         self.max_daily_trades = max_daily_trades
@@ -302,6 +353,12 @@ dbc_curve_type: str = "flat",
             graduation_threshold=dbc_graduation,
         )
         self.max_price_age_seconds = max_price_age_seconds
+        if max_reference_velocity_pct_per_s <= 0:
+            raise ValueError(
+                f"invalid max_reference_velocity_pct_per_s="
+                f"{max_reference_velocity_pct_per_s!r} (must be positive)"
+            )
+        self.max_reference_velocity_pct_per_s = max_reference_velocity_pct_per_s
         # W2/S9: the assets default comes from the single asset registry,
         # never a second copy of the list. Companions default to EMPTY on
         # purpose (D5(a)): a spot leg is admitted only when explicitly
@@ -329,6 +386,11 @@ dbc_curve_type: str = "flat",
         # prevents implicit authorization of dated futures or other quote-ccy
         # variants.
         self._allowed_set: set[str] = set(self.allowed_assets) | set(self.allowed_companions)
+
+        # Scoring profile invariant (CA6): the score_order weights must total
+        # exactly 100. Validated at construction so weight drift is a loud
+        # error, never a silent reweighting of risk.
+        validate_scoring_weights(SCORING_WEIGHTS)
 
         # Daily tracking — persisted so a restart does not reset per-day limits
         # mid-UTC-day (safety invariant / README "in-memory only" gap). The
@@ -365,6 +427,15 @@ dbc_curve_type: str = "flat",
         # volatility regime change without needing any external feed. Fed by
         # RiskGate.observe_price() from the trading loop.
         self._price_buffer: dict[str, list[float]] = {}  # inst_id -> [prices]
+
+        # --- Reference watermark: last trusted reference per instrument ---
+        # (price, timestamp). Advanced only at bound velocity (see 9b) so a
+        # burst observation cannot yank the reference the collar verifies
+        # against. In-memory like the freshness check it extends; a restart
+        # re-initializes from the next observation (fail-open exactly once,
+        # on data the gate has no velocity information about — same basis as
+        # trusting the first-ever price).
+        self._ref_watermark: dict[str, tuple[float, float]] = {}
 
         # Bootstrap in-memory caches from the persistent store so a restart
         # recovers yesterday's (and the current day's, if we crashed mid-day)
@@ -564,6 +635,98 @@ dbc_curve_type: str = "flat",
         _metrics_inc("tars_risk_rejections_total", {"code": code})
         return RiskCheckResult(approved=False, code=code, reason=reason)
 
+    def _validate_mandate_types(self, order: OrderRequest) -> RiskCheckResult | None:
+        """Commit-boundary type validation (V6: no mandate widening at commit).
+
+        Python coerces across types silently — float("5000") parses a
+        stringified number, float(True) is 1.0, and "8000" < 7000 raises
+        TypeError mid-trade instead of rejecting. A mandate that arrives in
+        the wrong type is treated as a widened mandate until proven
+        otherwise: reject it here with INVALID_MANDATE_TYPE instead of
+        laundering it through float().
+
+        Returns None when types are acceptable (value checks run later).
+        Unparseable size strings and None size deliberately fall through to
+        the existing INVALID_ORDER_SIZE handler (pinned by
+        TestInvalidOrderSize); None confidence falls through to
+        CONFIDENCE_MISSING; None leverage keeps the undeclared path.
+        """
+        # size: declared str; accept str/int/float (never bool); must be
+        # finite. bool is checked first because bool subclasses int.
+        # None and unparseable strings fall through to the existing
+        # INVALID_ORDER_SIZE handler (pinned by TestInvalidOrderSize).
+        s = order.size
+        if s is None:
+            pass
+        elif isinstance(s, bool) or not isinstance(s, (str, int, float)):
+            return self._reject(
+                "INVALID_MANDATE_TYPE",
+                f"Order size {s!r} has type {type(s).__name__}, "
+                f"expected str/int/float — refusing to coerce a mandate.",
+            )
+        else:
+            try:
+                size_f = float(s)
+            except (ValueError, TypeError):
+                size_f = None  # existing INVALID_ORDER_SIZE handler owns this
+            if size_f is not None and not math.isfinite(size_f):
+                return self._reject(
+                    "INVALID_MANDATE_TYPE",
+                    f"Order size {s!r} is not finite — NaN/inf is never "
+                    f"a valid mandate.",
+                )
+
+        # px: optional; same shape as size. Unparseable strings fall through
+        # to the existing fat-finger handler (which treats them as no
+        # reference, never as a pass).
+        if order.px is not None:
+            if isinstance(order.px, bool) or not isinstance(order.px, (str, int, float)):
+                return self._reject(
+                    "INVALID_MANDATE_TYPE",
+                    f"Order px {order.px!r} has type "
+                    f"{type(order.px).__name__}, expected str/int/float.",
+                )
+            try:
+                px_f = float(order.px)
+            except (ValueError, TypeError):
+                px_f = float("nan")
+            if not math.isfinite(px_f):
+                return self._reject(
+                    "INVALID_MANDATE_TYPE",
+                    f"Order px {order.px!r} is not a finite number.",
+                )
+
+        # confidence_bps: declared int | None — exact int only (bool
+        # excluded). A stringified "8000" or True-as-1 must not clear the
+        # confidence floor by coercion. None keeps CONFIDENCE_MISSING.
+        c = order.confidence_bps
+        if c is not None and (isinstance(c, bool) or not isinstance(c, int)):
+            return self._reject(
+                "INVALID_MANDATE_TYPE",
+                f"Order confidence_bps {c!r} has type {type(c).__name__}, "
+                f"expected int — refusing to coerce a mandate.",
+            )
+
+        # leverage / intended_price: declared float | None — int/float only
+        # (bool excluded), finite. None keeps the existing undeclared /
+        # missing-reference paths.
+        for field_name in ("leverage", "intended_price"):
+            v = getattr(order, field_name)
+            if v is None:
+                continue
+            if isinstance(v, bool) or not isinstance(v, (int, float)):
+                return self._reject(
+                    "INVALID_MANDATE_TYPE",
+                    f"Order {field_name} {v!r} has type {type(v).__name__}, "
+                    f"expected int/float.",
+                )
+            if not math.isfinite(float(v)):
+                return self._reject(
+                    "INVALID_MANDATE_TYPE",
+                    f"Order {field_name} {v!r} is not finite.",
+                )
+        return None
+
     def observe_price(self, inst_id: str, price: float) -> None:
         """Feed a market price into the regime-throttle ring buffer.
 
@@ -690,11 +853,12 @@ dbc_curve_type: str = "flat",
                     agent_id: str = "default") -> RiskScore:
         """Graded advisory read over gate state + declared order fields.
 
-        Weights (renormalized over available inputs): daily loss 30%,
-        trailing drawdown 25%, cooldown 15%, declared leverage 15%,
-        confidence headroom 15% (SAP's collateral slot, honestly
-        substituted — we hold no collateral data, so distance above the
-        confidence floor stands in). Hard halt forces BLOCK.
+        Weights come from the versioned SCORING_PROFILE (whole points over
+        100, invariant-checked at construction): daily loss 30, trailing
+        drawdown 25, cooldown 15, declared leverage 15, confidence headroom
+        15 (SAP's collateral slot, honestly substituted — we hold no
+        collateral data, so distance above the confidence floor stands in).
+        Hard halt forces BLOCK.
         """
         reasons: list[str] = []
         if self._kill_switch_active:
@@ -741,12 +905,57 @@ dbc_curve_type: str = "flat",
             conf_f = 0.5
             reasons.append("confidence undeclared")
 
-        score = (0.30 * loss_f + 0.25 * trail_f + 0.15 * cool_f
-                 + 0.15 * lev_f + 0.15 * conf_f)
+        score = (
+            SCORING_WEIGHTS["daily_loss"] * loss_f
+            + SCORING_WEIGHTS["trailing_drawdown"] * trail_f
+            + SCORING_WEIGHTS["cooldown"] * cool_f
+            + SCORING_WEIGHTS["leverage"] * lev_f
+            + SCORING_WEIGHTS["confidence"] * conf_f
+        ) / 100.0
         recommendation = ("BLOCK" if score >= 0.7
                           else "WAIT" if score >= 0.4 else "PROCEED")
         return RiskScore(score=round(score, 4), recommendation=recommendation,
                          reasons=reasons)
+
+    def _check_reference_velocity(
+        self,
+        inst_id: str,
+        price: float,
+        ts: float,
+        unwind: bool,
+    ) -> RiskCheckResult | None:
+        """Fairswap high-watermark clamp on the reference price (check 9b).
+
+        Returns None when the observation is trusted (and records it);
+        returns a rejection when the reference moved faster than
+        max_reference_velocity_pct_per_s since the last trusted observation.
+        The watermark ALWAYS advances — at most at bound velocity — even on
+        rejection, so sustained real moves converge while single bursts stay
+        clamped. Unwind legs skip the rejection (flattening exposure must
+        never wait) but still record the observation.
+        """
+        prev = self._ref_watermark.get(inst_id)
+        if prev is None or prev[0] <= 0:
+            self._ref_watermark[inst_id] = (price, ts)
+            return None
+        wpx, wts = prev
+        dt = ts - wts
+        bound = self.max_reference_velocity_pct_per_s / 100.0 * max(dt, 0.0)
+        move = (price - wpx) / wpx
+        clamped = max(-bound, min(bound, move))
+        self._ref_watermark[inst_id] = (wpx * (1.0 + clamped), ts)
+        if unwind:
+            return None
+        if abs(move) > bound + 1e-12:
+            return self._reject(
+                "REFERENCE_VELOCITY_EXCEEDED",
+                f"Reference for {inst_id} moved {move * 100.0:+.2f}% in "
+                f"{dt:.1f}s (bound "
+                f"{self.max_reference_velocity_pct_per_s:.3f}%/s) — a burst "
+                f"reference cannot anchor the slippage collar. Order refused; "
+                f"no fill will be verified against this print.",
+            )
+        return None
 
     def check_order(
         self,
@@ -794,6 +1003,13 @@ dbc_curve_type: str = "flat",
                 "switch is active (%s) — closing leg required to flatten exposure.",
                 order.client_oid, order.inst_id, self._kill_switch_reason,
             )
+
+        # 0a. Mandate type validation (V6) — runs right after the kill
+        # switch (which stays first, no exceptions) and before every value
+        # check, so no check below ever coerces a wrong-typed mandate.
+        type_rejection = self._validate_mandate_types(order)
+        if type_rejection is not None:
+            return type_rejection
 
         # 0b. Post-loss cooldown (I8) — new entries wait out the timer so a
         # losing cycle cannot revenge-trade the next one. Unwind exempt:
@@ -1106,16 +1322,31 @@ dbc_curve_type: str = "flat",
                 ),
             )
         now = time.time()
-        price_age = (
-            now - current_price_timestamp
-            if current_price_timestamp is not None
-            else float("inf")
-        )
+        if current_price_timestamp is None:
+            # Unverifiable age == stale (fail-safe-defaults). Same verdict as
+            # the inf-age path below; enumerated separately so the velocity
+            # clamp receives a real timestamp (guaranteed non-None here).
+            return self._reject("STALE_PRICE",
+                f"Reference price {current_price} has no observation "
+                f"timestamp — age cannot be verified, treating as stale.")
+        price_age = now - current_price_timestamp
         if price_age > self.max_price_age_seconds:
             return self._reject("STALE_PRICE",
                 f"Reference price {current_price} is "
                 f"{price_age:.1f}s old (cap {self.max_price_age_seconds:.0f}s). "
                 f"Price feed is not fresh — refusing to trade on stale data.")
+
+        # 9b. Reference velocity clamp (fairswap high-watermark steal) — the
+        # collar below verifies fills against this reference, so a reference
+        # that burst since the last trusted observation cannot anchor it.
+        # Runs here (not in the executor) because this is the single
+        # enforcement point for reference trust, and _verify_fill only ever
+        # sees the reference this check vetted.
+        velocity_rejection = self._check_reference_velocity(
+            order.inst_id, current_price, current_price_timestamp, unwind,
+        )
+        if velocity_rejection is not None:
+            return velocity_rejection
 
         # 10. Daily trade count — persisted so a restart mid-day does not
         #     reset this agent's tally against max_daily_trades. The store write
@@ -1219,6 +1450,7 @@ dbc_curve_type: str = "flat",
             "max_slippage_pct": self.max_slippage_pct,
             "min_confidence_bps": self.min_confidence_bps,
             "max_price_age_seconds": self.max_price_age_seconds,
+            "max_reference_velocity_pct_per_s": self.max_reference_velocity_pct_per_s,
             "allowed_assets": sorted(self.allowed_assets),
             "allowed_companions": sorted(self.allowed_companions),
             "regime_throttle": self.regime_throttle,

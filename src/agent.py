@@ -52,6 +52,7 @@ from .execution import (
     RiskGate,
     RiskCheckResult,
     ExecutionError,
+    slippage_pct_to_fraction,
 )
 from .audit_logger import OnchainLogger, DecisionPayload
 _router_chain_for_asset: Optional[Callable[[str | None], str]] = None
@@ -817,9 +818,13 @@ class AutonomousTradingAgent:
             return out
 
         leg_notional = notional / 2.0
-        # Step collar is a fraction (0.003 = 0.3%); the gate's collar is a
-        # percentage. Convert so both legs carry the same cap in like units.
-        step_collar = min(self.risk_gate.max_slippage_pct / 100.0, 0.05)
+        # S9: dispatch collar comes from the SAME gate value the collar
+        # checks validate against, converted gate-percent -> fraction
+        # through the single helper (never inline). Capped at the step
+        # plausibility bound (validate_steps rejects > 0.05).
+        step_collar = min(
+            slippage_pct_to_fraction(self.risk_gate.max_slippage_pct), 0.05
+        )
         steps = [
             Step(venue="okx", action="short_perp", asset=asset,
                  amount_ratio=0.5, max_slippage_pct=step_collar),
@@ -1567,52 +1572,41 @@ class AutonomousTradingAgent:
         if base.startswith("PANTA_CREATE_"):
             # Format: PANTA_CREATE_<outcome_a>_<outcome_b>_<usdc_base_units>
             # e.g. PANTA_CREATE_BTC_UP_BTC_DOWN_50000000
-            try:
-                rest = base[len("PANTA_CREATE_"):]
-                parts = rest.split("_")
-                create_amount = int(parts[-1])
-                outcome_b = parts[-2]
-                outcome_a = "_".join(parts[:-2])
-                quote = await client.create_market_quote(
-                    outcome_a=outcome_a,
-                    outcome_b=outcome_b,
-                    usdc_amount=create_amount,
-                )
-                out["decisions"].append({
-                    "decision_id": f"panta_dec_{uuid.uuid4().hex[:12]}",
-                    "asset": asset,
-                    "signal": "NEUTRAL",
-                    "status": "panta_create_quoted",
-                    "panta_response": quote,
-                })
-                out["signals"].append({
-                    "asset": asset,
-                    "ensemble": {
-                        "direction": "NEUTRAL",
-                        "confidence_bps": 0,
-                        "rationale": "Panta market-creation quote received.",
-                    },
-                    "individual": [],
-                })
-                return out
-            except Exception as e:
-                out["errors"].append(f"Panta market creation failed for {asset}: {e}")
-                logger.error(f"Panta market creation failed for {asset}: {e}")
-                return out
+            # NOTE (2026-10-09): retired — verified against the published
+            # API, create-quote needs wallet/question/resolutionRule/
+            # sourcesOfTruth/category/times/imageUrl, none of which fits in
+            # an asset name. Use PantaClient.create_market_quote directly.
+            out["errors"].append(
+                f"Panta market creation via asset name is retired for {asset}: "
+                f"call create_market_quote with the full spec instead")
+            logger.error(f"Panta market creation via asset retired for {asset}")
+            return out
 
         if base.startswith("PANTA_BUY_"):
-            # Format: PANTA_BUY_<market_id>_<YES|NO>_<usdc_amount>
-            # e.g. PANTA_BUY_mkt123_YES_20.00
+            # Format: PANTA_BUY_<marketId>_<YES|NO>_<usdc>_<wallet>
+            # e.g. PANTA_BUY_EventPda111_YES_20.00_Buyer111
+            # (wallet required: the API binds quotes to the buyer).
+            # NOTE: no PANTA_CREATE_ path — create-quote needs 10 fields
+            # (question/resolutionRule/sources/times/imageUrl) that cannot
+            # ride in an asset name without inventing data. Creation runs
+            # through PantaClient.create_market_quote directly.
             try:
                 rest = base[len("PANTA_BUY_"):]
                 parts = rest.split("_")
-                buy_amount: str = parts[-1]
-                outcome = parts[-2]
-                market_id = "_".join(parts[:-2])
+                if len(parts) < 4:
+                    raise ValueError(
+                        "want PANTA_BUY_<marketId>_<YES|NO>_<usdc>_<wallet>")
+                wallet = parts[-1]
+                buy_amount: str = parts[-2]
+                outcome = parts[-3]
+                market_id = "_".join(parts[:-3])
+                if outcome.upper() not in ("YES", "NO"):
+                    raise ValueError(f"side must be YES or NO, got {outcome!r}")
                 quote = await client.primary_buy_quote(
                     market_id=market_id,
-                    outcome=outcome,
-                    usdc_amount=buy_amount,
+                    wallet=wallet,
+                    side=outcome,
+                    amount_usdc=buy_amount,
                 )
                 out["decisions"].append({
                     "decision_id": f"panta_dec_{uuid.uuid4().hex[:12]}",

@@ -13,6 +13,9 @@ from .models import (
     OrderRequest,
     OrderResult,
     ExecutionError,
+    RISK_DEFAULTS,
+    slippage_fraction_to_pct,
+    slippage_pct_to_fraction,
 )
 from .risk_gate import (
     DBCCurveConfig,
@@ -20,6 +23,9 @@ from .risk_gate import (
     DurableDailyCounters,
     RiskCheckResult,
     RiskGate,
+    SCORING_PROFILE_VERSION,
+    SCORING_WEIGHTS,
+    validate_scoring_weights,
 )
 from .executor import OrderExecutor
 
@@ -36,5 +42,11 @@ __all__ = [
     "DurableDailyCounters",
     "RiskCheckResult",
     "RiskGate",
+    "RISK_DEFAULTS",
+    "SCORING_PROFILE_VERSION",
+    "SCORING_WEIGHTS",
+    "slippage_fraction_to_pct",
+    "slippage_pct_to_fraction",
+    "validate_scoring_weights",
     "OrderExecutor",
 ]

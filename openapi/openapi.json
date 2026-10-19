@@ -135,6 +135,29 @@
         }
       }
     },
+    "/api/v1/rpc-fast-status": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "RPC Fast sidetrack surface (7.1): configured?, plan, per-call",
+        "operationId": "api_rpc_fast_status",
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
     "/api/v1/pricing": {
       "get": {
         "tags": [

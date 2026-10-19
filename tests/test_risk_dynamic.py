@@ -192,3 +192,52 @@ class TestRiskScore:
         order = _order(leverage=None, confidence_bps=None)
         score = gate.score_order(order, "a1")
         assert any("undeclared" in r for r in score.reasons)
+
+
+class TestScoringProfileInvariant:
+    """TODO 3.7 (CA6): one versioned weight table totaling exactly 100.
+    Inline literals drift silently; the constructor hard-fail makes drift
+    a loud error."""
+
+    def test_profile_totals_exactly_100(self):
+        from src.execution import SCORING_PROFILE_VERSION, SCORING_WEIGHTS
+        assert SCORING_PROFILE_VERSION == 1
+        assert sum(SCORING_WEIGHTS.values()) == 100
+        assert set(SCORING_WEIGHTS) == {
+            "daily_loss", "trailing_drawdown", "cooldown",
+            "leverage", "confidence",
+        }
+
+    @pytest.mark.parametrize("bad", [
+        {"daily_loss": 30, "trailing_drawdown": 25, "cooldown": 15,
+         "leverage": 15, "confidence": 14},  # totals 99
+        {"daily_loss": 30, "trailing_drawdown": 25, "cooldown": 15,
+         "leverage": 15, "confidence": 16},  # totals 101
+        {"daily_loss": True, "trailing_drawdown": 25, "cooldown": 15,
+         "leverage": 15, "confidence": 30},  # True-as-1 totals 100, still wrong type
+        {"daily_loss": -5, "trailing_drawdown": 30, "cooldown": 15,
+         "leverage": 30, "confidence": 30},  # negative weight
+        {"daily_loss": "30", "trailing_drawdown": 25, "cooldown": 15,
+         "leverage": 15, "confidence": 15},  # stringified weight
+    ])
+    def test_drifted_profile_rejected(self, bad):
+        from src.execution import validate_scoring_weights
+        with pytest.raises(ValueError):
+            validate_scoring_weights(bad)
+
+    def test_gate_construction_fails_on_drifted_profile(self, monkeypatch):
+        import src.execution.risk_gate as rg
+        monkeypatch.setattr(rg, "SCORING_WEIGHTS", dict(rg.SCORING_WEIGHTS, confidence=14))
+        with pytest.raises(ValueError):
+            rg.RiskGate()
+
+    def test_scores_unchanged_under_profile(self):
+        # The refactor must not move a single basis point: profile math ==
+        # the old inline literals (pinned by test_wait_on_combined_pressure).
+        gate = RiskGate(max_daily_loss_usd=1000, drawdown_window_days=3,
+                        drawdown_loss_mult=2.0)
+        gate.report_loss("a1", 600.0)
+        gate.report_loss("a1", 600.0, day_key="a1:2026-01-01")
+        gate.report_loss("a1", 600.0, day_key="a1:2026-01-02")
+        score = gate.score_order(_order(leverage=None), "a1")
+        assert score.score == pytest.approx(0.58, abs=0.02)

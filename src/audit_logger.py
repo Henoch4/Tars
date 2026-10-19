@@ -146,6 +146,27 @@ _ABI = [
         "type": "function",
     },
     {
+        "inputs": [
+            {"name": "asset", "type": "string"},
+            {"name": "capUsd", "type": "uint256"},
+        ],
+        "name": "setAssetCap",
+        "outputs": [],
+        "type": "function",
+    },
+    {
+        "inputs": [
+            {"name": "agent", "type": "address"},
+            {"name": "assetHash", "type": "bytes32"},
+        ],
+        "name": "getAssetDailyStats",
+        "outputs": [
+            {"name": "volume", "type": "uint256"},
+            {"name": "cap", "type": "uint256"},
+        ],
+        "type": "function",
+    },
+    {
         "anonymous": False,
         "inputs": [
             {"indexed": True, "name": "decisionId", "type": "bytes32"},
@@ -171,6 +192,16 @@ _ABI = [
             {"name": "success", "type": "bool"},
         ],
         "name": "TradeExecuted",
+        "type": "event",
+    },
+    {
+        "anonymous": False,
+        "inputs": [
+            {"indexed": True, "name": "agent", "type": "address"},
+            {"indexed": True, "name": "assetHash", "type": "bytes32"},
+            {"name": "capUsd", "type": "uint256"},
+        ],
+        "name": "AssetCapUpdated",
         "type": "event",
     },
 ]
@@ -436,6 +467,27 @@ class OnchainLogger:
                 min_confidence_bps,
             )
         return self._send_transaction(build, "Risk params set")
+
+    def set_asset_cap(self, asset: str, cap_usd: float) -> str:
+        """Set a per-asset on-chain daily volume circuit breaker (1e8 fixed
+        point, same scaling as sizeUsd). Defense-in-depth under the off-chain
+        daily counters: even if the off-chain gate is bypassed, the asset
+        cannot exceed its cap on-chain. Tightening-only is enforced by the
+        contract (a set cap can only move down, never back to 0)."""
+        def build():
+            return self.contract.functions.setAssetCap(
+                asset,
+                _to_fixed_point_1e8(cap_usd),
+            )
+        return self._send_transaction(build, f"Asset cap set for {asset}")
+
+    def get_asset_daily_stats(self, asset: str) -> dict:
+        """Read the on-chain per-asset accumulator and cap (both 1e8)."""
+        asset_hash = Web.keccak(text=asset)
+        volume, cap = self.contract.functions.getAssetDailyStats(
+            self.agent_address, asset_hash,
+        ).call()
+        return {"asset": asset, "volume_usd": volume / 1e8, "cap_usd": cap / 1e8}
 
     def _compute_payload_hash(self, payload: DecisionPayload) -> bytes:
         """Compute the keccak256 hash of the decision payload (what the agent signs).

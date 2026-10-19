@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 import itertools
 import json
+import math
 import os
 import random
 import tempfile
@@ -96,6 +97,52 @@ def validate_steps(steps: list[Step]) -> list[str]:
         if not 0.0 < s.dbc_graduation <= 1.0:
             errors.append(f"step on {s.venue} has implausible dbc_graduation={s.dbc_graduation}")
     return errors
+
+
+def accrue_funding(
+    notional_usd: float,
+    perp_side: str,
+    period_rates: list[float],
+) -> float:
+    """Direction-aware funding accrual over settled funding periods.
+
+    notional_usd: open perp notional in USD (must be finite, non-negative).
+    perp_side: "short" (collects when funding positive) or "long" (pays).
+    period_rates: per-period settled funding rates as fractions
+      (e.g. 0.0001 = 1 bp per 8h window), in chronological order, from
+      actual funding-rate history — never a fixed per-leg constant.
+
+    Returns signed USD: positive = collected, negative = paid.
+    Empty rates accrue 0.0 (zero periods held, not a default). Anything
+    else malformed — bool/NaN/inf/stringified numbers, negative notional,
+    unknown side — raises instead of accruing fiction.
+    """
+    if isinstance(notional_usd, bool) or not isinstance(notional_usd, (int, float)):
+        raise ValueError(
+            f"funding notional must be a number, got {notional_usd!r}"
+        )
+    if not math.isfinite(float(notional_usd)):
+        raise ValueError(f"funding notional must be finite, got {notional_usd!r}")
+    if notional_usd < 0:
+        raise ValueError(f"funding notional must be non-negative, got {notional_usd}")
+    if perp_side == "short":
+        direction = 1.0
+    elif perp_side == "long":
+        direction = -1.0
+    else:
+        raise ValueError(
+            f"perp_side must be 'short' or 'long', got {perp_side!r}"
+        )
+    total = 0.0
+    for i, r in enumerate(period_rates):
+        if isinstance(r, bool) or not isinstance(r, (int, float)):
+            raise ValueError(
+                f"funding rate at period {i} must be a number, got {r!r}"
+            )
+        if not math.isfinite(float(r)):
+            raise ValueError(f"funding rate at period {i} must be finite")
+        total += direction * float(r) * float(notional_usd)
+    return float(total)
 
 
 @dataclass
@@ -222,6 +269,11 @@ class Package:
     dispatched_legs: int = 0
     # For reconciliation: timestamp of last leg fill
     last_fill_ts: float | None = None
+    # Funding economics: cumulative signed USD collected (+) / paid (-)
+    # across settled funding periods while the perp leg was open. Starts
+    # at zero and only moves via record_package_funding (accrual from
+    # actual rate history, never a fixed constant).
+    funding_accrued_usd: float = 0.0
 
 
 class MultiLegExecutionManager:
@@ -298,6 +350,7 @@ class MultiLegExecutionManager:
             "updated_at": pkg.updated_at,
             "dispatched_legs": pkg.dispatched_legs,
             "last_fill_ts": pkg.last_fill_ts,
+            "funding_accrued_usd": pkg.funding_accrued_usd,
         }
         with open(tmp, "w") as f:
             json.dump(data, f, separators=(",", ":"))
@@ -334,6 +387,7 @@ class MultiLegExecutionManager:
                 updated_at=data["updated_at"],
                 dispatched_legs=data["dispatched_legs"],
                 last_fill_ts=data.get("last_fill_ts"),
+                funding_accrued_usd=data.get("funding_accrued_usd", 0.0),
             )
             return pkg
         except (json.JSONDecodeError, KeyError, ValueError) as e:
@@ -346,6 +400,29 @@ class MultiLegExecutionManager:
             os.remove(path)
         except OSError:
             pass
+
+    # ─── Funding accrual ───
+
+    def record_package_funding(
+        self,
+        pkg: Package,
+        period_rates: list[float],
+    ) -> float:
+        """Accrue settled funding onto an open package from actual rate
+        history (direction-aware, per-period). Packages only ever hold the
+        short perp side open (long-spot / short-perp collection), so the
+        perp notional is the package notional times the short_perp legs'
+        amount share — deliberately no side parameter, so no caller can
+        accrue a long exposure the package vocabulary cannot express
+        (backtests needing the long side call accrue_funding directly).
+        The delta is added to pkg.funding_accrued_usd and persisted, so
+        crash recovery keeps the economics, not just the fills. Returns
+        the signed USD delta for this call (positive = collected)."""
+        share = sum(s.amount_ratio for s in pkg.steps if s.action == "short_perp")
+        delta = accrue_funding(pkg.notional * share, "short", period_rates)
+        pkg.funding_accrued_usd += delta
+        self._save_package(pkg)
+        return delta
 
     def _recover_packages(self) -> None:
         """Load persisted packages and reconcile with live exchange state.

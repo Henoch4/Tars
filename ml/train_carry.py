@@ -240,6 +240,59 @@ def run_walkforward_validation(X, y, n_folds=6, train_frac=0.7):
 # ============================================================
 # Model persistence
 # ============================================================
+MODEL_META_VERSION = 1
+
+
+def build_model_metadata(
+    feature_cols: list,
+    n_rows: int,
+    symbols: list,
+    dataset_path: Path | None = None,
+    quantiles: tuple = (0.2, 0.5),
+    code_version: str | None = None,
+    trained_at: float | None = None,
+) -> dict:
+    """Pure builder for the training sidecar (meta.json): everything
+    inference needs to refuse stale models — schema, timestamp, data
+    identity. Dataset hash is best-effort (None when the file is absent);
+    code_version likewise ("unknown" when git is unavailable)."""
+    import hashlib
+    import time as _time
+
+    dataset_sha256 = None
+    if dataset_path is not None and Path(dataset_path).exists():
+        h = hashlib.sha256()
+        with open(dataset_path, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        dataset_sha256 = h.hexdigest()
+    if code_version is None:
+        code_version = _git_sha()
+    return {
+        "meta_version": MODEL_META_VERSION,
+        "feature_cols": list(feature_cols),
+        "trained_at": trained_at if trained_at is not None else _time.time(),
+        "n_rows": int(n_rows),
+        "symbols": list(symbols),
+        "dataset_sha256": dataset_sha256,
+        "quantiles": list(quantiles),
+        "code_version": code_version,
+    }
+
+
+def _git_sha() -> str:
+    try:
+        import subprocess
+        out = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=10, cwd=REPO,
+        )
+        sha = out.stdout.strip()
+        return sha if sha else "unknown"
+    except Exception:
+        return "unknown"
+
+
 def save_models(models_dict: dict, path: Path):
     """Save LightGBM models to disk."""
     import joblib
@@ -292,11 +345,20 @@ def main():
     if args.save:
         models_dir = MODELS_DIR / "carry_quantile"
         save_models({"q20": m20, "q50": m50}, models_dir)
-        
+
         # Also save feature names
         import joblib
         joblib.dump(FEATURE_COLS, MODELS_DIR / "carry_quantile" / "features.pkl")
         print(f"Saved feature list to {MODELS_DIR}/carry_quantile/features.pkl")
+
+        # Training sidecar: schema + timestamp + data identity, so inference
+        # can refuse stale models (4.8) instead of trusting bare pickles.
+        meta = build_model_metadata(
+            FEATURE_COLS, len(df), sorted(df["sym"].unique().tolist()),
+            dataset_path=CARRY_CSV,
+        )
+        (models_dir / "meta.json").write_text(json.dumps(meta, indent=2))
+        print(f"Saved training metadata to {models_dir}/meta.json")
 
     # Quick inference test
     print("\nRunning inference test...")

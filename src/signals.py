@@ -1389,6 +1389,14 @@ def ml_funding_carry_signal(
         )
 
     # Build metadata with pin_state if available
+    # Novelty shield (4.6): a shielded row is "no trustworthy prediction" —
+    # it degrades exactly like a failed inference (S5), never a silent NO.
+    shielded = bool(result.get("shielded", False)) if result is not None else False
+    if shielded and ml_degradation is None and result is not None:
+        # `result is not None` is implied by shielded (bool of .get on a
+        # non-None mapping) — spelled out so both mypy and readers see it.
+        ml_degradation = f"ml_shielded:novelty_flag={result.get('novelty_flag', 0)}"
+        record_ml_degradation(f"{asset}:{ml_degradation}")
     metadata = {
         "spot_price": spot_price,
         "perp_price": perp_price,
@@ -1403,8 +1411,9 @@ def ml_funding_carry_signal(
         "ml_confidence": result.get("q20_bps", 0) / 10000.0 if result else 0.0,
         "ml_raw_answer": f"q20={result.get('q20_bps', 0):.1f} bps" if result else "q20=N/A",
         "rule_passes": rule_passes,
-        "degraded": result is None,
+        "degraded": result is None or shielded,
         "degradation_reason": ml_degradation,
+        "novelty_flag": result.get("novelty_flag", 1) if result else 1,
         "next_funding_ts": 0,
         "legs": {"spot": "LONG", "perp": "SHORT"},
         "pin_state": pin_state,

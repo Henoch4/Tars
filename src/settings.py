@@ -33,6 +33,8 @@ from typing import Annotated, Any, Literal
 from pydantic import BeforeValidator, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .risk_defaults import RISK_DEFAULTS
+
 logger = logging.getLogger(__name__)
 
 
@@ -94,7 +96,7 @@ PositiveInt = Annotated[int, Field(gt=0)]
 
 
 class Settings(BaseSettings):
-    """All 49 wiring knobs. Defaults == the repo's current behavior."""
+    """All 51 wiring knobs. Defaults == the repo's current behavior."""
 
     # env_ignore_empty: an empty value means "unset" → default (matches
     # .env.example's empty-override convention; previously an empty
@@ -108,25 +110,31 @@ class Settings(BaseSettings):
     agent_id: str = "autonomous-trader-001"
 
     # --- Risk parameters (non-overridable gate inputs) ---
-    max_position_usd: PositiveFloat = 5000
-    max_daily_loss_usd: PositiveFloat = 500
-    max_daily_trades: PositiveInt = 10
-    max_daily_volume_usd: PositiveFloat = 50000
-    max_leverage: PositiveFloat = 5.0
-    min_confidence_bps: PositiveInt = 7000
-    max_price_age_seconds: PositiveFloat = 60
-    loss_cooldown_minutes: PositiveFloat = 30
-    drawdown_window_days: PositiveInt = 3
-    drawdown_loss_mult: PositiveFloat = 2.0
-
+    # S9: defaults read RISK_DEFAULTS (src/risk_defaults.py), the table
+    # shared with RiskGate.__init__ — same numbers as the old literals.
+    max_position_usd: PositiveFloat = RISK_DEFAULTS["max_position_usd"]
+    max_daily_loss_usd: PositiveFloat = RISK_DEFAULTS["max_daily_loss_usd"]
+    max_daily_trades: PositiveInt = int(RISK_DEFAULTS["max_daily_trades"])
+    max_daily_volume_usd: PositiveFloat = RISK_DEFAULTS["max_daily_volume_usd"]
+    max_leverage: PositiveFloat = RISK_DEFAULTS["max_leverage"]
+    min_confidence_bps: PositiveInt = int(RISK_DEFAULTS["min_confidence_bps"])
+    max_price_age_seconds: PositiveFloat = RISK_DEFAULTS["max_price_age_seconds"]
+    # Gate-percent units (1.0 = 1%; FRACTION lives only in dispatch via the
+    # S9 converter). Previously these had no settings knob at all — the gate
+    # default ruled silently. Declared here so env wiring reaches them.
+    max_slippage_pct: PositiveFloat = RISK_DEFAULTS["max_slippage_pct"]
+    max_reference_velocity_pct_per_s: PositiveFloat = RISK_DEFAULTS["max_reference_velocity_pct_per_s"]
+    loss_cooldown_minutes: PositiveFloat = RISK_DEFAULTS["loss_cooldown_minutes"]
+    drawdown_window_days: PositiveInt = int(RISK_DEFAULTS["drawdown_window_days"])
+    drawdown_loss_mult: PositiveFloat = RISK_DEFAULTS["drawdown_loss_mult"]
     # --- Sizing (fractional Kelly) ---
     sizing_mode: str = "kelly"
     kelly_fraction: PositiveFloat = 0.5
 
     # --- Regime throttle + filter ---
     regime_throttle: LenientFlag = False
-    regime_band_pct: PositiveFloat = 5.0
-    regime_size_scale: PositiveFloat = 0.8
+    regime_band_pct: PositiveFloat = RISK_DEFAULTS["regime_band_pct"]
+    regime_size_scale: PositiveFloat = RISK_DEFAULTS["regime_size_scale"]
     regime_filter_window: PositiveInt = 50
 
     # --- Funding arb + multi-leg ---
@@ -181,6 +189,18 @@ class Settings(BaseSettings):
     # --- Panta API (prediction market infrastructure) ---
     panta_api_key: str = ""
     panta_timeout_seconds: PositiveInt = 30
+
+    # --- RPC Fast (Solana data path, 7.1 sidetrack) ---
+    rpc_fast_url: str = ""
+    rpc_fast_grpc_url: str = ""
+    rpc_fast_api_key: str = ""
+    rpc_fast_plan: str = ""
+    rpc_fast_timeout_seconds: PositiveInt = 20
+
+    # --- Solami (satellite discovery/enrichment + RPC, bounty) ---
+    solami_api_key: str = ""
+    solami_rpc_url: str = ""
+    solami_plan: str = ""
 
     # --- Validation gate data (declared; consumed dynamically) ---
     validation_returns_path: str = ""

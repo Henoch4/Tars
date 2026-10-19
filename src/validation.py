@@ -123,25 +123,75 @@ def evaluate_parameter_grid(returns_by_param: dict[str, np.ndarray], oos_returns
     }
 
 
-def isotonic_calibration(q_pred: np.ndarray, y_actual: np.ndarray) -> dict:
-    """Isotonic calibration + decile plot — catches v2 52.5%→-90% flat curve.
-    Returns decile means and monotonic fit; flat curve = rank ok, calibration dead."""
+def isotonic_calibration(
+    q_pred: np.ndarray,
+    y_actual: np.ndarray,
+    tau: float = 0.2,
+    coverage_tol: float = 0.05,
+) -> dict:
+    """Isotonic calibration + cross-sectional decile plot — the gate that
+    would have caught v2's "52.5% accuracy, -90% net" failure live
+    (confidence that does not rank trades: flat decile curve).
+
+    Returns the monotone fit (y_iso), per-decile pred/actual means, and an
+    explicit verdict — monotone (actual means non-decreasing across
+    predicted deciles), ece (size-weighted mean |actual-pred| gap),
+    max_gap, quantile coverage P(y<q) vs tau with coverage_ok. A flat or
+    inverted curve reads monotone=False, never a silent pass.
+
+    Fail-closed: mismatched lengths, n<10 (deciles meaningless), or
+    non-finite inputs raise; a missing sklearn raises instead of returning
+    an {"error"} dict that callers could mistake for a verdict."""
+    q = np.asarray(q_pred, dtype=float)
+    y = np.asarray(y_actual, dtype=float)
+    if q.shape != y.shape:
+        raise ValueError(
+            f"isotonic_calibration needs matched pairs, got {q.shape} vs {y.shape}"
+        )
+    n = q.shape[0]
+    if n < 10:
+        raise ValueError(
+            f"isotonic_calibration needs >= 10 samples for deciles, got {n}"
+        )
+    if not (np.isfinite(q).all() and np.isfinite(y).all()):
+        raise ValueError("isotonic_calibration inputs must be finite (no NaN/inf)")
     try:
         from sklearn.isotonic import IsotonicRegression  # type: ignore
-
-        iso = IsotonicRegression(out_of_bounds="clip")
-        y_iso = iso.fit_transform(q_pred, y_actual)
-        # decile plot
-        idx = np.argsort(q_pred)
-        n = len(q_pred)
-        deciles = []
-        for k in range(10):
-            lo, hi = k * n // 10, (k + 1) * n // 10
-            sl = idx[lo:hi]
-            deciles.append({"pred_mean": float(np.mean(q_pred[sl])), "actual_mean": float(np.mean(y_actual[sl]))})
-        return {"y_iso": y_iso, "deciles": deciles}
     except Exception as e:
-        return {"error": str(e)}
+        raise RuntimeError(
+            f"isotonic_calibration needs scikit-learn: {e}"
+        ) from e
+
+    iso = IsotonicRegression(out_of_bounds="clip")
+    y_iso = np.asarray(iso.fit_transform(q, y))
+    # Deciles over predicted order (np.array_split deals the remainder
+    # instead of silently dropping tail rows).
+    idx = np.argsort(q, kind="stable")
+    deciles = []
+    for sl in np.array_split(idx, 10):
+        deciles.append({
+            "n": int(sl.shape[0]),
+            "pred_mean": float(np.mean(q[sl])),
+            "actual_mean": float(np.mean(y[sl])),
+        })
+    actual_means = np.array([d["actual_mean"] for d in deciles])
+    pred_means = np.array([d["pred_mean"] for d in deciles])
+    monotone = bool((np.diff(actual_means) >= -1e-9).all())
+    gaps = np.abs(actual_means - pred_means)
+    sizes = np.array([d["n"] for d in deciles], dtype=float)
+    ece = float((gaps * sizes / sizes.sum()).sum())
+    coverage = float(np.mean(y < q))
+    return {
+        "y_iso": y_iso,
+        "deciles": deciles,
+        "monotone": monotone,
+        "ece": ece,
+        "max_gap": float(gaps.max()),
+        "coverage": coverage,
+        "coverage_ok": bool(abs(coverage - tau) <= coverage_tol),
+        "tau": tau,
+        "n": n,
+    }
 
 
 def survival_curve(hazards: list[float] | np.ndarray) -> np.ndarray:

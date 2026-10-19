@@ -210,7 +210,9 @@ EOF
 setup_systemd_services() {
     log "Setting up systemd services..."
     
-    # Agent service
+    # Agent service (uvicorn: `python -m src.main` only imports the app and
+    # exits 0 — verified on the live box 2026-10-08, where the unit
+    # "ran" for 3s and died silent while nginx 502'd behind it)
     cat > /etc/systemd/system/tars-agent.service <<'EOF'
 [Unit]
 Description=TARS Trading Agent
@@ -222,7 +224,7 @@ Type=simple
 User=tars
 WorkingDirectory=/opt/tars
 EnvironmentFile=/etc/tars/agent.env
-ExecStart=/opt/tars/venv/bin/python -m src.main
+ExecStart=/opt/tars/venv/bin/python -m uvicorn src.main:app --host 127.0.0.1 --port 8000
 Restart=always
 RestartSec=10
 StandardOutput=journal
@@ -233,7 +235,7 @@ LimitNOFILE=65536
 WantedBy=multi-user.target
 EOF
 
-    # Scheduler service
+    # Scheduler service (self-runs via its __main__ loop; no timer needed)
     cat > /etc/systemd/system/tars-scheduler.service <<'EOF'
 [Unit]
 Description=TARS Trading Scheduler
@@ -255,21 +257,27 @@ StandardError=journal
 WantedBy=multi-user.target
 EOF
 
-    # WebSocket hub service
-    cat > /etc/systemd/system/tars-ws-hub.service <<'EOF'
+    # No tars-ws-hub.service: src/ws_hub.py does not exist — /ws/cycles is
+    # served in-app by uvicorn (src/main.py _CycleWebSocketHub). A standalone
+    # unit here would crash-loop on `No module named src.ws_hub`; if one
+    # exists from an older deploy, stop + disable it.
+
+    # Satellite runner (memecoin paper loop — self-scheduling via --loop,
+    # no timer needed; paper-only, moves no funds)
+    cat > /etc/systemd/system/tars-satellite.service <<'EOF'
 [Unit]
-Description=TARS WebSocket Hub
-After=network.target redis.service
-Wants=redis.service
+Description=TARS Memecoin Satellite (paper loop)
+After=network.target
+Wants=network.target
 
 [Service]
 Type=simple
 User=tars
 WorkingDirectory=/opt/tars
 EnvironmentFile=/etc/tars/agent.env
-ExecStart=/opt/tars/venv/bin/python -m src.ws_hub
+ExecStart=/opt/tars/venv/bin/python -u scripts/meme_runner.py --loop --interval 300
 Restart=always
-RestartSec=10
+RestartSec=30
 StandardOutput=journal
 StandardError=journal
 
@@ -279,7 +287,7 @@ EOF
 
     systemctl daemon-reload
     systemctl enable redis-server
-    systemctl enable tars-agent tars-scheduler tars-ws-hub
+    systemctl enable tars-agent tars-scheduler tars-satellite
     
     log "Systemd services configured"
 }
@@ -434,7 +442,7 @@ setup_logrotate() {
     create 640 tars tars
     sharedscripts
     postrotate
-        systemctl reload tars-agent tars-scheduler tars-ws-hub > /dev/null 2>&1 || true
+        systemctl reload tars-agent tars-scheduler > /dev/null 2>&1 || true
     endscript
 }
 EOF
@@ -473,12 +481,10 @@ FAILURES=0
 
 check_service "tars-agent" || FAILURES=$((FAILURES + 1))
 check_service "tars-scheduler" || FAILURES=$((FAILURES + 1))
-check_service "tars-ws-hub" || FAILURES=$((FAILURES + 1))
 check_service "redis-server" || FAILURES=$((FAILURES + 1))
 check_service "nginx" || FAILURES=$((FAILURES + 1))
 
 check_port "Agent API" 8000 || FAILURES=$((FAILURES + 1))
-check_port "WebSocket Hub" 8001 || FAILURES=$((FAILURES + 1))
 check_port "Redis" 6379 || FAILURES=$((FAILURES + 1))
 check_port "Nginx HTTP" 80 || FAILURES=$((FAILURES + 1))
 if [[ -f /etc/letsencrypt/live/your-domain.com/fullchain.pem ]]; then
@@ -519,7 +525,7 @@ verify_deployment() {
     log "Verifying deployment..."
     
     # Check services
-    for svc in tars-agent tars-scheduler tars-ws-hub redis-server nginx; do
+    for svc in tars-agent tars-scheduler redis-server nginx; do
         if systemctl is-active --quiet "$svc"; then
             echo -e "${GREEN}✓ $svc running${NC}"
         else
@@ -575,7 +581,7 @@ main() {
     echo ""
     echo "Next steps:"
     echo "1. Edit /etc/tars/agent.env with your credentials"
-    echo "2. Run: systemctl start tars-agent tars-scheduler tars-ws-hub"
+    echo "2. Run: systemctl start tars-agent tars-scheduler"
     echo "3. Check logs: journalctl -u tars-agent -f"
     echo "4. Run health check: /opt/tars/health_check.sh"
     echo ""

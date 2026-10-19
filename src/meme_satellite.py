@@ -29,6 +29,7 @@ from __future__ import annotations
 import math
 import random
 from dataclasses import dataclass, field
+from typing import Protocol
 
 # Scream-filter thresholds (policy, visible in one place; tightening them
 # only ever rejects more — the safe direction for this book).
@@ -282,6 +283,17 @@ class PaperPosition:
     size_usd: float
 
 
+class ExitPositionProtocol(Protocol):
+    """Structural contract for the exit checkers: any position-like object
+    carrying entry/peak state (PaperPosition in the pivot simulator,
+    OpenPosition in the live loop)."""
+
+    entry_price: float
+    entry_ts: float
+    peak_price: float
+    entry_window_volume_usd: float
+
+
 @dataclass
 class MarketUpdate:
     """One observation of an open would-be position."""
@@ -295,7 +307,7 @@ class MarketUpdate:
     minutes_since_last: float = 60.0
 
 
-def check_rug(pos: PaperPosition, upd: MarketUpdate) -> tuple[bool, str]:
+def check_rug(pos: ExitPositionProtocol, upd: MarketUpdate) -> tuple[bool, str]:
     """RUG sentinel: LP-tamper / liquidity-drain auto-dump. Fires on
     reserve drain or violent price collapse — both measured, never vibes."""
     if (upd.lp_reserve_usd is not None and upd.lp_reserve_at_entry_usd
@@ -311,7 +323,7 @@ def check_rug(pos: PaperPosition, upd: MarketUpdate) -> tuple[bool, str]:
     return False, ""
 
 
-def evaluate_exit(pos: PaperPosition, upd: MarketUpdate) -> tuple[str, str]:
+def evaluate_exit(pos: ExitPositionProtocol, upd: MarketUpdate) -> tuple[str, str]:
     """Deterministic pivot exits (rule-based, not learned, not trailing
     stops): rug -> time box -> peak drawdown (ratcheted in profit) ->
     dead tape -> tax trap. Returns (decision, reason); decision is 'hold'

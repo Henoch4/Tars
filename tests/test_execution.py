@@ -688,6 +688,86 @@ class TestPriceFreshnessGate:
         assert g1.compute_risk_hash() != g2.compute_risk_hash()
 
 
+class TestReferenceVelocityClamp:
+    """TODO 2.10 (fairswap steal): the slippage collar verifies fills against
+    the reference, so a reference that bursts between observations would
+    launder a bad fill into a pass. The trusted reference (watermark) may
+    only advance at bound velocity; observations beyond it are rejected."""
+
+    def _order(self):
+        return OrderRequest(
+            inst_id="BTC-USDT-SWAP", side="buy", order_type="market",
+            size="100", confidence_bps=8000,
+        )
+
+    def _check(self, gate, price, ts, **kwargs):
+        return gate.check_order(
+            self._order(), "agent1",
+            current_price=price, current_price_timestamp=ts, **kwargs,
+        )
+
+    def test_first_observation_trusted(self):
+        # No watermark yet: nothing to measure velocity against.
+        gate = RiskGate()
+        assert self._check(gate, 50000, time.time()).approved is True
+
+    def test_slow_drift_approved(self):
+        gate = RiskGate()  # 0.1 %/s
+        t0 = time.time()
+        assert self._check(gate, 50000, t0).approved is True
+        # +0.05% over 60s against a 6% bound: normal drift, trusted.
+        assert self._check(gate, 50025, t0 + 60).approved is True
+
+    def test_burst_rejected(self):
+        gate = RiskGate()
+        t0 = time.time()
+        assert self._check(gate, 50000, t0).approved is True
+        # +5% in 1s against a 0.1% bound: burst reference, refused.
+        res = self._check(gate, 52500, t0 + 1)
+        assert res.approved is False
+        assert res.code == "REFERENCE_VELOCITY_EXCEEDED"
+
+    def test_same_price_same_ts_approved(self):
+        # Agent pre-flight + executor re-check share one snapshot: zero move
+        # at zero dt must never trip the clamp.
+        gate = RiskGate()
+        t0 = time.time()
+        assert self._check(gate, 50000, t0).approved is True
+        assert self._check(gate, 50000, t0).approved is True
+
+    def test_clamped_catch_up_converges(self):
+        # After a burst rejection the watermark advances at bound velocity;
+        # the same price an hour later (bound now huge) is trusted again —
+        # sustained real moves converge, single bursts stay clamped.
+        gate = RiskGate()
+        t0 = time.time()
+        assert self._check(gate, 50000, t0).approved is True
+        assert self._check(gate, 52500, t0 + 1).code == "REFERENCE_VELOCITY_EXCEEDED"
+        assert self._check(gate, 52500, t0 + 3600).approved is True
+
+    def test_unwind_admitted_past_velocity_clamp(self):
+        # Flattening exposure must never wait out a data-suspicion timer —
+        # same principle as the cooldown/daily-limit unwind admissions.
+        gate = RiskGate()
+        t0 = time.time()
+        assert self._check(gate, 50000, t0).approved is True
+        res = gate.check_order(
+            self._order(), "agent1",
+            current_price=52500, current_price_timestamp=t0 + 1, unwind=True,
+        )
+        assert res.code != "REFERENCE_VELOCITY_EXCEEDED"
+        assert res.approved is True
+
+    def test_velocity_param_in_risk_hash(self):
+        g1 = RiskGate(max_reference_velocity_pct_per_s=0.1)
+        g2 = RiskGate(max_reference_velocity_pct_per_s=1.0)
+        assert g1.compute_risk_hash() != g2.compute_risk_hash()
+
+    def test_invalid_velocity_rejected_at_construction(self):
+        with pytest.raises(ValueError):
+            RiskGate(max_reference_velocity_pct_per_s=0)
+
+
 class _FakeOkxCli:
     """Fake OKX CLI returning a canned order response (no network).
 

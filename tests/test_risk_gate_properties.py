@@ -160,3 +160,89 @@ def test_low_confidence_still_rejected():
     res = _check(gate, _order("buy", "market", confidence_bps=5000), 100.0, _fresh())
     assert res.approved is False
     assert res.code == "CONFIDENCE_TOO_LOW"
+
+
+def _mandate_order(**kwargs):
+    """OrderRequest with valid defaults; kwargs override single fields."""
+    base = dict(
+        inst_id="BTC-USDT-SWAP",
+        side="buy",
+        order_type="market",
+        size="100",
+        confidence_bps=8000,
+    )
+    base.update(kwargs)
+    return OrderRequest(**base)
+
+
+class TestMandateTypeValidation:
+    """TODO 2.7 (V6): mandates widened at commit time by stringified numbers
+    and True-as-1 coercion. The gate must reject wrong-typed numerics with a
+    distinct code instead of laundering them through float() — or crashing
+    with TypeError mid-trade ("8000" < 7000)."""
+
+    def test_stringified_confidence_rejected_not_compared(self):
+        gate = RiskGate()
+        res = _check(gate, _mandate_order(confidence_bps="8000"), 100.0, _fresh())
+        assert res.approved is False
+        assert res.code == "INVALID_MANDATE_TYPE"
+
+    def test_stringified_leverage_rejected(self):
+        gate = RiskGate()
+        res = _check(gate, _mandate_order(leverage="2"), 100.0, _fresh())
+        assert res.approved is False
+        assert res.code == "INVALID_MANDATE_TYPE"
+
+    def test_stringified_intended_price_rejected(self):
+        gate = RiskGate()
+        res = _check(
+            gate, _mandate_order(intended_price="100"), 100.0, _fresh())
+        assert res.approved is False
+        assert res.code == "INVALID_MANDATE_TYPE"
+
+    @pytest.mark.parametrize("field,value", [
+        ("size", True),
+        ("confidence_bps", True),
+        ("leverage", True),
+        ("intended_price", True),
+    ])
+    def test_true_as_one_rejected(self, field, value):
+        # float(True) == 1.0: a bool mandate must never coerce to a number.
+        gate = RiskGate()
+        res = _check(gate, _mandate_order(**{field: value}), 100.0, _fresh())
+        assert res.approved is False
+        assert res.code == "INVALID_MANDATE_TYPE"
+
+    @pytest.mark.parametrize("field,value", [
+        ("size", "nan"),
+        ("size", "inf"),
+        ("size", float("nan")),
+        ("leverage", float("inf")),
+        ("intended_price", float("nan")),
+    ])
+    def test_non_finite_mandate_rejected(self, field, value):
+        # NaN passes every magnitude comparison (nan > cap is False) — it
+        # must be rejected explicitly, never drift through the size gate.
+        gate = RiskGate()
+        res = _check(gate, _mandate_order(**{field: value}), 100.0, _fresh())
+        assert res.approved is False
+        assert res.code == "INVALID_MANDATE_TYPE"
+
+    def test_well_typed_mandate_still_approved(self):
+        gate = RiskGate()
+        res = _check(
+            gate,
+            _mandate_order(size="100", leverage=2.0, intended_price=100.0),
+            100.0, _fresh(),
+        )
+        assert res.approved is True
+        assert res.code == "APPROVED"
+
+    def test_kill_switch_still_first_on_bad_types(self):
+        # Ordering invariant: kill switch stays first, no exceptions — even a
+        # wrong-typed mandate reports the halt, not the type error.
+        gate = RiskGate()
+        gate.activate_kill_switch("manual")
+        res = _check(gate, _mandate_order(size=True), 100.0, _fresh())
+        assert res.approved is False
+        assert res.code == "KILL_SWITCH_ACTIVE"

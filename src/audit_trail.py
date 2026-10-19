@@ -219,6 +219,53 @@ class AuditLog:
         self._cycle_records = []
         return seal
 
+    def rolloff(self, keep_cycles: int = 7) -> dict:
+        """Roll the working buffer (I5): drop detail records from cycle
+        windows older than the most recent `keep_cycles` distinct windows;
+        seal records are NEVER dropped (the Merkle roots keep the dropped
+        windows auditable). Atomic write-then-rename; returns counts.
+        Unsealed-tail records are kept while their window is recent.
+        """
+        if keep_cycles < 1:
+            raise ValueError(f"keep_cycles must be >= 1, got {keep_cycles!r}")
+        try:
+            lines = self.path.read_text(encoding="utf-8").splitlines()
+        except FileNotFoundError:
+            return {"kept": 0, "dropped": 0, "seals": 0}
+        records = []
+        for ln in lines:
+            ln = ln.strip()
+            if not ln:
+                continue
+            try:
+                records.append(json.loads(ln))
+            except ValueError:
+                continue
+        # Keep the most recent keep_cycles distinct cycle windows (sealed or
+        # not — a crashed cycle's unsealed tail is still recent evidence).
+        # Seal records are additionally never dropped (see below).
+        ordered_ids: list = []
+        for r in records:
+            cid = r.get("cycle_id")
+            if cid is not None and (not ordered_ids or ordered_ids[-1] != cid):
+                ordered_ids.append(cid)
+        keep = set(ordered_ids[-keep_cycles:])
+        kept, dropped, seals = [], 0, 0
+        for r in records:
+            if r.get("event_type") == "seal":
+                kept.append(r)
+                seals += 1
+            elif r.get("cycle_id") in keep or r.get("cycle_id") is None:
+                kept.append(r)
+            else:
+                dropped += 1
+        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
+        with tmp.open("w", encoding="utf-8") as f:
+            for r in kept:
+                f.write(json.dumps(r, default=str) + "\n")
+        os.replace(tmp, self.path)
+        return {"kept": len(kept), "dropped": dropped, "seals": seals}
+
 
 def _jsonable(obj):
     """Best-effort conversion of dataclasses/enums nested in payloads.

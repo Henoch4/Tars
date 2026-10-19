@@ -22,6 +22,12 @@ Modeling choices (kept conservative where ambiguous):
   - The funding rate known at bar t is the most recently SETTLED rate
     (forward-fill) -- strictly no lookahead, even though OKX announces the
     current period's rate in advance.
+  - NEXT-BAR EXECUTION (anti-lookahead): a signal computed on candle N reads
+    N's close, which is known only after N closes -- so it cannot fill at
+    N's close in live trading. The position takes effect at candle N+1
+    (approximated on close-only data as earning from close[N+1] onward).
+    Every return below is computed on the decision series shifted one bar
+    forward; a signal on the final bar earns nothing at all.
 
 Outputs: stdout summary, reports/validation-gate-<date>.md, and
 data/validation_returns_<name>.csv (in_sample,out_of_sample) consumable by
@@ -210,12 +216,32 @@ def positions_param_variant(kind: str, sym: str, close: np.ndarray, vol: np.ndar
 
 # ---------------------------------------------------------------- returns
 
+def executed_positions(pos: np.ndarray) -> np.ndarray:
+    """Next-bar execution discipline: shift decisions one bar forward.
+
+    pos[t] is the position the signal on candle t WANTS (computed from
+    data through close[t]). It cannot fill at close[t] -- that print is
+    only known after bar t closes -- so it takes effect at candle t+1.
+    On close-only data that means earning price moves from close[t+1]
+    onward. Index 0 stays flat: no decision exists before the first bar.
+    """
+    exec_pos = np.zeros_like(pos)
+    exec_pos[1:] = pos[:-1]
+    return exec_pos
+
+
 def net_bar_returns(pos: np.ndarray, close: np.ndarray) -> np.ndarray:
     """Per-interval strategy returns net of per-side costs on position changes.
 
-    ret[j] is the P&L over interval (bar j, bar j+1]: held position pos[j]
-    earns the price move; the cost of the position change made AT bar j+1
-    (|pos[j+1]-pos[j]| sides) is charged in the same interval."""
+    ret[j] is the P&L over interval (bar j, bar j+1]: the EXECUTED position
+    at bar j (the signal's decision from bar j-1, acting now) earns the
+    price move, and the executed position change out of bar j
+    (|E[j+1]-E[j]| sides) is charged in the same interval -- the same cost
+    accounting as before, shifted one bar along with the positions, so
+    total costs per trade are unchanged. Next-bar rule: a signal on candle
+    N never earns the (N, N+1] move -- compare against the pre-fix version,
+    which credited pos[j] with that interval (same-bar fill, lookahead)."""
+    pos = executed_positions(pos)
     price_ret = np.diff(close) / close[:-1]
     ret = pos[:-1] * price_ret
     ret -= np.abs(np.diff(pos)) * SIDE_COST
@@ -225,9 +251,13 @@ def net_bar_returns(pos: np.ndarray, close: np.ndarray) -> np.ndarray:
 
 
 def episode_stats(pos: np.ndarray, close: np.ndarray) -> dict:
-    """Per-trade stats: a trade = maximal run of constant nonzero position.
-    Each trade pays exactly one entry + one exit side of costs; its P&L is
-    the compounded move over its intervals."""
+    """Per-trade stats: a trade = maximal run of constant nonzero EXECUTED
+    position. Each trade pays exactly one entry + one exit side of costs;
+    its P&L is the compounded move over its intervals. Next-bar rule: a
+    one-bar signal pulse earns no price move (it acts after its bar's move
+    is over) but still pays the round trip; a signal on the final bar never
+    becomes a trade at all."""
+    pos = executed_positions(pos)
     price_ret = np.diff(close) / close[:-1]
     pnl = pos[:-1] * price_ret
     n = len(pos)

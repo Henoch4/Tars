@@ -10,6 +10,7 @@ from src.multi_leg import (
     Step,
     LegResult,
     PackageState,
+    accrue_funding,
     validate_steps,
 )
 
@@ -498,7 +499,7 @@ def test_recovery_cleans_terminal_package_files():
 
 
 def test_paper_fill_simulator_can_actually_breach_slippage():
-    """Regression for the cap bug: the source clamped slippage with min(..., 
+    """Regression for the cap bug: the source clamped slippage with min(...,
     max*1.5), so no fill could ever exceed max_slippage_pct and the breach path
     was dead code. The ported simulator must occasionally produce a true breach."""
     step = Step(venue="a", action="short_perp", asset="BTC", amount_ratio=1.0, max_slippage_pct=0.003)
@@ -511,3 +512,70 @@ def test_paper_fill_simulator_can_actually_breach_slippage():
             breaches += 1
     assert breaches > 0  # occasionally a fill at up to several sigma slippage
     assert breaches < 5_000  # but not so often it is always breached
+
+
+class TestFundingAccrual:
+    """TODO 4.10: funding-arb packages accrue funding from actual rate
+    history, direction-aware and per-period — never a fixed constant."""
+
+    def test_short_collects_positive_funding(self):
+        # $10k short x three 1bp/8h periods = $3 collected.
+        assert accrue_funding(10_000, "short", [0.0001, 0.0001, 0.0001]) == pytest.approx(3.0)
+
+    def test_long_pays_positive_funding(self):
+        assert accrue_funding(10_000, "long", [0.0001, 0.0001, 0.0001]) == pytest.approx(-3.0)
+
+    def test_negative_funding_flips_sides(self):
+        # Negative funding: shorts pay, longs collect.
+        assert accrue_funding(10_000, "short", [-0.0002]) == pytest.approx(-2.0)
+        assert accrue_funding(10_000, "long", [-0.0002]) == pytest.approx(2.0)
+
+    def test_empty_history_accrues_zero(self):
+        assert accrue_funding(10_000, "short", []) == 0.0
+
+    @pytest.mark.parametrize("notional,side,rates", [
+        (True, "short", [0.0001]),  # True-as-1
+        ("10000", "short", [0.0001]),  # stringified number
+        (float("nan"), "short", [0.0001]),
+        (-100.0, "short", [0.0001]),  # negative notional
+        (10_000, "sideways", [0.0001]),  # unknown side
+        (10_000, "short", [True]),  # bool rate
+        (10_000, "short", ["0.0001"]),  # stringified rate
+        (10_000, "short", [float("nan")]),
+        (10_000, "short", [float("inf")]),
+    ])
+    def test_malformed_inputs_raise_not_accrue(self, notional, side, rates):
+        with pytest.raises(ValueError):
+            accrue_funding(notional, side, rates)
+
+    def test_record_package_funding_accumulates_and_persists(self):
+        import tempfile
+        mgr = MultiLegExecutionManager(persist_dir=tempfile.mkdtemp(prefix="ml_fund_"))
+        pkg = mgr.propose_package(two_leg_steps(), notional=10_000)
+        # Short leg holds half the notional: 5000 x (1bp + 1bp) = $1.
+        delta = mgr.record_package_funding(pkg, [0.0001, 0.0001])
+        assert delta == pytest.approx(1.0)
+        assert pkg.funding_accrued_usd == pytest.approx(1.0)
+        delta2 = mgr.record_package_funding(pkg, [0.0001])
+        assert delta2 == pytest.approx(0.5)
+        assert pkg.funding_accrued_usd == pytest.approx(1.5)
+        # Crash recovery keeps the economics, not just the fills.
+        reloaded = mgr._load_package(pkg.id)
+        assert reloaded.funding_accrued_usd == pytest.approx(1.5)
+
+    def test_record_package_funding_matches_real_history(self):
+        """Funding math against real Binance funding history: the accrual
+        over N actual 8h periods equals notional x summed rates, short side."""
+        import csv
+        import os
+        path = os.path.join("data", "BTC_funding_binance.csv")
+        if not os.path.exists(path):
+            pytest.skip("no local funding history (data/ is gitignored)")
+        with open(path, newline="") as f:
+            rows = list(csv.reader(f))[1:201]  # first 200 settled periods
+        rates = [float(r[1]) for r in rows]
+        import tempfile
+        mgr = MultiLegExecutionManager(persist_dir=tempfile.mkdtemp(prefix="ml_fundhist_"))
+        pkg = mgr.propose_package(two_leg_steps(), notional=10_000)
+        delta = mgr.record_package_funding(pkg, rates)
+        assert delta == pytest.approx(10_000 * 0.5 * sum(rates))

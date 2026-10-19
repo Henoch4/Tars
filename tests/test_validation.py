@@ -5,6 +5,8 @@ Run: pytest tests/test_validation.py -v
 """
 import numpy as np
 
+import pytest
+
 from src.validation import (
     sharpe_ratio,
     max_drawdown,
@@ -14,6 +16,7 @@ from src.validation import (
     probability_of_backtest_overfitting,
     evaluate_parameter_grid,
     validation_report,
+    isotonic_calibration,
 )
 
 
@@ -140,3 +143,117 @@ def test_validation_report_pbo_fail_blocks_clearing():
     assert report["passes_calmar_bar"] is True
     assert report["pbo_analysis"]["pbo_pass"] is False
     assert report["cleared_for_paper_trading"] is False
+
+
+class TestNextBarFillRule:
+    """TODO 2.8: every signal computed on candle N must only act at candle
+    N+1. The gate previously credited pos[j] with the (j, j+1] move -- a
+    same-bar fill at a close that is only known after bar j closes
+    (lookahead). Regression pins the shifted execution series."""
+
+    def _gate(self):
+        from scripts.run_validation_gate import (
+            SIDE_COST,
+            episode_stats,
+            executed_positions,
+            net_bar_returns,
+        )
+        return SIDE_COST, episode_stats, executed_positions, net_bar_returns
+
+    def test_decisions_shift_one_bar_forward(self):
+        _, _, executed_positions, _ = self._gate()
+        pos = np.array([0.0, 1.0, 1.0, -1.0, 0.0])
+        exec_pos = executed_positions(pos)
+        assert exec_pos[0] == 0.0  # flat before the first decision can act
+        assert list(exec_pos[1:]) == list(pos[:-1])
+
+    def test_signal_bar_move_not_captured(self):
+        # Constant long from bar 0: the (0, 1] +10% move happens while the
+        # signal is still being computed -- the executed series earns nothing
+        # on the first interval, only the entry cost.
+        SIDE_COST, _, _, net_bar_returns = self._gate()
+        close = np.array([100.0, 110.0, 121.0])
+        ret = net_bar_returns(np.array([1.0, 1.0, 1.0]), close)
+        assert ret[0] == SIDE_COST * -1  # entry cost, zero price capture
+        assert abs(ret[1] - (11.0 / 110.0 - SIDE_COST)) < 1e-12
+
+    def test_one_bar_pulse_pays_round_trip_earns_nothing(self):
+        # A signal held for a single bar acts after its bar's move is over:
+        # zero price capture, still exactly one entry + one exit side.
+        SIDE_COST, episode_stats, _, _ = self._gate()
+        close = np.array([100.0, 110.0, 121.0])
+        stats = episode_stats(np.array([0.0, 1.0, 0.0]), close)
+        assert stats["trades"] == 1
+        assert abs(stats["net_return"] - (-2 * SIDE_COST)) < 1e-12
+
+    def test_signal_on_final_bar_never_trades(self):
+        # The last bar has no next bar to act on: no trade, no costs.
+        # The pre-fix code counted this as a 1-trade round trip.
+        _, episode_stats, _, net_bar_returns = self._gate()
+        close = np.array([100.0, 110.0, 121.0])
+        pos = np.array([0.0, 0.0, 1.0])
+        assert list(net_bar_returns(pos, close)) == [0.0, 0.0]
+        stats = episode_stats(pos, close)
+        assert stats["trades"] == 0
+        assert stats["net_return"] == 0.0
+
+
+class TestIsotonicCalibrationGate:
+    """TODO 4.7: the decile verdict that would have caught v2 live
+    (confidence that does not rank trades). Monotone + bounded error
+    pass; flat/inverted curves fail loudly, never silently."""
+
+    def test_calibrated_model_passes(self):
+        rng = np.random.default_rng(11)
+        q = rng.uniform(-50.0, 50.0, 1000)
+        y = q + rng.normal(0.0, 0.5, 1000)  # tracks predictions tightly
+        rep = isotonic_calibration(q, y, tau=0.5)
+        assert rep["monotone"] is True
+        assert rep["ece"] < 1.0  # small vs the 100-wide prediction range
+        assert rep["coverage_ok"] is True
+        assert abs(rep["coverage"] - 0.5) <= 0.05
+
+    def test_v2_flat_signature_fails_monotone(self):
+        # Predictions spread wide while outcomes run opposite: the decile
+        # actual means strictly decrease — confidence anti-ranks trades.
+        n = 1000
+        q = np.arange(n, dtype=float)
+        y = (n - q) + np.random.default_rng(12).normal(0.0, 1.0, n)
+        rep = isotonic_calibration(q, y)
+        assert rep["monotone"] is False
+        assert rep["ece"] > 100.0  # gross miscalibration, far above any sane bound
+
+    def test_coverage_miss_flagged(self):
+        rng = np.random.default_rng(13)
+        q = rng.uniform(-50.0, 50.0, 1000)
+        y = q - 10.0  # everything realizes below prediction: coverage 1.0
+        rep = isotonic_calibration(q, y, tau=0.2)
+        assert rep["coverage"] == 1.0
+        assert rep["coverage_ok"] is False
+
+    def test_decile_structure_sound(self):
+        rng = np.random.default_rng(14)
+        n = 1005  # not divisible by 10: remainder must be dealt, not dropped
+        q = rng.uniform(0.0, 10.0, n)
+        y = q + rng.normal(0.0, 0.1, n)
+        rep = isotonic_calibration(q, y)
+        assert len(rep["deciles"]) == 10
+        assert sum(d["n"] for d in rep["deciles"]) == n
+        assert all(d["n"] > 0 for d in rep["deciles"])
+        pred_means = [d["pred_mean"] for d in rep["deciles"]]
+        assert all(b >= a for a, b in zip(pred_means, pred_means[1:]))
+        assert len(rep["y_iso"]) == n
+        # Isotonic guarantee holds in predicted order, not input order:
+        # fit_transform returns values aligned to the input rows.
+        in_pred_order = rep["y_iso"][np.argsort(q, kind="stable")]
+        assert bool((np.diff(in_pred_order) >= 0).all())
+
+    @pytest.mark.parametrize("q,y", [
+        (np.arange(10.0), np.arange(9.0)),  # length mismatch
+        (np.arange(5.0), np.arange(5.0)),  # too few for deciles
+        (np.array([1.0, float("nan")] * 10), np.arange(20.0)),  # NaN poisons bins
+        (np.array([1.0, float("inf")] * 10), np.arange(20.0)),  # inf breaks fit
+    ])
+    def test_bad_inputs_raise_never_default(self, q, y):
+        with pytest.raises(ValueError):
+            isotonic_calibration(q, y)

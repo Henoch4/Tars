@@ -73,6 +73,50 @@ class TestHeartbeatVocabulary:
         assert hb["errors"] == 3
 
 
+class TestHeartbeatFileFallback:
+    """1.1 remainder: /health runs in the API process, cycles run in the
+    scheduler process. get_heartbeat must fall back to the persisted file
+    (LOOP_HEARTBEAT_PATH) or the API is blind to the loop forever."""
+    def _write(self, path, payload):
+        import json
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(payload)
+
+    def test_file_heartbeat_visible_when_memory_empty(
+            self, tmp_path, monkeypatch):
+        import time
+        p = tmp_path / "hb.json"
+        self._write(str(p), '{"cycle_id": "c9", "outcome": "no_trades", '
+                            '"completed_at": %f, "counts": {}, "errors": 0}'
+                     % time.time())
+        monkeypatch.setenv("LOOP_HEARTBEAT_PATH", str(p))
+        hb = metrics.get_heartbeat()
+        assert hb is not None
+        assert hb["cycle_id"] == "c9"
+        assert hb["outcome"] == OUTCOME_NO_TRADES
+        assert metrics.snapshot()["heartbeat"]["cycle_id"] == "c9"
+
+    def test_memory_beats_file(self, tmp_path, monkeypatch):
+        p = tmp_path / "hb.json"
+        self._write(str(p), '{"cycle_id": "file-c", "outcome": "no_trades",'
+                            ' "completed_at": 1.0, "counts": {}, "errors": 0}')
+        monkeypatch.setenv("LOOP_HEARTBEAT_PATH", str(p))
+        metrics.beat("mem-c", OUTCOME_TRADED, {}, 0)
+        assert metrics.get_heartbeat()["cycle_id"] == "mem-c"
+
+    def test_corrupt_or_missing_file_reads_as_none(
+            self, tmp_path, monkeypatch):
+        p = tmp_path / "hb.json"
+        self._write(str(p), '{"cycle_id": 42, "outcome": "moon"}')
+        monkeypatch.setenv("LOOP_HEARTBEAT_PATH", str(p))
+        assert metrics.get_heartbeat() is None
+        self._write(str(p), 'not json{{{')
+        assert metrics.get_heartbeat() is None
+        monkeypatch.setenv("LOOP_HEARTBEAT_PATH",
+                           str(tmp_path / "absent.json"))
+        assert metrics.get_heartbeat() is None
+
+
 class TestWatchdogTransitions:
     def _watchdog(self):
         from src.scheduler import LoopWatchdog
@@ -369,3 +413,49 @@ class TestDecisionAndOrderMetrics:
         decisions = {k: v for k, v in snap["counters"].items()
                      if k.startswith("tars_decisions_total")}
         assert len(decisions) == 0
+
+
+class TestExternalStallWatchdog:
+    """3.1 (S1): the watcher process judges the persisted heartbeat by age.
+    Fires on simulated stall; sets tars_loop_stopped_contributing gauge;
+    'never started' (no heartbeat) is silent, never stalled."""
+
+    def _write_hb(self, path, completed_at):
+        import json
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"cycle_id": "c-stall", "outcome": "no_trades",
+                       "completed_at": completed_at, "counts": {},
+                       "errors": 0}, f)
+
+    def test_fresh_heartbeat_not_stalled(self, tmp_path, monkeypatch):
+        import time
+        p = tmp_path / "hb.json"
+        self._write_hb(str(p), time.time())
+        monkeypatch.setenv("LOOP_HEARTBEAT_PATH", str(p))
+        assert metrics.check_loop_stall(1800.0) is False
+        assert metrics.get_gauge(metrics.STALL_GAUGE) == 0.0
+
+    def test_stale_heartbeat_fires_and_sets_gauge(
+            self, tmp_path, monkeypatch):
+        import time
+        p = tmp_path / "hb.json"
+        self._write_hb(str(p), time.time() - 7200)
+        monkeypatch.setenv("LOOP_HEARTBEAT_PATH", str(p))
+        assert metrics.check_loop_stall(1800.0) is True
+        assert metrics.get_gauge(metrics.STALL_GAUGE) == 1.0
+
+    def test_no_heartbeat_is_silent_not_stalled(
+            self, tmp_path, monkeypatch):
+        monkeypatch.setenv("LOOP_HEARTBEAT_PATH",
+                           str(tmp_path / "absent.json"))
+        assert metrics.check_loop_stall(1800.0) is None
+        assert metrics.get_gauge(metrics.STALL_GAUGE) is None
+
+    def test_memory_heartbeat_takes_precedence(
+            self, tmp_path, monkeypatch):
+        import time
+        p = tmp_path / "hb.json"
+        self._write_hb(str(p), time.time() - 7200)
+        monkeypatch.setenv("LOOP_HEARTBEAT_PATH", str(p))
+        metrics.beat("mem-fresh", OUTCOME_NO_TRADES, {}, 0)
+        assert metrics.check_loop_stall(3600.0) is False

@@ -76,6 +76,12 @@ contract TradeAuditTrail {
     mapping(address => bytes32)     public lastDecisionId;
     mapping(address => bool)        public killSwitchActive;
     mapping(address => string)      public killSwitchReason;
+    // Per-asset circuit breaker (defense-in-depth under the off-chain daily
+    // counters): daily volume cap and accumulator per (agent, asset-hash),
+    // 1e8 fixed point like sizeUsd. Cap 0 = unset = global checks only.
+    mapping(address => mapping(bytes32 => uint256)) public assetVolumeCap;
+    mapping(address => mapping(bytes32 => uint256)) public assetDailyVolume;
+    mapping(address => mapping(bytes32 => uint256)) public assetDailyBucket;
 
     event DecisionLogged(
         bytes32 indexed decisionId,
@@ -98,6 +104,7 @@ contract TradeAuditTrail {
     );
 
     event RiskParamsUpdated(address indexed agent, RiskParams params);
+    event AssetCapUpdated(address indexed agent, bytes32 indexed assetHash, uint256 capUsd);
     event KillSwitchActivated(address indexed agent, string reason, uint256 timestamp);
     event KillSwitchDeactivated(address indexed agent, uint256 timestamp);
 
@@ -135,6 +142,24 @@ contract TradeAuditTrail {
         p.isMarketOrder = false;
 
         emit RiskParamsUpdated(msg.sender, p);
+    }
+
+    /**
+     * @notice Set a per-asset daily volume circuit breaker for the caller.
+     *         Tightening-only like setRiskParams: once set, the cap can only
+     *         move down (0 would disable the breaker = loosening, forbidden).
+     *         Asset key is keccak256 of the asset string (e.g. "BTC-USDT-SWAP").
+     */
+    function setAssetCap(string calldata asset, uint256 capUsd) external onlyAgent {
+        bytes32 h = keccak256(bytes(asset));
+        uint256 current = assetVolumeCap[msg.sender][h];
+        if (current > 0) {
+            require(capUsd > 0 && capUsd <= current, "cap can only tighten");
+        } else {
+            require(capUsd > 0, "cap must be positive");
+        }
+        assetVolumeCap[msg.sender][h] = capUsd;
+        emit AssetCapUpdated(msg.sender, h, capUsd);
     }
 
     /**
@@ -220,6 +245,23 @@ contract TradeAuditTrail {
 
         require(dailyTrades[msg.sender] < 100, "MAX_TRADES_EXCEEDED");
         require(dailyLoss[msg.sender] < p.maxDailyLossUsd, "DAILY_LOSS_LIMIT_EXCEEDED");
+
+        // Per-asset circuit breaker: even if the off-chain gate is bypassed,
+        // a runaway asset cannot exceed its own daily volume cap on-chain.
+        // Unset cap (0) = global checks only (backward compatible).
+        bytes32 assetHash = keccak256(bytes(input.asset));
+        if (today > assetDailyBucket[msg.sender][assetHash]) {
+            assetDailyBucket[msg.sender][assetHash] = today;
+            assetDailyVolume[msg.sender][assetHash] = 0;
+        }
+        uint256 cap = assetVolumeCap[msg.sender][assetHash];
+        if (cap > 0) {
+            require(
+                assetDailyVolume[msg.sender][assetHash] + input.sizeUsd <= cap,
+                "ASSET_CAP_EXCEEDED"
+            );
+        }
+        assetDailyVolume[msg.sender][assetHash] += input.sizeUsd;
 
         decisionLogged[decisionId] = true;
         decisionIndex[decisionId] = decisions.length;
@@ -370,6 +412,13 @@ contract TradeAuditTrail {
         uint256 trades
     ) {
         return (dailyVolume[agent], dailyLoss[agent], dailyTrades[agent]);
+    }
+
+    function getAssetDailyStats(address agent, bytes32 assetHash) external view returns (
+        uint256 volume,
+        uint256 cap
+    ) {
+        return (assetDailyVolume[agent][assetHash], assetVolumeCap[agent][assetHash]);
     }
 
     function getDecisionCount() external view returns (uint256) {

@@ -1,0 +1,9 @@
+[profile.default]
+src = "contracts"
+test = "contracts"
+out = "forge-out"
+libs = ["lib"]
+solc_version = "0.8.30"
+# TradeAuditTrail needs IR compilation (stack-too-deep otherwise).
+via_ir = true
+optimizer = true

@@ -4,12 +4,13 @@ Deploy repo contracts to X Layer Testnet using web3.py.
 Contracts:
   - TradeAuditTrail (audit log; no constructor args)
   - TradingVault (pooled USDT vault; needs VAULT_* env vars below)
+  - AgentRegistry (capability/reputation surface; needs AUDIT_CONTRACT_ADDRESS)
 
 Prerequisites:
   pip install web3 eth-account eth-abi
   Set environment:
     XLAYER_RPC_URL=https://testnet-rpc.xlayer.tech
-    DEPLOYER_PRIVATE_KEY=0x...
+    DEPLOYER_PRIVATE_KEY=0x...   # fresh testnet-only key, NEVER a reused mainnet key
   TradingVault also needs:
     VAULT_ASSET_ADDRESS=<USDT address on X Layer>
     VAULT_AGENT_ADDRESS=<agent EOA that will trade/attest>
@@ -17,10 +18,13 @@ Prerequisites:
     VAULT_MAX_TVL=<asset minimal units>
     VAULT_ATTEST_TIMELOCK=<seconds between NAV attestations>
     VAULT_MAX_ATTESTATION_DELTA_BPS=<max NAV change per attest, bps, default 1000>
+  AgentRegistry also needs:
+    AUDIT_CONTRACT_ADDRESS=<deployed TradeAuditTrail>
 
 Usage:
   python deploy.py                   # deploy TradeAuditTrail (default)
   python deploy.py TradingVault      # deploy TradingVault
+  python deploy.py AgentRegistry     # deploy AgentRegistry
 """
 import json
 import os
@@ -33,7 +37,11 @@ from eth_account import Account
 CONTRACT_DIR = Path(__file__).resolve().parent.parent  # contracts/
 RPC_URL = os.getenv("XLAYER_RPC_URL", "https://testrpc.xlayer.tech/terigon")
 PRIVATE_KEY = os.getenv("DEPLOYER_PRIVATE_KEY")
-CHAIN_ID = 1952  # X Layer Testnet (per RPC)
+# X Layer Testnet, per OKX docs + chainlist (verified 2026-10; the "195"
+# value is the retired testnet). Pinned AND verified at runtime: _chain_id
+# aborts unless the RPC reports exactly this (test_chain_id_consistency
+# pins the literal; the abort pins reality).
+CHAIN_ID = 1952
 
 
 def _artifacts(name):
@@ -77,13 +85,27 @@ def _prepare():
     return w3, account
 
 
+def _chain_id(w3):
+    """Chain ID verified against the RPC we're actually talking to. The
+    pinned CHAIN_ID is the expectation; the endpoint is the authority —
+    on mismatch we abort instead of signing for an unexpected chain."""
+    cid = w3.eth.chain_id
+    print(f"Chain ID (from RPC): {cid}")
+    if cid != CHAIN_ID:
+        print(f"ERROR: RPC reports chain {cid}, expected {CHAIN_ID} "
+              f"(X Layer Testnet). Refusing to sign.")
+        sys.exit(1)
+    return cid
+
+
 def _send(w3, account, contract, constructor_args, label):
     print(f"\nDeploying {label} contract...")
     Contract = w3.eth.contract(abi=contract[0], bytecode=contract[1])
 
     nonce = w3.eth.get_transaction_count(account.address)
+    chain_id = _chain_id(w3)
     tx = Contract.constructor(*constructor_args).build_transaction({
-        "chainId": CHAIN_ID,
+        "chainId": chain_id,
         "gas": 8000000,
         "gasPrice": w3.to_wei("1", "gwei"),
         "nonce": nonce,
@@ -108,7 +130,7 @@ def _send(w3, account, contract, constructor_args, label):
     deploy_info = {
         "contract": label,
         "address": contract_address,
-        "chain_id": CHAIN_ID,
+        "chain_id": chain_id,
         "tx_hash": tx_hash.hex(),
         "gas_used": receipt.get('gasUsed', receipt.get('gas_used', 0)),
         "block_number": receipt.get('blockNumber', receipt.get('block_number', 0)),
@@ -170,9 +192,32 @@ def deploy_trading_vault():
     return address
 
 
+def deploy_agent_registry():
+    w3, account = _prepare()
+    contract = _artifacts("AgentRegistry")
+
+    audit_addr = os.getenv("AUDIT_CONTRACT_ADDRESS", "").strip()
+    if not audit_addr:
+        print("ERROR: Missing env var: AUDIT_CONTRACT_ADDRESS")
+        print("AgentRegistry reads reputation from the deployed TradeAuditTrail.")
+        sys.exit(1)
+
+    address = _send(w3, account, contract, (audit_addr,), "AgentRegistry")
+
+    deployed = w3.eth.contract(address=address, abi=contract[0])
+    print(f"\nVerification: auditTrail() = "
+          f"{deployed.functions.auditTrail().call()}")
+    print(f"\nNext steps:")
+    print(f"  1. Set REGISTRY_CONTRACT_ADDRESS={address}")
+    print(f"  2. Register the agent: register(endpoint, capsHash, tiersVersion)")
+    return address
+
+
 if __name__ == "__main__":
     choice = sys.argv[1] if len(sys.argv) > 1 else "TradeAuditTrail"
     if choice == "TradingVault":
         deploy_trading_vault()
+    elif choice == "AgentRegistry":
+        deploy_agent_registry()
     else:
         deploy_audit_trail()
