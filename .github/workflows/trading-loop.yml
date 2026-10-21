@@ -1,9 +1,7 @@
 name: Trading Loop
 
 on:
-  schedule:
-    - cron: '*/5 * * * *'  # every 5 minutes
-  workflow_dispatch:  # manual trigger
+  workflow_dispatch:  # manual trigger only; the live loop runs on the VPS
 
 jobs:
   trade:
@@ -21,7 +19,7 @@ jobs:
       OKX_SECRET_KEY: ${{ secrets.OKX_SECRET_KEY }}
       OKX_PASSPHRASE: ${{ secrets.OKX_PASSPHRASE }}
       OKX_BASE_URL: ${{ secrets.OKX_BASE_URL }}
-      DRY_RUN: "false"
+      DRY_RUN: "true"  # fire-drill safe: manual smoke test never places live orders
       MAX_POSITION_USD: ${{ secrets.MAX_POSITION_USD }}
       MAX_DAILY_LOSS_USD: ${{ secrets.MAX_DAILY_LOSS_USD }}
       MIN_CONFIDENCE_BPS: ${{ secrets.MIN_CONFIDENCE_BPS }}
@@ -52,31 +50,31 @@ jobs:
 
       - name: Run trading cycle
         run: |
-          python -c "
-import asyncio
-import sys
-sys.path.insert(0, '.')
-from src.main import _trading_agent
+          python - <<'PY'
+          import asyncio
+          import sys
+          sys.path.insert(0, '.')
+          from src.main import _trading_agent
 
-async def main():
-    result = await _trading_agent.run_trading_cycle([
-        'BTC-USDT-SWAP',
-        'ETH-USDT-SWAP',
-        'SOL-USDT-SWAP',
-        'BNB-USDT-SWAP'
-    ])
-    print(f'Cycle ID: {result.cycle_id}')
-    print(f'Status: {result.status}')
-    print(f'Signals: {len(result.signals)}')
-    print(f'Decisions: {len(result.decisions)}')
-    print(f'Executions: {len(result.executions)}')
-    print(f'Total PnL: \${result.total_pnl_usd:.2f}')
-    print(f'Total Fees: \${result.total_fees_usd:.2f}')
-    if result.errors:
-        print(f'Errors: {result.errors}')
+          async def main():
+              result = await _trading_agent.run_trading_cycle([
+                  'BTC-USDT-SWAP',
+                  'ETH-USDT-SWAP',
+                  'SOL-USDT-SWAP',
+                  'BNB-USDT-SWAP'
+              ])
+              print(f'Cycle ID: {result.cycle_id}')
+              print(f'Status: {result.status}')
+              print(f'Signals: {len(result.signals)}')
+              print(f'Decisions: {len(result.decisions)}')
+              print(f'Executions: {len(result.executions)}')
+              print(f'Total PnL: ${result.total_pnl_usd:.2f}')
+              print(f'Total Fees: ${result.total_fees_usd:.2f}')
+              if result.errors:
+                  print(f'Errors: {result.errors}')
 
-asyncio.run(main())
-          "
+          asyncio.run(main())
+          PY
 
       - name: Upload cycle logs (optional)
         if: always()
