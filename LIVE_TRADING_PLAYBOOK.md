@@ -451,5 +451,25 @@ boxed. (Source: @SpoiledBySpoily, X status 2111877036658544758.)
      unobserved' free-passed on all 19, buy/sell tax unobserved, and
      organic score 0 (no organic rank data) informational-only on 6/11
      sampled. Probe #1 (GoPlus LP-lock % / tax fields) is therefore the
-     load-bearing window-4 candidate; window verdict: not reachable
-     (+$238 needed in 4.78d vs observed -$30/d).
+      load-bearing window-4 candidate; window verdict: not reachable
+      (+$238 needed in 4.78d vs observed -$30/d).
+
+   GoPlus Solana probe 2026-10-20 (read-only, operator-approved, NO deploy):
+   endpoint /api/v1/solana/token_security (beta; the EVM path
+   /api/v1/token-security/solana 404s). 12 window-3/4 mints queried
+   (8 rug-class + 2 winners + 2 re-tests): 4/12 not even indexed
+   (code 7012/7013), 8/12 return baseline SPL flags (mintable/freezable/
+   metadata_mutable/closable/balance_mutable_authority all 0, matching
+   our own renounced-authority checks) but ZERO LP surface: dex[] absent
+   (no burn_percent/tvl), lp_holders empty on 10/12, holders populated on
+    1/12. Lazy-indexing hypothesis tested and REJECTED (two spaced rounds
+    identical). VERDICT: NEGATIVE for the load-bearing use case — it would
+    have flagged ~0 of the 19 rug entries; the LP-drain pre-signal cannot
+    come from GoPlus (beta coverage is thin/EVM-shaped for the pump.fun
+    universe). GoPlus PARKED (raw responses archived at
+    /tmp/goplus_probe/ on the VPS). Candidate #1's replacement for
+   window-4 consideration: RPC LP-velocity pre-entry gate — read the
+   pool's LQ vault balance at multiple screens (solana_rpc already reads
+   pool vaults), reject entries whose LP is falling faster than a
+   stated threshold (pre-entry analogue of the LP-drain breaker that
+   currently fires too late at ~25% slippage cost).
