@@ -427,3 +427,29 @@ boxed. (Source: @SpoiledBySpoily, X status 2111877036658544758.)
      window was sunk. Evidence on-box: constants 25.0/10.0 live; a +50%
      peak position exits with "pivot: -10% off peak (>10%)". Archive:
      blotter.pre-ratchet-2026-10-19.jsonl; marker G1_CLOCK_RESTART.json.
+
+   Status snapshot 2026-10-20 02:30 CEST (restart #3, mid-window; NO rule
+   changes — measurement only):
+     clock 1.53->2.22/7d; probes 23->36/30 (count criterion MET at 36);
+     net -$171.72 -> -$237.90; 0 open positions; 640 cycles; 4433->6383
+     screens; 66 cooldown blocks. Criteria days=no count=OK net=no ->
+     G1 NOT MET. Full-ledger attribution (36 exits):
+        pivot-class exits 17, net +$29.41 (avg +$1.73; 7 net-positive:
+        8Bm6eG +18.68 ratchet pivot, 96AsCW +19.97 salvage-exit via the
+        collapse breaker, 54UN9Y +10.37, 2qgnTg +7.46, 6gAHVh +6.16,
+        3xBE38 +4.90, 2gVNeu +0.73);
+       RUG-class exits 19, net -$267.32 (avg -$14.07).
+     Kill pattern unchanged and quantified: 90-95% LP-drained within 5-15m
+     of entry (worst: 9JUYGi -25.83, 8ek2qv -25.68, 75zGdp -25.41,
+     4tieig -25.74, 4xwPPT -25.46) or 33-57%/min collapses. LP-drain
+     breaker escape costs ~25% slippage -> ~full stake loss per rug.
+     The exit layer held: every rug caught in 5-36m, winners harvested by
+     the ratchet. Entry gate structurally blind to this class: all 19 rug
+     entries passed the FULL structural screen (RugCheck clean, renounced
+     mint/freeze, top-10 12-27%, creator cluster <=1%, pool $20k-72k,
+     exitable round-trip cost 1.7-6.9%), ages 0.2-2.9h; 'lp_locked
+     unobserved' free-passed on all 19, buy/sell tax unobserved, and
+     organic score 0 (no organic rank data) informational-only on 6/11
+     sampled. Probe #1 (GoPlus LP-lock % / tax fields) is therefore the
+     load-bearing window-4 candidate; window verdict: not reachable
+     (+$238 needed in 4.78d vs observed -$30/d).
