@@ -471,5 +471,66 @@ boxed. (Source: @SpoiledBySpoily, X status 2111877036658544758.)
    window-4 consideration: RPC LP-velocity pre-entry gate — read the
    pool's LQ vault balance at multiple screens (solana_rpc already reads
    pool vaults), reject entries whose LP is falling faster than a
-   stated threshold (pre-entry analogue of the LP-drain breaker that
-   currently fires too late at ~25% slippage cost).
+     stated threshold (pre-entry analogue of the LP-drain breaker that
+     currently fires too late at ~25% slippage cost).
+
+   ---------------------------------------------------------------------------
+   RESTART #4 PRE-REGISTRATION — written 2026-10-23, BEFORE the window opens
+   ---------------------------------------------------------------------------
+   State at registration: restart #3 clock 3.39/7d, 56 exits, net -$394.79,
+   0 open, attribution rug 31 trips -$468.02 (avg -$15.10) vs pivot 25 trips
+   +$73.22 (avg +$2.93). Window #3's verdict is already decided (net is
+   unrecoverable in the remaining days); this block fixes restart #4's success
+   criteria now, so they cannot be picked after its numbers are in.
+
+   THE ONE CHANGE: a confirmation stage in front of paper entry. Instead of
+   entering on the screen pass, the loop records the pass, waits for a second
+   LP observation of the same mint (next cycle, or an explicit re-enrichment
+   of the pending mint), and enters only if the pool is not visibly draining
+   (src/meme_lp_velocity.liquidity_verdict, 4.0 %/min, 900 s episode window).
+   Armed = the reject action; unarmed = notes only. Nothing else changes in
+   the window: no filter edits, no exit-rule edits, no sizing edits, no
+   cooldown edits.
+
+   Threshold evidence (offline replay of the window-3/4 blotter, 54 entries
+   with LP path data, modelled as "enter one cycle late"):
+     4 %/min   -> rugs avoided $259.73, winners killed  $0.00, net +$259.73
+     2 %/min   -> $303.41 avoided, $13.79 killed, net +$289.62
+     15 %/min  -> $153.53 avoided, $0.00 killed, net +$153.53
+     46-min @4% -> $386.45 avoided, $44.81 killed, net +$341.65
+   4 %/min is the pick: the widest threshold that still killed zero winners
+   in the replay. 7 mints were uncoverable (fail-open, +$10.37).
+
+   SUCCESS CRITERIA (all four hold to call the mechanism validated):
+     R1 precision — rug-class net per trip improves from the -$15.10 baseline
+        to >= -$10.00, AND rug-class trips per day fall below half of 9.1/day
+        (< 4.6/day).
+     R2 no collateral — pivot-class trips stay >= 60% of 7.4/day (>= 4.4/day)
+        and pivot-class net stays >= $0.
+     R3 net — total window net > -$150 (replay predicts ~-$132 from -$392).
+     R4 exercised — every entry carries >= 2 LP samples and >= 1
+        entry_confirmation record; zero entries whose verdict was
+        'insufficient'. A stage that never fires makes the experiment VOID,
+        not passed.
+
+   INVALIDATION (window void, not failed): entries/day below 50% of the
+   window-3 entry rate, or any non-gate change landing inside the window
+   (then restart #5 starts clean). The stage delays entry by one cycle, so a
+   starved window measures discovery churn, not gate quality.
+
+   Known risk, stated before the data: the runner enriches only OPEN
+   positions, so a pending mint would get its second sample only if it
+   reappeared in discovery. Pending mints are therefore re-enriched
+   explicitly and expire after 900 s (entry_pending_expired) rather than
+   entering on a stale pair. If expiry exceeds 80% of pendings, the stage is
+   starving and R3/R4 cannot be read as gate quality.
+
+   Decision rule after day 7:
+     all four  -> keep the gate armed; restart #5 carries the next single
+                  change (candidate: venue-aware exit slippage).
+     R1 fails  -> the pre-entry signal is not there; revisit only with a
+                  different LP-source class (not GoPlus).
+     R2 fails  -> the gate is killing winners; lower the threshold to the
+                  replay's zero-collateral point or drop the stage.
+     void      -> fix discovery sampling first; do not re-arm.
+
