@@ -1,25 +1,26 @@
 {
-  "name": "Portfolio Risk Copilot",
-  "description": "Autonomous portfolio risk auditing agent. Analyzes holdings, scores risk, and enforces non-overridable risk gates before any trade execution.",
+  "name": "TARS Autonomous Trader",
+  "description": "Autonomous portfolio risk copilot and trading agent. Audits holdings, scores risk, and enforces non-overridable risk gates before any order; every decision is written to an onchain audit trail.",
   "service": {
-    "name": "Portfolio Risk Audit Service",
-    "description": "Runs a comprehensive portfolio audit: fetches account balances and positions, evaluates risk exposure, applies non-overridable risk gates, and returns a detailed audit report with risk scores and position analysis. The service is hired via the /hire endpoint.",
+    "name": "TARS Portfolio Risk Audit",
+    "description": "Runs a comprehensive portfolio audit over data the caller forwards: scores concentration, leverage and position risk, applies the same non-overridable risk gates used before live orders, and returns a structured report plus a markdown summary. No server-side credentials required in data-forwarding mode. Hire it via POST /hire.",
     "type": "A2MCP",
     "endpoint": "https://api.tarstrade.xyz/hire",
     "request": {
       "method": "POST",
+      "content_type": "application/json",
       "parameters": [
-        "mode (string, required): Audit mode - 'demo' for testnet data or 'live' for real account. Example: \"demo\"",
-        "profile_mode (string, required): Profile mode - 'demo' or 'live'. Example: \"demo\"",
-        "inst_type (string, optional): Instrument type filter for leverage/positions check - 'SWAP', 'FUTURES', or 'OPTION'. Example: \"SWAP\"",
-        "balance_data (object, optional): Pre-gathered balance data from 'okx account balance-all --json'. Required for data-forwarding mode (production). Example: {\"data\": [{\"ccy\": \"USDT\", \"availBal\": \"10000\"}]}",
-        "positions_data (array, optional): Pre-gathered positions data from 'okx account positions --json'. Array of position objects. Example: [{\"instId\": \"BTC-USDT-SWAP\", \"pos\": \"0.1\", \"avgPx\": \"50000\"}]"
+        "mode (string, optional): 'own_account' (default) audits the data you forward; 'demo' / 'live' are shorthands for profile_mode. Unknown values are rejected with 422.",
+        "profile_mode (string, optional): 'demo' (default) or 'live'. 'live' requires ALLOW_LIVE=true on the deployment.",
+        "inst_type (string, optional): 'SWAP', 'FUTURES' or 'OPTION' — limits the leverage/positions check to that instrument type.",
+        "balance_data (object, required for data-forwarding): output of `okx account balance-all --json`. The {'data': [...]} envelope is accepted, as is a single account row {'trading': {...}}. balance_data.trading.totalEq is required.",
+        "positions_data (array or object, optional): output of `okx account positions --json` — either the array of positions or the {'data': [...]} envelope."
       ],
-      "example": "curl -X POST https://api.tarstrade.xyz/hire \\\n  -H \"Content-Type: application/json\" \\\n  -H \"X-Agent-Token: YOUR_AGENT_TOKEN\" \\\n  -d '{\n    \"mode\": \"own_account\",\n    \"profile_mode\": \"demo\",\n    \"inst_type\": \"SWAP\",\n    \"balance_data\": {\"data\": [{\"ccy\": \"USDT\", \"availBal\": \"10000\"}]},\n    \"positions_data\": [{\"instId\": \"BTC-USDT-SWAP\", \"pos\": \"0.1\", \"avgPx\": \"50000\"}]\n  }'"
+      "example": "curl -X POST https://api.tarstrade.xyz/hire \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\n  \"mode\": \"own_account\",\n  \"profile_mode\": \"demo\",\n  \"inst_type\": \"SWAP\",\n  \"balance_data\": {\n    \"trading\": {\n      \"totalEq\": \"10000\",\n      \"details\": [\n        {\n          \"ccy\": \"USDT\",\n          \"availBal\": \"9000\",\n          \"cashBal\": \"10000\",\n          \"eq\": \"10000\",\n          \"upl\": \"0\"\n        },\n        {\n          \"ccy\": \"BTC\",\n          \"availBal\": \"0.05\",\n          \"cashBal\": \"0.05\",\n          \"eq\": \"3300\",\n          \"upl\": \"120\"\n        }\n      ]\n    }\n  },\n  \"positions_data\": [\n    {\n      \"instId\": \"BTC-USDT-SWAP\",\n      \"pos\": \"0.1\",\n      \"avgPx\": \"50000\",\n      \"upl\": \"12.5\",\n      \"lever\": \"3\",\n      \"liqPx\": \"40000\",\n      \"mgnMode\": \"cross\"\n    }\n  ]\n}'"
     },
     "response": {
-      "description": "Returns a comprehensive audit report with risk scores, position analysis, and leverage checks.",
-      "example": "{\n  \"total_equity_usd\": 10000.0,\n  \"risk_score\": 45,\n  \"positions\": [{\"asset\": \"BTC\", \"size\": 0.1, \"leverage\": 2.0, \"unrealized_pnl\": 150.0}],\n  \"risk_violations\": [],\n  \"risk_report_id\": \"risk-123\",\n  \"timestamp\": 1699999999.0\n}"
+      "description": "Audit report: risk score, flags with severity, markdown summary, and needs_human_review. Returned synchronously.",
+      "example": "{\n  \"audit_id\": \"audit_6d1f45ffcf\",\n  \"mode\": \"data\",\n  \"authenticated\": true,\n  \"risk_score\": 0.45,\n  \"flags\": [\n    {\n      \"code\": \"CONCENTRATION\",\n      \"severity\": \"warning\",\n      \"detail\": \"USDT is 100% of trading equity\"\n    },\n    {\n      \"code\": \"HIGH_LEVERAGE\",\n      \"severity\": \"high\",\n      \"detail\": \"ETH-USDT-SWAP at 10x leverage\"\n    }\n  ],\n  \"report_md\": \"# Portfolio Risk Audit \\u2014 audit_6d1f45ffcf\\n...\",\n  \"needs_human_review\": false,\n  \"error\": null\n}"
     }
   },
   "capabilities": [

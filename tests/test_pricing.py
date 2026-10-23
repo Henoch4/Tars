@@ -97,3 +97,44 @@ class TestCardEnforcementSplit:
         x402 = _client().get("/.well-known/x402").json()
         assert x402["enabled"] is False
         assert x402["paid_routes"] == []
+
+    def test_every_tool_says_whether_it_is_actually_charged(self):
+        """`paid` (listed at a price) and `enforced` (gated now) must both be
+        readable, or a priced route answering 200 looks like a billing bug."""
+        card = _client().get("/.well-known/agent-card.json").json()
+        tools = {t["path"]: t for t in card["tools"]}
+        for tool in card["tools"]:
+            assert isinstance(tool["enforced"], bool)
+        assert tools["/hire"]["paid"] is True
+        assert tools["/hire"]["enforced"] is False  # no PAY_TO_ADDRESS
+        assert tools["/health"]["paid"] is False
+        assert tools["/health"]["enforced"] is False
+
+    def test_card_and_well_known_list_prices_and_posture(self):
+        card = _client().get("/.well-known/agent-card.json").json()
+        payment = card["payment"]
+        assert payment["listed_routes"]["/hire"] == "0.50"
+        assert payment["enforced_routes"] == []
+        assert payment["posture"].startswith("launch-free")
+
+        x402 = _client().get("/.well-known/x402").json()
+        assert x402["listed_routes"]["/hire"] == "0.50"
+        assert "PAY_TO_ADDRESS" in x402["how_to_enable"]
+
+
+class TestGatingWhenPayToConfigured:
+    def test_payee_gates_hire_on_xlayer(self, monkeypatch):
+        import types
+
+        import src.main as main
+        payee = "0x" + "11" * 20
+        monkeypatch.setattr(main, "settings",
+                            types.SimpleNamespace(pay_to_address=payee))
+        built = main._build_paid_routes()
+        accept = built["/hire"]["accepts"][0]
+        assert accept["pay_to"] == payee
+        assert accept["price"] == "$0.50"
+        assert accept["network"] == "eip155:196"
+        assert accept["scheme"] == "exact"
+        # Every under-cap priced route is gated; nothing unpriced leaks in.
+        assert set(built) == set(main.PRICED_ROUTES)

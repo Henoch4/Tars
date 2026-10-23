@@ -20,7 +20,7 @@ from typing import Literal
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # x402 payment middleware — only available when OKX credentials are configured.
 # Guard against import failures so the app boots in dry-run mode without x402 deps.
@@ -278,9 +278,27 @@ if _pay_to and _x402_available:
     app.add_middleware(PaymentMiddlewareASGI, routes=_PAID_ROUTES, server=_x402_server)
 
 
+# Callers come from the manifest, which documented `mode` as 'demo'/'live'
+# while the model accepted only 'own_account' — so every agent that followed
+# the published contract got a 422. Accept all the documented modes (and the
+# canonical one) and normalize; unknown values still fail closed with the
+# allowed set. 'demo'/'live' also select the profile when profile_mode is
+# omitted, so a manifest-shaped body does what it says.
+HIRE_MODE_ALIASES: dict[str, str | None] = {
+    "own_account": None,  # use profile_mode as given
+    "data": None,         # alias for own_account + data forwarding
+    "demo": "demo",
+    "live": "live",
+}
+
+
 class HireRequest(BaseModel):
-    mode: Literal["own_account"] = Field(
-        "own_account", description="Only 'own_account' is supported."
+    mode: str = Field(
+        "own_account",
+        description=(
+            "'own_account' (default; audit the account whose data you forward) "
+            "or 'demo'/'live' as a shorthand for profile_mode."
+        ),
     )
     profile_mode: Literal["demo", "live"] = Field(
         "demo", description="'demo' or 'live'."
@@ -291,12 +309,26 @@ class HireRequest(BaseModel):
     # Data-forwarding mode (production): User Agent sends pre-gathered data
     balance_data: dict | None = Field(
         None,
-        description="Output of `okx account balance-all --json`. Required for data-forwarding mode.",
+        description=("Output of `okx account balance-all --json` (the "
+                     "{'data': [...]} envelope is accepted) or a single "
+                     "account row {'trading': {...}}. Required for "
+                     "data-forwarding mode."),
     )
     positions_data: list | dict | None = Field(
         None,
         description="Output of `okx account positions --json`. Array of position objects.",
     )
+
+    @field_validator("mode")
+    @classmethod
+    def _known_mode(cls, v: str) -> str:
+        key = (v or "").strip().lower()
+        if key not in HIRE_MODE_ALIASES:
+            raise ValueError(
+                f"unsupported mode {v!r}; use one of "
+                f"{sorted(HIRE_MODE_ALIASES)}"
+            )
+        return key
 
 
 @app.get("/manifest")
@@ -329,13 +361,16 @@ def agent_card():
     for ep in manifest.get("endpoints", []):
         # I3: price comes from the single pricing table (the model); the
         # top-level `enabled` flag says whether anything is enforced.
-        # `paid` therefore means "priced", not "currently gated".
+        # `paid` means "listed at a price", `enforced` means "gated right
+        # now" — the two were indistinguishable to a caller and a priced
+        # route that answers 200 looked like a billing bug.
         price = price_of(ep["path"])
         tools.append({
             "path": ep["path"],
             "method": ep["method"],
             "description": ep.get("description", ""),
             "paid": price["price_usdc"] != "0.00",
+            "enforced": ep["path"] in paid,
             "price_usdc": price["price_usdc"],
             "tier": price["tier"],
         })
@@ -363,6 +398,12 @@ def agent_card():
         "payment": {
             "protocol": "x402",
             "enabled": bool(paid),
+            "enforced_routes": sorted(paid),
+            "listed_routes": {path: price_of(path)["price_usdc"]
+                              for path in sorted(PRICED_ROUTES)},
+            "posture": ("gated" if paid else
+                        "launch-free: priced routes answer without payment "
+                        "until PAY_TO_ADDRESS is configured"),
             "well_known": "/.well-known/x402",
         },
         "tools": tools,
@@ -382,6 +423,12 @@ def x402_well_known():
         "network": "eip155:196",
         "pay_to": _pay_to or None,
         "paid_routes": sorted(paid),
+        # Listed prices exist even while the paywall is off (launch posture):
+        # a caller must be able to tell "$0.50 listed" from "$0.50 charged".
+        "listed_routes": {path: price_of(path)["price_usdc"]
+                          for path in sorted(PRICED_ROUTES)},
+        "how_to_enable": ("operator sets PAY_TO_ADDRESS (X Layer USDC payee) "
+                          "and redeploys; routes then answer 402 until paid"),
     }
 
 
@@ -655,7 +702,10 @@ async def billing_status(link_id: str):
 @app.post("/hire")
 async def hire(req: HireRequest, request: Request):
     """Run a portfolio audit: analyze holdings, score risk, log the decision trail."""
-    if req.profile_mode == "live" and not ALLOW_LIVE:
+    # 'demo'/'live' in `mode` is a shorthand for profile_mode (the manifest's
+    # documented shape). An explicit profile_mode wins for 'own_account'.
+    profile_mode = HIRE_MODE_ALIASES.get(req.mode) or req.profile_mode
+    if profile_mode == "live" and not ALLOW_LIVE:
         raise HTTPException(
             403,
             "Live-account audits are disabled on this deployment. "
@@ -689,7 +739,7 @@ async def hire(req: HireRequest, request: Request):
         # CLI mode (local testing) — needs OKX credentials on server
         try:
             report = await run_audit(
-                demo=(req.profile_mode == "demo"),
+                demo=(profile_mode == "demo"),
                 profile=None,
                 inst_type=req.inst_type,
             )

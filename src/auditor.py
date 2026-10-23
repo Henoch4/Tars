@@ -177,14 +177,46 @@ def _render_report(audit_id: str, mode_label: str, total_eq: float,
 
 # -- Input validation (whitelist-based) --
 
+def _normalize_balance_data(data: dict) -> dict:
+    """Accept every balance shape an agent can reasonably forward.
+
+    Canonical:            {"trading": {"totalEq": "...", "details": [...]}}
+    balance-all --json:   {"data": [{"trading": {...}}, ...]}
+    account row wrapper:  {"data": [{"totalEq": "...", "details": [...]}]}
+    bare account row:     {"totalEq": "...", "details": [...]}
+
+    The manifest used to document the envelope while validation demanded the
+    canonical form, so a caller who followed the docs got a 400. Normalizing
+    here keeps one code path: everything below sees {"trading": row}.
+    """
+    if "trading" in data:
+        return data
+    envelope = data.get("data")
+    rows = envelope if isinstance(envelope, list) else ([envelope] if envelope else [])
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if isinstance(row.get("trading"), dict):
+            return {"trading": row["trading"]}
+        if "totalEq" in row:
+            return {"trading": row}
+    if "totalEq" in data:
+        return {"trading": data}
+    return data  # untouched: the caller gets the precise validation error
+
+
 def _validate_balance_data(data: dict) -> dict:
     """Validate balance_data. Raises ValueError on invalid input."""
     if not isinstance(data, dict):
         raise ValueError("balance_data must be a JSON object")
 
+    data = _normalize_balance_data(data)
     trading = data.get("trading")
     if not isinstance(trading, dict):
-        raise ValueError("balance_data.trading must be a JSON object")
+        raise ValueError(
+            "balance_data.trading must be a JSON object "
+            "(or forward `okx account balance-all --json` as balance_data)"
+        )
 
     total_eq = trading.get("totalEq")
     if total_eq is None:
@@ -193,6 +225,7 @@ def _validate_balance_data(data: dict) -> dict:
         float(total_eq)
     except (TypeError, ValueError):
         raise ValueError("balance_data.trading.totalEq must be a numeric string")
+
 
     details = trading.get("details")
     if details is not None and not isinstance(details, list):
@@ -368,8 +401,10 @@ def run_audit_from_data(
     """
     audit_id = f"audit_{uuid.uuid4().hex[:10]}"
 
-    # Validate inputs (whitelist-based)
-    _validate_balance_data(balance_data)
+    # Validate inputs (whitelist-based). The validator also normalizes the
+    # balance envelope, so keep its return value — validating but then
+    # reading the raw dict would score an envelope as an empty account.
+    balance_data = _validate_balance_data(balance_data)
     position_list = _validate_positions_data(positions_data)
 
     # 1. Concentration risk
