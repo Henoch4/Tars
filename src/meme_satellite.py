@@ -350,6 +350,13 @@ def evaluate_exit(pos: ExitPositionProtocol, upd: MarketUpdate) -> tuple[str, st
     return "hold", ""
 
 
+# Float residue from adding and subtracting stake sizes is dust, not garbage.
+# A -3.6e-15 spend must not read as a corrupt ledger: clamp_size returned 0 on
+# it and the loop silently stopped entering for 12.5h (window #3). Real
+# negatives (a ledger that actually disagrees with itself) still fail closed.
+SPEND_RESIDUE_EPS_USD = 1e-6
+
+
 def clamp_size(proposed_usd: float, spent_today_usd: float) -> float:
     """Post-model second cap: per-token AND per-day bounds, fail-closed on
     garbage input. Returns the allowed size (0 = no trade)."""
@@ -359,9 +366,9 @@ def clamp_size(proposed_usd: float, spent_today_usd: float) -> float:
         return 0.0
     if not (math.isfinite(float(proposed_usd)) and math.isfinite(float(spent_today_usd))):
         return 0.0
-    if proposed_usd <= 0 or spent_today_usd < 0:
+    if proposed_usd <= 0 or spent_today_usd < -SPEND_RESIDUE_EPS_USD:
         return 0.0
-    room = PER_DAY_CAP_USD - spent_today_usd
+    room = PER_DAY_CAP_USD - max(0.0, float(spent_today_usd))
     if room <= 0:
         return 0.0
     return min(float(proposed_usd), PER_TOKEN_CAP_USD, room)

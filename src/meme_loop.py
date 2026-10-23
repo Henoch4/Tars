@@ -158,7 +158,17 @@ class SatelliteLoop:
                 for d in data.get("positions", []):
                     pos = OpenPosition.from_dict(d)
                     self.open_positions[pos.mint] = pos
-                self.spent_usd = data.get("spent_usd", 0.0)
+                # A persisted residue can be tiny-negative from float
+                # add/subtract; it is not real spend and must not survive a
+                # restart as garbage (clamp_size fails closed on negative).
+                raw_spent = data.get("spent_usd", 0.0)
+                try:
+                    raw_spent = float(raw_spent)
+                except (TypeError, ValueError):
+                    raw_spent = 0.0
+                if not math.isfinite(raw_spent) or raw_spent < 0:
+                    raw_spent = 0.0
+                self.spent_usd = round(raw_spent, 6)
                 self.realized_net_usd = data.get("realized_net_usd", 0.0)
                 self.cycle_count = data.get("cycle_count", 0)
                 if self.breakers is not None and isinstance(data.get("breakers"), dict):
@@ -266,6 +276,10 @@ class SatelliteLoop:
                           "reason": "session cap"})
             return False
         if liquidity_usd <= 0 or price_usd <= 0:
+            self._record({"event": "entry_blocked", "mint": snap.mint,
+                          "reason": "price/liquidity unobserved",
+                          "price_usd": price_usd,
+                          "liquidity_usd": liquidity_usd})
             return False
 
         from src.meme_satellite import adaptive_entry_size
@@ -277,6 +291,12 @@ class SatelliteLoop:
             return False
         allowed = clamp_size(proposed, self.spent_usd)
         if allowed <= 0:
+            # Never silent: a zero clamp used to stop all entries with no
+            # trace (window #3: a -3.6e-15 spend residue killed 12.5h).
+            self._record({"event": "entry_blocked", "mint": snap.mint,
+                          "reason": "size clamp returned 0",
+                          "proposed_usd": round(proposed, 4),
+                          "spent_usd": round(self.spent_usd, 6)})
             return False
 
         pos = OpenPosition(
@@ -293,7 +313,7 @@ class SatelliteLoop:
             lp_reserve_usd=liquidity_usd,
         )
         self.open_positions[snap.mint] = pos
-        self.spent_usd += allowed
+        self.spent_usd = round(self.spent_usd + allowed, 6)
         entry_record = {
             "event": "entry",
             "mint": snap.mint,
@@ -372,7 +392,9 @@ class SatelliteLoop:
                                    else self.reentry_cooldown_s),
                     "reason": reason,
                 }
-                self.spent_usd -= pos.size_usd
+                # Float residue must never go negative: clamp_size reads a
+                # negative spend as garbage and stops every entry.
+                self.spent_usd = max(0.0, round(self.spent_usd - pos.size_usd, 6))
                 del self.open_positions[mint]
 
         if exits:
