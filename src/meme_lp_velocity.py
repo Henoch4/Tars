@@ -3,7 +3,7 @@
 Window-3 autopsy found the killer class drains 90-95% of its LP within
 5-15 minutes, and every one of those entries passed the structural
 screen taken at the pass moment (a single snapshot). The one-change
-candidate for restart #4 is therefore a CONFIRMATION STAGE: instead of
+candidate for restart #5 is therefore a CONFIRMATION STAGE: instead of
 entering on the pass, observe the pool one more cycle and enter only if
 the liquidity is not visibly draining. This module does the measuring
 and the verdict; it deliberately knows nothing about the satellite loop

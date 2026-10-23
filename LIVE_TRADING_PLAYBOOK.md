@@ -475,13 +475,56 @@ boxed. (Source: @SpoiledBySpoily, X status 2111877036658544758.)
      currently fires too late at ~25% slippage cost).
 
    ---------------------------------------------------------------------------
-   RESTART #4 PRE-REGISTRATION — written 2026-10-23, BEFORE the window opens
+   WINDOW #3 CLOSED — ENTRY-ACCOUNTING DEFECT VOIDS IT (2026-10-23 09:09Z)
    ---------------------------------------------------------------------------
-   State at registration: restart #3 clock 3.39/7d, 56 exits, net -$394.79,
-   0 open, attribution rug 31 trips -$468.02 (avg -$15.10) vs pivot 25 trips
-   +$73.22 (avg +$2.93). Window #3's verdict is already decided (net is
-   unrecoverable in the remaining days); this block fixes restart #4's success
-   criteria now, so they cannot be picked after its numbers are in.
+   Window #3 ran 2026-10-19T13:38Z -> 2026-10-23T09:09Z and is VOID, not
+   failed. Shape: 56 round-trips, net -$394.79, rug 31 / pivot 25. But from
+   the 56th exit (2026-10-22T20:04Z) the loop could not enter at all, and
+   nothing said so. Mechanism: check_exits did spent_usd -= size_usd; four
+   stakes closed A,B,D,C leave -3.552713678800501e-15 (no exact binary form,
+   non-monotonic exit order); clamp_size reads any negative spend as a
+   corrupt ledger and returns 0; try_enter returned False on the zero clamp
+   without a record. Twelve and a half hours, ~700 cycles, 20 passed screens,
+   0 entries, 0 entry_blocked rows — the funnel looked like "nothing passed"
+   instead of "the loop is dead".
+
+   Fixed in af80351: round to 6dp at both mutation sites, tolerate <=1e-6
+   residue while still failing closed on a real negative, sanitize a
+   persisted negative on load, and the two silent refusals (zero clamp,
+   unobserved price/liquidity) now write entry_blocked with their inputs.
+   Evidence, same sequence both ways: pre-fix -3.552713678800501e-15 -> clamp
+   0.0 -> entry False -> no rows; post-fix 0.0 -> 25.0 -> entry True.
+   tests/test_entry_accounting.py (14 tests). No entry/exit/filter/sizing
+   rule changed.
+
+   Consequence for the pre-registration below: the confirmation stage is
+   deferred to restart #5, so the repair is the only change in restart #4.
+   R1-R4 carry forward verbatim, with two clarifications recorded now:
+   - The 9.1/day and 7.4/day denominators were measured with the dead tail
+     still in the clock (3.39d at registration, vs the 3.25d the loop was
+     actually alive: first entry 10-19T13:38Z -> last entry 10-22T19:33Z).
+     Corrected live rates are ~9.6 rug/day and ~7.7 pivot/day. The
+     pre-registered absolute bars (rug < 4.6/day, pivot >= 4.4/day) are NOT
+     relaxed; only the arithmetic behind them is stated.
+   - Window #3's -$394.79 stands as the comparison baseline; strategy is
+     unchanged, so R1/R2/R3 compare like with like.
+
+   RESTART #4 (opened 2026-10-23T09:09Z): the accounting repair alone.
+   Success here means the window is READABLE, not profitable — entries occur
+   when screens pass, spent_usd never goes negative, and every refusal is a
+   record. Void if any entry/exit/filter/sizing rule changes inside it.
+   Prior blotter archived as blotter.pre-entryfix-2026-10-23.jsonl (56 exits,
+   4.9 MB); fresh state from zero, marker in G1_CLOCK_RESTART.json.
+
+   ---------------------------------------------------------------------------
+   RESTART #5 PRE-REGISTRATION — written 2026-10-23, BEFORE the window opens
+   ---------------------------------------------------------------------------
+   State at registration: window #3 closed at 3.81d with 56 exits, net
+   -$394.79, 0 open, attribution rug 31 trips -$468.02 (avg -$15.10) vs pivot
+   25 trips +$73.22 (avg +$2.93). Window #3 is void on the entry-accounting
+   defect recorded above, so its numbers are a comparison baseline only; this
+   block fixes restart #5's success criteria before its window opens, so they
+   cannot be picked after its numbers are in.
 
    THE ONE CHANGE: a confirmation stage in front of paper entry. Instead of
    entering on the screen pass, the loop records the pass, waits for a second
@@ -515,7 +558,7 @@ boxed. (Source: @SpoiledBySpoily, X status 2111877036658544758.)
 
    INVALIDATION (window void, not failed): entries/day below 50% of the
    window-3 entry rate, or any non-gate change landing inside the window
-   (then restart #5 starts clean). The stage delays entry by one cycle, so a
+   (then restart #6 starts clean). The stage delays entry by one cycle, so a
    starved window measures discovery churn, not gate quality.
 
    Known risk, stated before the data: the runner enriches only OPEN
@@ -526,7 +569,7 @@ boxed. (Source: @SpoiledBySpoily, X status 2111877036658544758.)
    starving and R3/R4 cannot be read as gate quality.
 
    Decision rule after day 7:
-     all four  -> keep the gate armed; restart #5 carries the next single
+     all four  -> keep the gate armed; restart #6 carries the next single
                   change (candidate: venue-aware exit slippage).
      R1 fails  -> the pre-entry signal is not there; revisit only with a
                   different LP-source class (not GoPlus).
