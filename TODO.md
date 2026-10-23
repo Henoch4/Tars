@@ -671,6 +671,24 @@ These are currently broken, crashed, or actively blocking the system.
   (`src/meme_bundle.py`, 1-hop, fail-closed incomplete), satellite HALT
   kill-switch, survivor observer, `--diagnose` instrumentation. G1 still
   open: zero entries (creator-history supply is the single blocker).
+- **Oct 23 (window-4 prep, no rule change in the frozen window):**
+  - G1 report now attributes net PnL by exit class:
+    `src/meme_g1.classify_exit_reason` (prefix match mirroring the loop's own
+    `str(reason).upper().startswith("RUG")`) + `build_attribution` +
+    `scripts/meme_g1_report.py --attribution`. Missing/bool/NaN/inf `net_usd`
+    is counted as unpriced and excluded from the average, never read as
+    break-even. Window-3 re-run: 56 exits −$394.79 → rug 31 trips −$468.02
+    (avg −$15.10) vs pivot 25 +$73.22 (avg +$2.93).
+    Regression: `tests/test_meme_g1.py` (26 tests).
+  - Confirmation stage built on branch `wip/restart-4-confirmation-stage`
+    (UNMERGED, `confirm_stage=False` default): a pass parks a pending entry,
+    the next LP observation produces a second sample, `liquidity_verdict`
+    decides; unarmed cannot reject by construction. Guards: same-cycle dedupe
+    (MIN_SPAN_S), 900 s episode reset, `entry_pending_expired` sweep, caps
+    re-checked at the real entry moment, pending state persisted in
+    `positions.json`, `confirmation_samples` recorded on every confirmed
+    entry, and the runner re-enriches pending mints (discovery alone starves
+    the stage). Regression: `tests/test_meme_confirm_stage.py` (11 tests).
 - **Source:** `docs/alpha-mode-memecoins.md`
 
 ### 8.3 — Hummingbot venue-aware execution
@@ -706,12 +724,29 @@ These are currently broken, crashed, or actively blocking the system.
 ## Phase 9 — Governance & Process (Ongoing)
 
 ### 9.1 — Hygiene batch before repo goes public
-- Add `requirements-ml.txt` (`lightgbm`, `pandas`, `scikit-learn`)
-- Fix stale test counts in `twitter_thread.md`, `docs/audit-trail-trader-diagram.mmd`
-- Resolve `.mmd` claim that SVG/PNG/excalidraw renderings exist
-- Close `ML_ROADMAP_REVISED.md` for failed carry experiment
-- Remove dead weight: empty `-p/` directory, `docs/design/waitlist-confirmation-email.html`, `NotImplementedError` placeholder in `scripts/train_carry_model.py`
-- Decide dead-code policy for zero-address fallbacks, `fill_timeout_cycles`, `get_nonce()`
+- **Status:** DONE 2026-10-23 (all resolvable items closed; one decision left
+  with the operator). Item by item:
+  - `requirements-ml.txt` — **already existed and is tracked** (`xgboost`,
+    `lightgbm`, `torch`, `scikit-learn`, `pandas`). The dev-only trio the CI
+    needs lives in `requirements-dev.txt` (f803208) so Vercel stays slim.
+  - Stale test counts in `twitter_thread.md` / `docs/audit-trail-trader-diagram.mmd`
+    — **verified absent**: neither file states a test count any more.
+  - `.mmd` rendering claim — **already corrected in place** by the 2026-10-02
+    note ("no SVG/PNG/Excalidraw renderings are checked in; render from the
+    `.mmd` source on demand").
+  - `ML_ROADMAP_REVISED.md` — never tracked (local-only, `.git/info/exclude`);
+    the carry experiment's falsification is recorded in
+    `docs/falsifications-course-of-action.md`, which is the tracked authority.
+  - Dead weight — `-p/` did not exist; `docs/design/waitlist-confirmation-email.html`
+    was untracked+excluded (feature withdrawn) and is now deleted from disk;
+    `scripts/train_carry_model.py` no longer contains a `NotImplementedError`
+    placeholder (already replaced by the real training path).
+  - 13 untracked scratch files from an earlier doc audit
+    (`check_refs*.py`, `missing_*.txt`, `compare_result.txt`, `HTTP`, …) deleted.
+  - **Still open (operator decision, not code):** dead-code policy for the
+    zero-address fallbacks, `fill_timeout_cycles` and `get_nonce()`. These are
+    dormant-by-design guards; the question is whether "dormant but correct"
+    is allowed to stay, which is a policy call, not a cleanup.
 - **Source:** `docs/OPEN_DECISIONS.md:208-229` (D9)
 
 ### 9.2 — Secret scanning + pre-commit
@@ -726,7 +761,9 @@ These are currently broken, crashed, or actively blocking the system.
 - **Source:** `docs/PENDING_TASKS_REPORT.md`, `scripts/rotate_keys.py`
 
 ### 9.4 — Test count maintenance
-- **Current:** 559 passed (16 Windows tmp errors, 3 env 401s).
+- **Current:** 1143 passed, 0 failed, 0 errors (2026-10-23, full
+  `python -m pytest tests/ -q`; the earlier 16 Windows tmp errors and 3 env
+  401s are gone).
 - **Target:** Every bug fixed gains a regression test. Test count only goes up.
 - **Verification:** `python -m pytest tests/ -q` green
 - **Source:** `AGENTS.md`, `docs/OPEN_DECISIONS.md:234-247`
