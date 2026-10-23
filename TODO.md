@@ -781,13 +781,26 @@ These are currently broken, crashed, or actively blocking the system.
 
 ## Quick Reference: What Currently Exists vs. What's Missing
 
+Re-checked 2026-10-23 against the running system — `/manifest` and the agent
+card, X Layer testnet RPC (`eth_getCode`), the VPS service, and the test suite.
+The code is the source of truth; this table is a map, and it had drifted far
+enough that some rows said "missing" about things that ship and "working" about
+things that do not. Rows carrying ⚠️ are older judgements that have **not** been
+re-verified — read them as unverified, not as current fact.
+
 | System | Status |
 |--------|--------|
+| Satellite loop (`src/meme_loop.py`, `scripts/meme_runner.py`) | ✅ Live on the VPS as `tars-satellite`, **paper only**. G1 gate unmet: no live track record |
+| Satellite entry accounting (`spent_usd` residue) | ✅ Fixed 2026-10-23 (`af80351`); proven in production: entry → rug exit → `spent_usd` back to exactly 0.0 |
 | Core trading loop (`src/agent.py::run_trading_cycle`) | ✅ Working |
 | Risk gate (`src/execution/risk_gate.py`) | ✅ Working (non-overridable) |
-| Onchain audit (`src/audit_logger.py` → `TradeAuditTrail.sol`) | ✅ Working on X Layer testnet |
-| Multi-leg execution (`src/multi_leg.py`) | ⚠️ Partial-fill bug (D1) |
-| Signal engine (`src/signals.py`) | ❌ Crashes on import (`DBCCurveType`) |
+| Kill switch | ⚠️ Gate logic works; engaged state is in-process only, not durable |
+| Onchain audit (`src/audit_logger.py` → `TradeAuditTrail.sol`) | ✅ Deployed and logging on X Layer testnet (`0x6019b9…`) |
+| TradingVault.sol | ✅ Deployed on X Layer testnet (`0x747114…`) |
+| TreasuryMultisig.sol | ⚠️ Written, not deployed |
+| AgentRegistry.sol | ⚠️ Written, not deployed — the onchain registry pointer is still null |
+| Multi-leg execution (`src/multi_leg.py`) | ⚠️ Partial-fill bug (D1), unchanged since 2026-08 |
+| Signal engine (`src/signals.py`) | ✅ Imports clean (the old `DBCCurveType` crash is gone) |
 | Data integrity gate (`src/data_integrity.py`) | ✅ Working |
 | Curator (`src/curator.py`) | ✅ Working (auto-revert needs D7 fix) |
 | Validation gate (`src/validation.py`) | ✅ Working |
@@ -796,29 +809,22 @@ These are currently broken, crashed, or actively blocking the system.
 | Learning store (`src/learning_store.py`) | ✅ Working |
 | MCP bridge (`src/mcp_bridge.py`) | ✅ Working (unwired) |
 | Panta client (`src/panta_client.py`) | ✅ Rewritten to documented API (14 tests) |
-| RPC Fast path (`src/solana_rpc.py`) | ✅ Built, honest-null unconfigured (5 tests) |
 | Signer interface (`src/signer.py`) | ✅ Working (D10 ready) |
 | Reconciliation (`src/reconciliation.py`) | ✅ Working |
 | Alerting (`src/alerting.py`) | ✅ Working |
-| TradingVault.sol | ✅ Written, not deployed |
-| TreasuryMultisig.sol | ✅ Written, not deployed |
-| Contabo VPS | ⬜ Not provisioned |
-| Persistent host | ❌ Vercel serverless incompatible |
-| Solana path | ❌ Does not exist |
-| RPC Fast integration | ❌ Does not exist |
-| Depositor UI | ⬜ Static HTML only |
+| Hire contract (`POST /hire`) | ✅ Accepts every shape it documents: `own_account`/`demo`/`live`/`data`, canonical row or `{"data": […]}` envelope; pinned by `tests/test_hire_contract.py` |
+| x402 pricing | ✅ Two tiers in `PRICED_ROUTES` (`premium` $0.50, `micro` $0.01); ⚠️ **not enforced** — `PAY_TO_ADDRESS` is unset, so priced routes are served free and the card reports `enforced: false` |
+| Solana data path (`src/solana_rpc.py`) | ⚠️ Read-only SOL price/slot over RPC Fast; unconfigured and honest-null. No Solana trading path |
+| RPC Fast integration | ⚠️ Client + status surface exist (`/api/v1/rpc-fast-status`); no key configured |
+| Depositor UI | ⬜ Static `static/depositor.html` only |
 | Wallet connect (real) | ❌ Placeholder |
-| x402 pricing tiers | ❌ Binary only |
-| Agent registry (onchain) | ❌ Static manifest.json only |
-| Kill-switch durable state | ❌ In-memory only |
-| Volume limit enforcement | ❌ Display-only |
-| Fat-finger for market orders | ❌ Only on limit orders |
-| Allowlist semantics | ⚠️ Broader than documented |
-| Consensus quarantine | ⚠️ Partially implemented in `consensus.py` |
-| Feature-drift hard-fail | ❌ Not implemented |
-| `do_predict` novelty gate | ❌ Not implemented |
-| Isotonic calibration | ❌ Not implemented |
-| Data-drawer persistent store | ❌ Not implemented |
+| Persistent host | ⚠️ Split: API on Vercel serverless, satellite on a provisioned VPS |
+| Test suite | ✅ 1172 passed |
+
+Still carried from 2026-08 and **not** re-checked: volume-limit enforcement,
+fat-finger on market orders, allowlist semantics, consensus quarantine,
+feature-drift hard-fail, `do_predict` novelty gate, isotonic calibration,
+data-drawer persistent store. Assume stale until verified.
 
 ---
 
