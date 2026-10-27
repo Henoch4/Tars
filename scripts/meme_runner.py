@@ -22,6 +22,99 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 AGENT_ENV = "/etc/tars/agent.env"
 
+# -- durable breakers (kill-switch layer 2: auto-tripped state) -------------
+# The MANUAL switch is already durable by construction: the HALT file beside
+# positions.json (meme_loop, checked every cycle, --halt/--resume). What was
+# in-memory-only is the AUTO state: daily loss, streak pause, drawdown halt.
+# A restart used to invent a "fresh day" and lift an in-memory trip.
+# DurableBreakers + breakers_store fix exactly that. Default OFF via
+# TARS_BREAKERS (built for a declared restart change, not this window).
+
+
+from src.breakers_store import read_breaker_state, write_breaker_state
+from src.satellite_breakers import BreakerLimits, SatelliteBreakers
+
+
+def _breakers_enabled() -> bool:
+    """Operator switch (default OFF — byte-identical paper behavior).
+    Enabling is a declared restart change: once on, auto-tripped breaker
+    state becomes durable and entries gain a fail-closed gate the None
+    path never had."""
+    return os.environ.get("TARS_BREAKERS", "").strip().lower() in (
+        "1", "true", "yes")
+
+
+def _breaker_state_path() -> str:
+    """breakers.json beside the blotter (same durable-dir pattern as the
+    forensic caches). Overridable for tests via TARS_BREAKERS_PATH."""
+    from src.meme_loop import BLOTTER_PATH
+    override = os.environ.get("TARS_BREAKERS_PATH", "").strip()
+    if override:
+        return override
+    return os.path.join(os.path.dirname(os.path.abspath(BLOTTER_PATH)),
+                        "breakers.json")
+
+
+class DurableBreakers(SatelliteBreakers):
+    """Breakers that persist every material transition to disk. The pure
+    class decides; this subclass only adds writes after each transition —
+    record_result (accounting/pause/halt) and reset (operator clear). No
+    override of new_entries_allowed: the decision logic stays the tested
+    pure one."""
+
+    def __init__(self, path: str, limits: BreakerLimits | None = None):
+        super().__init__(limits=limits or BreakerLimits())
+        self.state_path = path
+
+    def record_result(self, net_usd: float, ts: float) -> None:
+        super().record_result(net_usd, ts)
+        self._persist(float(ts))
+
+    def reset(self) -> None:
+        super().reset()
+        self._persist(time.time())
+
+    def _persist(self, ts: float) -> None:
+        try:
+            write_breaker_state(self.state_path, self, ts)
+        except OSError as e:
+            print(f"BREAKERS: state save FAILED ({e}) — a halt tripped now "
+                  f"may NOT survive a restart; investigate "
+                  f"{self.state_path}", flush=True)
+
+    @classmethod
+    def restored(cls, path: str, state: dict | None, err: str | None,
+                 limits: BreakerLimits | None = None) -> "DurableBreakers":
+        """Boot-time restore. Fail-closed on an unreadable safety state:
+        an unreadable file halts entries with a named reason until an
+        operator resets (reset() rewrites the file). A MISSING file is a
+        first boot, not an error. Corrupt FIELDS inside a readable file
+        stay fail-soft — apply_state degrades them to fresh defaults."""
+        b = cls(path, limits=limits)
+        if err:
+            b.halted = True
+            b.halt_reason = (f"state unreadable ({err}); manual reset of "
+                             f"{path} required")
+            print(f"BREAKERS: {b.halt_reason}", flush=True)
+        elif state is not None:
+            b.apply_state(state)
+        return b
+
+
+def _load_durable_breakers() -> DurableBreakers:
+    path = _breaker_state_path()
+    state, err = read_breaker_state(path)
+    return DurableBreakers.restored(path, state, err)
+
+
+def _breakers_for_loop():
+    """The one wiring point: SatelliteLoop(breakers=...). None unless
+    TARS_BREAKERS is set — the defaulted-None paper path stays byte-identical
+    (pinned by tests)."""
+    if not _breakers_enabled():
+        return None
+    return _load_durable_breakers()
+
 
 def _load_env():
     """Load HELIUS_* and SOLAMI_* from agent.env into os.environ."""
@@ -525,6 +618,7 @@ def main():
         max_session_usd=args.max_session,
         max_candidates=args.candidates,
         reentry_cooldown_s=args.reentry_cooldown * 60.0,
+        breakers=_breakers_for_loop(),
     )
 
     if args.status:

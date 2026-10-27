@@ -119,23 +119,33 @@ class SatelliteBreakers:
     @classmethod
     def from_state(cls, state: dict, limits: BreakerLimits | None = None) -> "SatelliteBreakers":
         b = cls(limits=limits or BreakerLimits())
-        if not isinstance(state, dict):
-            return b
-        try:
-            b.daily_loss = {int(k): float(v) for k, v in (state.get("daily_loss") or {}).items()}
-        except (TypeError, ValueError):
-            b.daily_loss = {}
-        try:
-            b.consecutive_losses = int(state.get("consecutive_losses", 0))
-        except (TypeError, ValueError):
-            b.consecutive_losses = 0
-        try:
-            b.paused_until = float(state.get("paused_until", 0.0))
-        except (TypeError, ValueError):
-            b.paused_until = 0.0
-        b.halted = bool(state.get("halted", False))
-        b.halt_reason = str(state.get("halt_reason", ""))
+        b.apply_state(state)
         return b
+
+    def apply_state(self, state: dict) -> None:
+        """Restore this instance's counters from a `state()` payload.
+        Garbage fields read as fresh defaults (a corrupt counter is never
+        inflated into a trip) — the file is the operator's memory of the
+        day, not an oracle. `halted` is preserved as a bool: a corrupt
+        reason string still leaves the halt visible; the durable store's
+        fail-closed path handles the truly unreadable case."""
+        if not isinstance(state, dict):
+            return
+        try:
+            self.daily_loss = {int(k): float(v)
+                               for k, v in (state.get("daily_loss") or {}).items()}
+        except (TypeError, ValueError):
+            self.daily_loss = {}
+        try:
+            self.consecutive_losses = int(state.get("consecutive_losses", 0))
+        except (TypeError, ValueError):
+            self.consecutive_losses = 0
+        try:
+            self.paused_until = float(state.get("paused_until", 0.0))
+        except (TypeError, ValueError):
+            self.paused_until = 0.0
+        self.halted = bool(state.get("halted", False))
+        self.halt_reason = str(state.get("halt_reason", ""))
 
 
 def _end_of_day(ts: float) -> float:
