@@ -826,10 +826,28 @@ re-verified — read them as unverified, not as current fact.
 | Persistent host | ⚠️ Split: API on Vercel serverless, satellite on a provisioned VPS |
 | Test suite | ✅ 1172 passed |
 
-Still carried from 2026-08 and **not** re-checked: volume-limit enforcement,
-fat-finger on market orders, allowlist semantics, consensus quarantine,
-feature-drift hard-fail, `do_predict` novelty gate, isotonic calibration,
-data-drawer persistent store. Assume stale until verified.
+Still carried from 2026-08: ~~volume-limit enforcement, fat-finger on
+market orders, allowlist semantics~~ — **verified live 2026-10-28 by
+direct read of `src/execution/risk_gate.py`** (not just test green):
+- Volume limit: enforced as independent block 4b
+  (`DAILY_VOLUME_LIMIT_EXCEEDED`, current + order vs
+  `max_daily_volume_usd`; unwind legs admitted with documented
+  rationale) — distinct from trade-count block 4.
+- Fat-finger on market orders: enforced at block 6b — market orders
+  carrying `intended_price` are rejected vs the `max_slippage_pct`
+  collar, and a missing current price fails closed
+  (`NO_PRICE_REFERENCE`); limit orders keep the 20% block-6 check.
+- Allowlist semantics: `_is_asset_allowed` is EXACT-MATCH ONLY
+  (`inst_id in self._allowed_set`; docstring: "No base-asset family
+  matching — every instrument must be explicitly listed").
+  `ASSET_NOT_ALLOWED` wording in `src/advisory.py` matches this.
+  Known doc wart: the comment above `check_order`'s check 1 still says
+  "same base asset" — the implementation + docstring supersede it.
+
+Still stale (not re-checked this session): consensus quarantine,
+feature-drift hard-fail, `do_predict` novelty gate, isotonic
+calibration. Data-drawer persistent store: **DONE** (see 4.9), no
+longer carried stale.
 
 ---
 
