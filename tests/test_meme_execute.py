@@ -155,6 +155,50 @@ def test_live_buy_blocked_up_front_never_quotes():
     assert out["broadcast"] is False
 
 
+# --- pinned risk levels (2026-10-27, user authorized) -------------------
+# The tiny-live path shipped with MAX_SESSION_SPEND_USD=5.0 + a $0.50
+# paper-gas hurdle input: any size < ~$6.25 failed the hurdle and any
+# size > $5.00 failed the session cap — an EMPTY feasible band where the
+# CLI could never buy at all (measured live 2026-10-27: --usd 6.0 and
+# --usd 7.0 both refused). The user authorized 8.0 + a live gas figure.
+# These pins are deliberate: quietly moving risk levels back or onward
+# without a human decision must break CI.
+def test_pinned_risk_levels_2026_10_27():
+    assert ex.MAX_SESSION_SPEND_USD == 8.0
+    assert ex.LIVE_GAS_ESTIMATE_USD == 0.10
+
+
+def test_six_dollar_buy_now_fits_band():
+    """$6.00: used to die on the $0.60 hurdle boundary (est 0.60 > 10% of
+    5.00...); now est = 0.02*6 + 0.10 = $0.22 -> 3.7% costs, allowed."""
+    ledger = ExecutionLedger()
+    allowed, reason = ledger.approve(6.0, 0.02 * 6.0 + ex.LIVE_GAS_ESTIMATE_USD)
+    assert allowed == 6.0, reason
+
+
+def test_band_still_cap_bounded():
+    """The bump widened the band; it did not remove the ceiling. While
+    approve() compares spent+allowed vs the cap (refusing, not clamping),
+    booked spend lives with the CALLER: the autonomous loop books it
+    after each allowed buy (meme_loop.py books spent_usd += allowed);
+    a standalone CLI invocation starts a fresh ledger each run (stated
+    limitation — per-invocation cap, not cross-run). Assertions simulate
+    the loop's exact booking sequence."""
+    est = lambda s: 0.02 * s + ex.LIVE_GAS_ESTIMATE_USD
+
+    ledger = ExecutionLedger()
+    allowed, reason = ledger.approve(9.0, est(9.0))
+    assert allowed == 0.0 and "session cap" in reason
+
+    # loop sequence: allow $6, book it, then try $4 more -> refuses
+    ledger2 = ExecutionLedger()
+    allowed, _ = ledger2.approve(6.0, est(6.0))
+    assert allowed == 6.0
+    ledger2.spent_usd += 6.0
+    allowed, reason = ledger2.approve(4.0, est(4.0))
+    assert allowed == 0.0 and "session cap" in reason
+
+
 def test_live_buy_full_path_with_stubs():
     ledger = ExecutionLedger()
     http = _http({"/order": _order(),

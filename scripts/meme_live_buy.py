@@ -9,8 +9,13 @@ Usage (on the VPS):
 
 Without --live, prints the quote + hurdle verdict and stops (paper).
 With --live, requires --confirm (any non-empty operator string): quotes,
-signs with /etc/tars/book2-satellite.json, executes via Jupiter, prints
+signs with the resolved keypair file, executes via Jupiter, prints
 the signature for Solscan verification. Caps + hurdle enforced either way.
+
+Keypath resolution (2026-10-27): default stays the VPS path
+/etc/tars/book2-satellite.json; --keypath or env MEME_KEYPAIR_PATH
+(runs anywhere, e.g. a local dev box pointing at space/) overrides it.
+Format: 64-int JSON array (solana-keygen / solders.from_bytes).
 
 Conventions: buys are SOL -> token (inputMint = wSOL). --usd is pre-swap
 notional; lamports derive from the live SOL price (/price/v3).
@@ -22,7 +27,18 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 WSOL = "So11111111111111111111111111111111111111112"
-KEYPATH = "/etc/tars/book2-satellite.json"
+KEYPATH_DEFAULT = "/etc/tars/book2-satellite.json"
+
+
+def resolve_keypath(cli_value: str | None) -> str:
+    """--keypath > env MEME_KEYPAIR_PATH > VPS default. Kept pure (no
+    signing, no network) so it is testable offline."""
+    if cli_value:
+        return cli_value
+    from_env = (os.getenv("MEME_KEYPAIR_PATH") or "").strip()
+    if from_env:
+        return from_env
+    return KEYPATH_DEFAULT
 
 
 def main(argv=None):
@@ -32,7 +48,11 @@ def main(argv=None):
     ap.add_argument("--live", action="store_true", help="actually broadcast")
     ap.add_argument("--confirm", default="", help="operator confirm string (live only)")
     ap.add_argument("--slippage-bps", type=int, default=100)
+    ap.add_argument("--keypath", default=None,
+                    help="keypair JSON path (default: MEME_KEYPAIR_PATH, "
+                         "then /etc/tars/book2-satellite.json)")
     args = ap.parse_args(argv)
+    keypath = resolve_keypath(args.keypath)
 
     from src.meme_execute import (
         ExecutionLedger,
@@ -53,19 +73,23 @@ def main(argv=None):
     taker = None
     try:
         from src.meme_execute import book2_pubkey
-        taker = book2_pubkey(KEYPATH)
+        taker = book2_pubkey(keypath)
     except Exception as e:
-        print(f"ABORT: cannot read Book-2 pubkey ({e}); "
+        print(f"ABORT: cannot read keypair at {keypath} ({e}); "
               f"solders installed? pip install solders")
         return 2
     # Cost estimate: Jupiter RTSE at order time is authoritative; pre-check
-    # with venue flat proxy (1% + $0.50 gas) so the hurdle bites early.
-    from src.meme_satellite import PAPER_GAS_USD
-    est_costs = args.usd * 0.01 * 2 + PAPER_GAS_USD
+    # with venue flat proxy (1% + live gas estimate) so the hurdle bites
+    # early. 2026-10-27: PAPER_GAS_USD ($0.50, paper-bookkeeping figure)
+    # replaced by LIVE_GAS_ESTIMATE_USD — the old $5 cap + $0.50 gas left
+    # an empty feasible band where nothing could trade (user-authorized
+    # fix, pinned in tests).
+    from src.meme_execute import LIVE_GAS_ESTIMATE_USD
+    est_costs = args.usd * 0.01 * 2 + LIVE_GAS_ESTIMATE_USD
 
     ledger = ExecutionLedger()
     out = live_buy(
-        WSOL, args.mint, lamports, taker, KEYPATH, est_costs, args.usd,
+        WSOL, args.mint, lamports, taker, keypath, est_costs, args.usd,
         ledger, slippage_bps=args.slippage_bps,
         confirm=args.confirm if args.live else "",
     )

@@ -36,7 +36,22 @@ SWAP_BASE = "https://api.jup.ag/swap/v2"
 PRICE_URL = "https://api.jup.ag/price/v3"
 
 MAX_COST_FRACTION_OF_SIZE = 0.10
-MAX_SESSION_SPEND_USD = 5.0
+# 2026-10-27: 5.0 -> 8.0, USER-AUTHORIZED ("A") — the $5 cap + the old
+# gas estimate left an empty feasible band (nothing between ~$6.25 and
+# the cap could ever trade; the tiny-live path could never buy). $8
+# restores a tradable band on the ~$9 local wallet. Pinned by
+# tests/test_meme_execute.py::test_pinned_risk_levels_2026_10_27.
+MAX_SESSION_SPEND_USD = 8.0
+# 2026-10-27: live-gas estimate for the tiny-buy pre-check (replaces
+# meme_satellite.PAPER_GAS_USD = $0.50 in the CLI hurdle arithmetic,
+# which was a paper-accounting figure, not a Solana live cost).
+# Composition at bookkeeping time: 2x signature fee + priority fees,
+# plus headroom toward the ~$0.20 one-time recoverable ATA-rent a fresh
+# wallet pays on first buy (refundable on account close). Deliberately
+# conservative vs the true recurring cost (~$0.001) but no longer
+# cost-dominant at the $5-$8 sizes this path exists for.
+# Same pin as the session cap above.
+LIVE_GAS_ESTIMATE_USD = 0.10
 
 SOL_MINT = "So11111111111111111111111111111111111111112"
 
