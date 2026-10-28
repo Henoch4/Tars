@@ -24,6 +24,8 @@ from enum import Enum
 from typing import Literal, Optional
 
 from .execution.risk_gate import DBCCurveType
+from .cost_model import CARRY_EV_MARGIN, CostModel
+from .cost_model import CostModel, round_trip_cost_bps
 
 
 logger = logging.getLogger(__name__)
@@ -943,6 +945,7 @@ def backtest_simple(
     fee_bps: float = 0.0,
     slippage_bps: float = 0.0,
     funding_cost_bps: float = 0.0,
+    cost_model: CostModel | None = None,
 ) -> BacktestResult:
     """Basic backtest: execute tradeable signals, track PnL net of costs.
 
@@ -953,6 +956,9 @@ def backtest_simple(
     - funding_cost_bps: perp funding paid once per round-trip hold. Sign is
       folded into the caller's value (a strategy collecting funding passes a
       negative number).
+    - cost_model: optional :class:`CostModel`; if provided, its
+      ``round_trip_cost_bps()`` is used instead of deriving cost from the
+      individual fee/slippage/funding params.
 
     Defaults are ZERO for backward compatibility with existing callers — but
     a zero-cost run is a GROSS run. Any validation meant to answer "does this
@@ -962,6 +968,13 @@ def backtest_simple(
     Costs are charged on the full position notional (= current capital under
     this model's full-reinvest assumption), so compounding affects them too.
     """
+    if cost_model is not None:
+        # CostModel provides the full round-trip cost (both legs, both sides,
+        # fee + slippage). Don't double-count individual fee/slippage
+        # components; use only the full round-trip cost charged once per trade.
+        fee_bps = 0.0
+        slippage_bps = 0.0
+        funding_cost_bps = round_trip_cost_bps(cost_model)
     capital = initial_capital
     peak_capital = capital
     returns = []
@@ -1432,7 +1445,8 @@ def ml_funding_carry_signal(
 
 # Z1: 7-day-hold EV margin — carry must clear this multiple of round-trip
 # costs. Same concept as EV_MARGIN in scripts/build_carry_dataset.py.
-CARRY_EV_MARGIN = 2.0
+
+
 
 
 # --- Quantile / Pinball helpers (Koenker & Bassett 1978, Econometrica 46(1):33-50) ---
@@ -1530,6 +1544,7 @@ def carry_break_even_rate(
     hold_periods: float = 21.0,
     survival_prob: float = 1.0,
     pin_state: int = 0,
+    ev_margin: float = CARRY_EV_MARGIN,
 ) -> float:
     """Minimum per-period funding rate for delta-neutral carry to clear costs.
 
@@ -1562,7 +1577,7 @@ def carry_break_even_rate(
         taker_fee_bps_spot + taker_fee_bps_perp + 2.0 * slippage_bps_per_leg
     )
     # pin_state informational — quantile model should get it as feature
-    return total_cost_bps / 10000.0 * CARRY_EV_MARGIN / (hold_periods * survival_prob)
+    return total_cost_bps / 10000.0 * ev_margin / (hold_periods * survival_prob)
 
 
 def funding_carry_signal(

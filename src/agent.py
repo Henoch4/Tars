@@ -33,6 +33,7 @@ from .signals import (
     backtest_simple,
     dbc_curve_signal,
 )
+from .cost_model import BOOK_1_COST_MODEL, CostModel, break_even_funding_rate
 from .panta_client import PantaClient, get_panta_client
 from .trader import (
     TraderStrategy,
@@ -131,10 +132,12 @@ class AutonomousTradingAgent:
         # fees in bps, slippage per leg per side in bps, expected hold in
         # funding periods). The package requires funding above BOTH the
         # flat floor above and the computed break-even.
-        carry_taker_fee_bps_spot: float = 5.0,
-        carry_taker_fee_bps_perp: float = 5.0,
-        carry_slippage_bps: float = 3.0,
-        carry_hold_periods: float = 21.0,
+        # Defaults come from BOOK_1_COST_MODEL (5/5 bps fees, 3 bps slippage
+        # per leg, 21 periods = 7 days at 8h cadence).
+        carry_taker_fee_bps_spot: float = BOOK_1_COST_MODEL.taker_fee_bps_spot,
+        carry_taker_fee_bps_perp: float = BOOK_1_COST_MODEL.taker_fee_bps_perp,
+        carry_slippage_bps: float = BOOK_1_COST_MODEL.slippage_bps_per_leg,
+        carry_hold_periods: float = BOOK_1_COST_MODEL.hold_periods,
         regime_filter_window: int = 0,
         # ML-enhanced funding carry gate (tars-lora): replaces fixed threshold
         # with learned "will 7d carry clear costs?" decision
@@ -182,6 +185,12 @@ class AutonomousTradingAgent:
         self.carry_taker_fee_bps_perp = carry_taker_fee_bps_perp
         self.carry_slippage_bps = carry_slippage_bps
         self.carry_hold_periods = carry_hold_periods
+        self.cost_model = CostModel(
+            taker_fee_bps_spot=carry_taker_fee_bps_spot,
+            taker_fee_bps_perp=carry_taker_fee_bps_perp,
+            slippage_bps_per_leg=carry_slippage_bps,
+            hold_periods=carry_hold_periods,
+        )
         self.use_ml_carry_gate = use_ml_carry_gate
         self._ml_carry_client = None
         # S5/W3: if the gate was requested but the client failed to build,
@@ -723,12 +732,8 @@ class AutonomousTradingAgent:
         # Z1: the package must ALSO clear the fee-derived break-even. The
         # binding bound is the max of the flat floor and the computed edge,
         # so the gate only ever tightens, never loosens.
-        from .signals import carry_break_even_rate
-        break_even = carry_break_even_rate(
-            taker_fee_bps_spot=self.carry_taker_fee_bps_spot,
-            taker_fee_bps_perp=self.carry_taker_fee_bps_perp,
-            slippage_bps_per_leg=self.carry_slippage_bps,
-            hold_periods=self.carry_hold_periods,
+        break_even = break_even_funding_rate(
+            self.cost_model,
         )
         required = max(self.funding_arb_min_rate, break_even)
         if funding_rate < required:
