@@ -267,8 +267,9 @@ These are currently broken, crashed, or actively blocking the system.
 
 ### 3.6 — Independent-verification release gates (S7)
 - **Note 2026-10-14:** `scripts/check_release.py` now covers the MECHANICAL half (gitleaks-or-visible-skip, full pytest, manifest doctor, hermetic artifact round-trips, printed manual remainder; first certification 953 passed). The specified half — separate runner/evaluator with signed bundles — remains open.
+- **Status 2026-10-28 (commit `0252654`): SIGNED HALF BUILT, UNWIRED** — `src/release_bundles.py` implements the two-party protocol: runner signs subject + runtime + per-case receipts; evaluator (a different key) signs pass/escalate judgments bound to the runner bundle's canonical digest; `verify_release` refuses self-review (identical runner/evaluator trust keys → `SelfReviewedEvidence`), missing/malformed env trust keys → `UntrustedRelease`, forged / binding-drift / incomplete / mismatched judgments all typed fail-closed. `cryptography` pinned in `requirements-dev.txt` (dev/CI only, Vercel never imports this). UNWIRED: operator invocation over `check_release.py` output is the remaining step. Verification: `tests/test_release_bundles.py` 17 tests.
 - **Problem:** No independent verification means no release. Self-validation is banned.
-- **Fix:** Model eval: runner and evaluator separate; Ed25519 signatures over subject + runtime + receipts + rubric judgments
+- **Fix:** Model eval: runner and evaluator separate; Ed25519 signatures over exact subject + runtime + receipts + rubric judgments
 - **Verification:** Signed evaluation bundle verified by independent party
 - **Source:** `docs/claude-ads-stealables.md:CA13`, `AGENTS.md`
 
@@ -411,9 +412,10 @@ These are currently broken, crashed, or actively blocking the system.
 - **Source:** `docs/PENDING_TASKS_REPORT.md:31`, `docs/oobe-sap-stealables.md:340-359`
 
 ### 4.9 — Data-drawer persistent artifact store
+- **Status 2026-10-28 (commit `47dc1b9`): DONE (additive store; trainer rewiring deferred)** — `ml/data_drawer.py`: per-training artifacts in `models/<identifier>/sub-train-<PAIR>_<TS_ms>/` run dirs with `run_metadata.json`, a `pair_dictionary.json` index pointing at the newest run per pair, and run dirs themselves as history until `purge`. Atomic writes (temp dir + `os.replace`, index too), sha256 content-addressing verified on every `latest()` read (bit rot detected, never loaded), fail-closed typed taxonomy (`DrawerEmpty` on unknown identifier/pair — never implicit creation; `DrawerConflict` on same-timestamp re-save; `DrawerCorrupt` on unreadable index/missing artifact/digest mismatch/disk-vs-index disagreement), explicit retention (`purge` removes OLDEST whole runs beyond `keep`, newest never removable, index/newest must agree first, `keep<1` refused, pair-scoped). Additive by contract: `ml/train_carry.py`'s flat sidecar (`models/carry_quantile/meta.json`) and `ml/carry_inference.py` are untouched; rewiring the trainer to the drawer is a later deliberate change.
 - **Problem:** Per-training artifacts live nowhere persistent.
 - **Fix:** Adopt freqtrade Free1 data-drawer pattern: `models/<identifier>/sub-train-<PAIR>_<timestamp>/` with `*_model.joblib`, `*_metadata.json`, `*_feature_pipeline.pkl`, `pair_dictionary.json`.
-- **Verification:** `test_ml_inference.py` — model loads with metadata, feature drift detected
+- **Verification:** `tests/test_ml_data_drawer.py` (24 tests, hermetic under tmp_path); `test_ml_inference.py` sidecar path unchanged
 - **Source:** `docs/freqtrade-stealables.md:Free1`
 
 ### 4.10 — Funding-rate candle backtest realism
@@ -517,14 +519,17 @@ These are currently broken, crashed, or actively blocking the system.
 - **Source:** `docs/oobe-sap-stealables.md:361-378` (I13), `src/mcp_bridge.py`
 
 ### 6.3 — Advisory/explainability layer (non-trading, Book 3)
+- **Status 2026-10-28 (commit `7c7f678`): DONE (deterministic core; LLM surface deferred)** — `src/advisory.py` produces human-readable explanations: `explain_rejection` covers the live RiskGate table 1:1 (all 20 rejection codes incl. `ASSET_NOT_ALLOWED`/`STALE_PRICE`; a code missing from the table is reported "unexplained, ask the operator", never invented) and `explain_profile` names the active curator posture. Structural separation enforced, not asserted: the module imports nothing from src.execution/src.agent/src.signals (AST + fresh-interpreter tests), `Advisory` has no order-shaped field and no `to_signal`/`to_order`/`is_tradeable` affordance, and `tests/test_agent_wiring.py` proves a `Signal` cannot be constructed from one (recommendations never become orders). Honest-invariant floor: table text may never carry relax/override advice.
 - **Problem:** No decision-support layer. Sendo's "recommend, never order" pattern is the shape to copy.
 - **Fix:** Recommendation-only LLM surface, structurally outside the order path. Deterministic RiskGate remains the only order authority.
-- **Verification:** `tests/test_agent_wiring.py` — recommendations never become orders
+- **Verification:** `tests/test_advisory.py` (24 tests) + `tests/test_agent_wiring.py` advisory guards
 - **Source:** `docs/stealables-2026-9-repos.md`, `docs/alpha-mode-memecoins.md:7`
 
 ### 6.4 — Scheduled research delivery (V18)
+- **Status 2026-10-28 (commit `af6b94d`): DONE (core desk; persistence = caller's audit log)** — `src/research_delivery.py`: `propose` returns an opaque confirm token (registry stores only its sha256 digest; plaintext lives with the proposer and appears in no `to_dict`); delivery is impossible without a prior deliberate confirm; one-shot lifecycle with typed fail-closed taxonomy (`UnknownProposal`/`ResolvedProposal`/`NotYetScheduled`/`ProposalExpired`), confirm window 3600s + delivery lateness 300s (late = expired, re-propose), every delivery returns an immutable `DeliveryReceipt` for the caller's audit trail; kinds allowlisted (digest/deep_dive/trigger_watch). Not yet wired to any surface — wiring is a deliberate later change.
 - **Problem:** Delivery must be auditable, not fire-and-forget.
 - **Fix:** Scheduled-research surface where delivery is auditable.
+- **Verification:** `tests/test_research_delivery.py` (20 tests)
 - **Source:** `docs/vibe-trading-stealables.md:V18`
 
 ### 6.5 — Source of truth for risk constants (S9)
