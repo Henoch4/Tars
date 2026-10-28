@@ -2,6 +2,10 @@ mypy>=1.10
 py-solc-x>=2.0.0
 eth-tester[py-evm]>=0.8.0
 
+# src/release_bundles.py — Ed25519 signing for the CA13 two-party release
+# gate (dev/CI/operator only; Vercel never imports this module)
+cryptography>=42.0.0
+
 # tests/test_validation.py (isotonic calibration gate) and tests/test_ml_inference.py
 # hard-require scikit-learn/lightgbm; they live here (not requirements.txt) so Vercel
 # stays slim, and NOT all of requirements-ml.txt (torch is hundreds of MB)
