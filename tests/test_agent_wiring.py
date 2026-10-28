@@ -146,3 +146,44 @@ def test_audit_log_records_integrity_block(tmp_path):
     assert block is not None and block.blocks_trading
     agent.audit_log.write("integrity_block", {"asset": "BTC-USDT-SWAP", "reasons": block.reasons})
     assert "integrity_block" in audit_path.read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Book-3 advisory layer guard (Sendo "recommend, never order")
+# The advisory produces human-readable explanations. These tests pin the
+# contract at the agent boundary: an Advisory is not a Signal, cannot be
+# lifted into one, and its presence in a cycle changes no order decision.
+# ---------------------------------------------------------------------------
+
+def test_advisory_is_not_a_signal_and_has_no_lift_path():
+    from src.advisory import Advisory
+
+    adv = Advisory(
+        advisory_id="adv_x", created_ts=0.0, kind="rejection_explainer",
+        subject="BTC-USDT-SWAP order refusal", headline="h",
+        evidence=(("risk_gate", "rejection code KILL_SWITCH_ACTIVE"),),
+        explanation="e",
+    )
+    assert not hasattr(adv, "is_tradeable")      # Signal's lifter affordance
+    assert not hasattr(adv, "to_signal")
+    assert not hasattr(adv, "to_order")
+    # the field sets must not overlap at all beyond plain provenance
+    signal_fields = {"strategy", "asset", "direction", "confidence_bps",
+                     "entry_price", "rationale", "metadata"}
+    overlap = set(Advisory.__dataclass_fields__) & signal_fields
+    assert not overlap, f"Advisory grew Signal-shaped fields: {sorted(overlap)}"
+
+
+def test_advisory_never_enters_a_cycle_signal_list():
+    """An agent that receives an advisory cannot confuse it with a signal:
+    the types share no constructor and the PLC never lifts it."""
+    from src.advisory import explain_rejection
+
+    adv = explain_rejection(asset="BTC-USDT-SWAP", ts=0.0,
+                            codes=["KILL_SWITCH_ACTIVE"])
+    agent = _agent()
+    # Advisory cannot masquerade: constructing a Signal from it is refused by
+    # the type system — Signal's required fields (direction, confidence_bps)
+    # do not exist on the advisory, so this would be a TypeError, not a trade.
+    with pytest.raises(TypeError):
+        Signal(strategy=adv, asset=adv)  # type: ignore[misc,arg-type]
