@@ -4,11 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script>(function(){try{var t=localStorage.getItem('theme');if(t?t==='dark':window.matchMedia('(prefers-color-scheme: dark)').matches)document.documentElement.classList.add('dark');}catch(e){}})();</script>
-<title>TARS &mdash; A trading robot with rules it cannot break</title>
-<meta name="description" content="TARS (Trade Audit & Risk System) is an automated crypto carry agent with strict safety limits it cannot override, and a public record of every decision &mdash; written down before any trade happens.">
+<title>TARS &mdash; Paper-first trading research with rules it cannot break</title>
+<meta name="description" content="TARS (Trade Audit & Risk System) is a multi-asset trading research system for crypto, tokens, and future equity strategies, with evidence gates and live execution disabled.">
 <meta name="theme-color" content="#F1F0EB">
-<meta property="og:title" content="TARS &mdash; A trading robot with rules it cannot break">
-<meta property="og:description" content="Strict limits the robot can't change, and a public log of every decision before the trade happens. Live on testnet &mdash; open source, 400+ automated checks passing.">
+<meta property="og:title" content="TARS &mdash; Paper-first trading research with rules it cannot break">
+<meta property="og:description" content="Strict limits the system can't change, public evidence for every decision, and paper-first research with live execution disabled.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://tarstrade.xyz/">
 <meta property="og:site_name" content="TARS">
@@ -18,7 +18,7 @@
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/static/favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="/static/apple-touch-icon-180.png">
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebSite","name":"TARS","url":"https://tarstrade.xyz","description":"Trade Audit & Risk System &mdash; A trading robot with rules it cannot break"}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebSite","name":"TARS","url":"https://tarstrade.xyz","description":"Trade Audit & Risk System &mdash; multi-asset trading research with evidence gates and live execution disabled"}</script>
 <noscript><style>.reveal,.binder-row{opacity:1!important;transform:none!important;filter:none!important;}</style></noscript>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -382,7 +382,7 @@ footer{border-top:1px solid var(--border);padding:var(--sp-700) 0 var(--sp-500);
 <a href="#main" class="skip-link">Skip to content</a>
 
 <div class="announce" id="announce">
-  <span><b>NEW</b> A shared vault you can deposit into is coming. <a href="#vault">See how it will work &rarr;</a></span>
+  <span><b>STATUS</b> Paper and shadow research only. Live execution is disabled. <a href="#paths">See how it works &rarr;</a></span>
   <button class="announce-close" id="announceClose" aria-label="Dismiss announcement">&times;</button>
 </div>
 
@@ -441,15 +441,15 @@ footer{border-top:1px solid var(--border);padding:var(--sp-700) 0 var(--sp-500);
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
         New &middot; Shared vault in testing
       </a>
-      <h1 class="hero-anim d2">A trading robot with <span class="icon-inline"><svg width="0.85em" height="0.85em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="vertical-align:-0.12em;"><path d="M12 3 4 6.5v5c0 5 3.4 8.5 8 9.5 4.6-1 8-4.5 8-9.5v-5L12 3Z"/></svg></span> rules it cannot break.<br><span class="mono-emph">And it proves it, every trade.</span></h1>
+      <h1 class="hero-anim d2">A trading research system with <span class="icon-inline"><svg width="0.85em" height="0.85em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="vertical-align:-0.12em;"><path d="M12 3 4 6.5v5c0 5 3.4 8.5 8 9.5 4.6-1 8-4.5 8-9.5v-5L12 3Z"/></svg></span> rules it cannot break.<br><span class="mono-emph">And it proves every decision.</span></h1>
       <p class="sub hero-anim d3">TARS runs trading cycles on the markets. And before every single trade, it must write down what it's about to do in a public record nobody can edit. And no matter how confident it gets, it can never exceed strict limits set in advance.</p>
       <div class="hero-actions hero-anim d4">
         <a class="btn-pill" href="#waitlist">Get launch updates</a>
         <a class="link-underline" href="#paths">See how it works &rarr;</a>
       </div>
       <div class="proof-line hero-anim d5">
-        <span><b>400+</b> automated checks pass</span>
-        <span>SOL <b>+13.6% net</b> validated</span>
+        <span><b>1,600+</b> automated checks pass</span>
+        <span>Paper-first <b>evidence</b> pipeline</span>
         <span>Every decision <b>publicly logged</b></span>
         <span>Spending caps <b>nobody can loosen</b></span>
       </div>
@@ -486,10 +486,10 @@ footer{border-top:1px solid var(--border);padding:var(--sp-700) 0 var(--sp-500);
           <div class="path-title">How It Decides</div>
           <ul class="path-list">
             <li>Several independent methods are built: trend, reversion, funding positioning</li>
-            <li>Today one method runs in testing; the rest stay off until they pass the history exam</li>
+            <li>Paper and shadow methods are measured independently; promotion requires an evidence review</li>
             <li>Less than 70% sure? It does nothing at all</li>
           </ul>
-          <div class="path-stats">1 METHOD LIVE &middot; OTHERS GATED BY THE EXAM</div>
+          <div class="path-stats">PAPER / SHADOW ONLY &middot; PROMOTION IS GATED</div>
           <a class="path-cta" href="https://github.com/Henoch4/Tars/blob/main/src/signals.py" target="_blank" rel="noopener">See the decision code <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
         </div>
       </div>
@@ -517,9 +517,9 @@ footer{border-top:1px solid var(--border);padding:var(--sp-700) 0 var(--sp-500);
           <ul class="path-list">
             <li>Every strategy is replayed against years of real market history, net of fees</li>
             <li>Results are checked for skill vs luck. Lucky strategies fail</li>
-            <li>Agent now runs on real exchange data (OKX demo and Binance spot cycles green, ensemble signals with confidence filters)</li>
+            <li>Research adapters, provider quality, and lifecycle accounting are measured before any promotion</li>
           </ul>
-          <div class="path-stats">AGENT LIVE ON REAL EXCHANGE DATA &middot; 400+ AUTOMATED CHECKS PASS</div>
+          <div class="path-stats">LIVE EXECUTION DISABLED &middot; 1,600+ AUTOMATED CHECKS PASS</div>
           <a class="path-cta" href="https://github.com/Henoch4/Tars/blob/main/src/validation.py" target="_blank" rel="noopener">See the exam <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
         </div>
       </div>
@@ -661,7 +661,7 @@ footer{border-top:1px solid var(--border);padding:var(--sp-700) 0 var(--sp-500);
       </a>
       <a class="bento-card bn-8 reveal" href="https://github.com/Henoch4/Tars/tree/main/tests" target="_blank" rel="noopener">
         <div class="bento-top"><span class="bento-num">08</span><span class="bento-tag">Automated<br>checks</span></div>
-        <div class="bento-bottom"><div><h3>Tests</h3><p>400+ checks, run offline</p></div><span class="bento-arrow"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span></div>
+        <div class="bento-bottom"><div><h3>Tests</h3><p>1,600+ checks, run offline</p></div><span class="bento-arrow"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span></div>
       </a>
     </div>
   </div>
@@ -679,7 +679,7 @@ footer{border-top:1px solid var(--border);padding:var(--sp-700) 0 var(--sp-500);
           <span class="fee-price">Free <span class="fee-unit">paper-trade SOL dry_run $0</span></span>
           <span class="fee-soon-badge">No fees today</span>
         </div>
-        <p class="fee-desc">Paper-trade SOL is free and gated — 1% risk, 1:1.5 reward via SafetyNet, q20&gt;16 bps + survival S(k). Live needs <code>cleared_for_paper_trading=True</code> (SOL 28 trades 54% +13.6% net). Your exchange account stays yours: OKX or Binance official login, never sees password/API keys.</p>
+        <p class="fee-desc">Paper and shadow research are free and gated. Candidates must pass the evidence pipeline before they can be considered for any promotion. Live execution is disabled; no deposit or trading authorization is implied by this page.</p>
       </div>
       <div class="fee-card">
         <div class="fee-top">
@@ -756,7 +756,7 @@ footer{border-top:1px solid var(--border);padding:var(--sp-700) 0 var(--sp-500);
       </div>
       <div class="faq-item">
         <button class="faq-q"><span>Can I deposit money today?</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></span></button>
-        <div class="faq-a"><p>Not yet. The shared vault is built and passing its tests, but deposits aren't open while it's still on testnet. <a href="https://x.com/tarstrade" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:underline;">Follow @tarstrade</a> and you'll hear the day they open.</p></div>
+        <div class="faq-a"><p>Not yet. The vault interface is a design preview and deposits are not open. The current system is paper/shadow research only, with live execution disabled. <a href="https://x.com/tarstrade" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:underline;">Follow @tarstrade</a> for updates.</p></div>
       </div>
       <div class="faq-item">
         <button class="faq-q"><span>Is this financial advice or a guaranteed return?</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></span></button>
@@ -764,7 +764,7 @@ footer{border-top:1px solid var(--border);padding:var(--sp-700) 0 var(--sp-500);
       </div>
       <div class="faq-item">
         <button class="faq-q"><span>Is the code open source?</span><span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></span></button>
-        <div class="faq-a"><p>Yes. The decision logic, the safety limits, the contracts and all 400+ automated checks are public on <a href="https://github.com/Henoch4/Tars" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:underline;">GitHub</a>. You don't have to take our word for any of this; you can check it yourself.</p></div>
+        <div class="faq-a"><p>Yes. The decision logic, safety limits, contracts, evidence pipeline, and automated checks are public on <a href="https://github.com/Henoch4/Tars" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:underline;">GitHub</a>. You don't have to take our word for any of this; you can check it yourself.</p></div>
       </div>
     </div>
   </div>
@@ -779,7 +779,7 @@ footer{border-top:1px solid var(--border);padding:var(--sp-700) 0 var(--sp-500);
         <a class="btn-pill" href="https://x.com/tarstrade" target="_blank" rel="noopener" style="background:var(--panel-dark-ink);color:var(--panel-dark-bg);text-decoration:none;">Follow @tarstrade</a>
         <a class="btn-pill ghost" href="https://github.com/Henoch4/Tars" target="_blank" rel="noopener" style="background:transparent;color:var(--panel-dark-ink);border:1px solid rgba(241,240,235,0.3);text-decoration:none;">Star on GitHub</a>
       </div>
-      <div class="final-note">1,000+ AUTOMATED CHECKS PASS TODAY. NOTHING HERE TOUCHES REAL MONEY UNTIL THE VAULT SHIPS.</div>
+      <div class="final-note">1,600+ AUTOMATED CHECKS PASS TODAY. LIVE EXECUTION IS DISABLED; EVIDENCE COMES BEFORE PROMOTION.</div>
     </div>
   </div>
 </section>
@@ -804,7 +804,7 @@ footer{border-top:1px solid var(--border);padding:var(--sp-700) 0 var(--sp-500);
           <a href="#paths">What it does</a>
           <a href="#binder">Safety rules</a>
           <a href="#faq">FAQ</a>
-          <a href="/dashboard">Live dashboard</a>
+          <a href="/dashboard">Operator dashboard</a>
           <a href="/depositor">Vault UI</a>
         </div>
         <div class="footer-col">
@@ -828,7 +828,7 @@ footer{border-top:1px solid var(--border);padding:var(--sp-700) 0 var(--sp-500);
     </div>
     <div class="footer-bottom">
       <span>&copy; 2026 TARS &mdash; Trade Audit &amp; Risk System.</span>
-      <span>Live on testnet, no real money yet.</span>
+      <span>Paper / shadow research only &middot; live execution disabled.</span>
     </div>
   </div>
 </footer>

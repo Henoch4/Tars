@@ -385,7 +385,7 @@
     <header class="dash-header" style="display:flex; justify-content:space-between; align-items:flex-start;">
       <div>
         <h1><span class="brand-mark"><svg width="22" height="22" viewBox="0 0 32 32" fill="none"><rect x="3" y="3" width="26" height="26" rx="8" stroke="currentColor" stroke-width="2.1"/><path d="M10 17 14.2 21.2 23 11" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/></svg></span>TARS <span class="beta">TESTNET</span></h1>
-        <p>Trade Audit &amp; Risk System &mdash; autonomous trading, gated by limits it cannot override.</p>
+        <p>Trade Audit &amp; Risk System &mdash; multi-asset paper research, evidence, and lifecycle controls.</p>
       </div>
       <nav class="dash-nav">
         <a href="/" class="home-link">Home</a>
@@ -394,9 +394,37 @@
       </nav>
     </header>
 
-    <section class="dash-main" id="main" aria-label="Trading">
+    <section class="card status-card" aria-label="System status" style="grid-column:1/-1; border-color:var(--accent);">
+      <div style="display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;flex-wrap:wrap;">
+        <div>
+          <h2 class="card-title" style="margin-bottom:0.35rem;">System status: paper / shadow only</h2>
+          <p class="help-text">Live execution is disabled. Strategies and asset classes are evaluated independently; promotion requires complete evidence and an explicit review.</p>
+        </div>
+        <span class="badge badge-neutral">GTA: historical analytics only</span>
+      </div>
+    </section>
+
+    <section class="card" aria-label="Coverage map" style="grid-column:1/-1;">
+      <h2 class="card-title">Coverage map</h2>
+      <p class="help-text" style="margin-bottom:0.8rem;">This separates what exists from what is being measured. A green status is not a live-trading approval.</p>
+      <div style="overflow-x:auto;">
+        <table class="table">
+          <thead><tr><th>Asset class</th><th>Strategy / rail</th><th>Chain / venue</th><th>Status</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td>Crypto majors</td><td>Carry / funding</td><td>OKX / Binance research adapters</td><td><span class="badge badge-approved">Built</span></td><td>Paper lifecycle and risk accounting</td></tr>
+            <tr><td>Memecoins</td><td>Core satellite + age variant</td><td>Solana</td><td><span class="badge badge-approved">Paper / shadow</span></td><td>Evidence collection and matched experiments</td></tr>
+            <tr><td>Utility tokens</td><td>Safety / sellability research</td><td>Solana</td><td><span class="badge badge-neutral">Gated</span></td><td>Provider and chain evidence still required</td></tr>
+            <tr><td>Equities</td><td>Research backlog</td><td>Planned venue</td><td><span class="badge badge-neutral">Planned</span></td><td>Not an active trading surface</td></tr>
+            <tr><td>Audit / vault rails</td><td>Decision evidence</td><td>X Layer testnet</td><td><span class="badge badge-approved">Built</span></td><td>Audit and reconciliation infrastructure</td></tr>
+            <tr><td>Perpetuals</td><td>Market-data integration</td><td>Injective testnet</td><td><span class="badge badge-neutral">Integration</span></td><td>Connectivity and fixture validation</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="dash-main" id="main" aria-label="Trading research">
       <div class="card">
-        <h2 class="card-title">Trading Control</h2>
+        <h2 class="card-title">Paper Cycle Control</h2>
         <div class="chip-row" id="assetChips">
           <button type="button" class="chip accent-btc" aria-pressed="true" data-asset="BTC-USDT-SWAP">BTC</button>
           <button type="button" class="chip accent-eth" aria-pressed="true" data-asset="ETH-USDT-SWAP">ETH</button>
@@ -404,19 +432,19 @@
           <button type="button" class="chip accent-bnb" aria-pressed="false" data-asset="BNB-USDT-SWAP">BNB</button>
         </div>
         <div class="controls-row">
-          <button class="run-btn" id="runBtn" onclick="runCycle()">Run Trading Cycle</button>
+          <button class="run-btn" id="runBtn" onclick="runCycle()">Run Paper Cycle</button>
           <span class="dot ok" id="liveDot" title="Connecting…"></span>
           <span class="badge badge-neutral" id="railsPill" title="Audit rails status">rails…</span>
           <span class="help-text" id="exchangeLabel" style="margin-left:0.4rem;"></span>
         </div>
         <div class="token-row">
-          <input id="agentToken" class="token-input" type="password" placeholder="Agent API token (live mode)" autocomplete="off" aria-label="Agent API token" spellcheck="false" />
-          <button class="token-save" type="button" onclick="saveAgentToken()">Save</button>
-          <span class="token-status" id="tokenStatus"></span>
+          <input id="agentToken" class="token-input" type="password" placeholder="Live authorization unavailable" autocomplete="off" aria-label="Live authorization unavailable" spellcheck="false" disabled />
+          <button class="token-save" type="button" onclick="saveAgentToken()" disabled>Live disabled</button>
+          <span class="token-status" id="tokenStatus">No live credentials accepted by this UI.</span>
         </div>
         <div class="schedule-note">Serverless: each run is one cycle. Schedule POST /trade repeats (e.g. a Vercel Cron Job) for continuous trading.</div>
         <div class="halt-notice" id="haltNotice">Trading is halted. Resume from the status strip above to run a cycle.</div>
-        <div class="help-text">Dry-run: no real trades are placed and nothing is sent on-chain. <span id="liveWarn" style="color: var(--danger); display: none;">Live mode executes real orders on mainnet.</span></div>
+        <div class="help-text">Paper mode: no real trades are placed and nothing is signed or broadcast.</div>
       </div>
 
       <div class="card" id="positionsCard">
@@ -530,7 +558,7 @@
     }
 
     function runBtnLabel() {
-      return dryRun ? 'Run Trading Cycle' : 'Run Live Trade';
+      return 'Run Paper Cycle';
     }
 
     function updateModeIndicator() {
@@ -554,7 +582,7 @@
       runBtn.classList.toggle('live', !dryRun && !halted);
       runBtn.style.display = '';
 
-      liveWarn.style.display = dryRun ? 'none' : 'inline';
+      if (liveWarn) liveWarn.style.display = dryRun ? 'none' : 'inline';
       notice.classList.toggle('show', halted);
       notice.textContent = halted
         ? 'Trading is halted. Click Resume in the status strip to allow the next cycle.'
@@ -566,7 +594,7 @@
       hideError();
 
       if (halted) {
-        if (!window.confirm('Resume live trading? This re-enables the trading cycle.')) return;
+        if (!window.confirm('Resume paper research cycles?')) return;
         try {
           const res = await fetch('/kill-switch/deactivate', { method: 'POST', headers: authHeaders({}) });
           const data = await res.json();
