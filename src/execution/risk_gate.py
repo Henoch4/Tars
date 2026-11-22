@@ -61,8 +61,10 @@ class DurableDailyCounters:
     _LOCKS: dict[str, threading.Lock] = {}
     _LOCKS_GUARD = threading.Lock()
 
-    def __init__(self, path: str | None = None, enabled: bool = True):
+    def __init__(self, path: str | None = None, enabled: bool = True,
+                 fail_closed: bool = False):
         self.enabled = enabled
+        self.fail_closed = fail_closed
         if not enabled:
             self.path = None
             self._data: dict[str, dict] = {}
@@ -139,6 +141,33 @@ class DurableDailyCounters:
                 f"Daily counters NOT persisted to {self.path}: {e}. "
                 "A process restart now resets today's loss/trade totals.",
             )
+            if self.fail_closed:
+                raise RuntimeError(
+                    f"Risk counter persistence failed at {self.path}"
+                ) from e
+
+    def _refresh_locked(self) -> None:
+        """Merge the latest on-disk snapshot before a cross-process write.
+
+        The process-local lock protects threads in one interpreter; the
+        atomic replace protects readers. Reloading while holding that lock
+        prevents two independently constructed RiskGates from losing each
+        other's counters on their next increment. A corrupt snapshot is not
+        trusted or used to erase a known-good in-memory state.
+        """
+        if not self.path:
+            return
+        try:
+            with open(self.path, "r") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                self._data = data
+        except (FileNotFoundError, json.JSONDecodeError, OSError) as e:
+            if not isinstance(e, FileNotFoundError):
+                logger.warning(
+                    "DurableDailyCounters: retaining in-memory state after "
+                    "unreadable refresh %s: %s", self.path, e
+                )
 
     def get(self, key: str, field: str, default):
         if not self.enabled or not self._lock:
@@ -150,6 +179,7 @@ class DurableDailyCounters:
         if not self.enabled or not self._lock:
             return
         with self._lock:
+            self._refresh_locked()
             entry = self._data.setdefault(key, {})
             if active is not None:
                 entry["active"] = active
@@ -163,6 +193,7 @@ class DurableDailyCounters:
         if not self.enabled or not self._lock:
             return
         with self._lock:
+            self._refresh_locked()
             entry = self._data.setdefault(key, {})
             entry[field] = entry.get(field, 0 if isinstance(amount, (int, float)) else 0) + amount
             self._persist()
@@ -311,6 +342,7 @@ class RiskGate:
         counter_store: DurableDailyCounters | None = None,
         counter_store_path: str | None = None,
         counters_durable: bool = False,
+        counter_fail_closed: bool = False,
         # --- Onchain source-of-truth hook (optional) ---
         # When an OnchainLogger is supplied, the gate reconciles its in-memory
         # daily accumulators against TradeAuditTrail.getAgentDailyStats at boot
@@ -405,7 +437,8 @@ class RiskGate:
         self._daily_trade_count: dict[str, int] = {}
         if counter_store is None:
             counter_store = DurableDailyCounters(
-                path=counter_store_path, enabled=counters_durable
+                path=counter_store_path, enabled=counters_durable,
+                fail_closed=counter_fail_closed,
             )
         self._counters = counter_store
         self._onchain_logger = onchain_logger
@@ -529,15 +562,23 @@ class RiskGate:
         """
         logger_obj = self._onchain_logger
         if logger_obj is None:
+            if self.require_onchain_sync:
+                raise RuntimeError("Required onchain logger is missing")
             return
         contract = getattr(logger_obj, "contract", None)
         if contract is None:
+            if self.require_onchain_sync:
+                raise RuntimeError("Required onchain contract is missing")
             return
         agent_address = getattr(logger_obj, "agent_address", None)
         if not agent_address:
+            if self.require_onchain_sync:
+                raise RuntimeError("Required onchain agent address is missing")
             return
         try:
-            onchain_ks = bool(contract.functions.killSwitchActive(agent_address).call())
+            onchain_ks = contract.functions.killSwitchActive(agent_address).call()
+            if self.require_onchain_sync and not isinstance(onchain_ks, bool):
+                raise RuntimeError("Onchain halt response is not a boolean")
             # Onchain kill switch is non-overridable authority for the halt.
             # If it's active here, the local gate MUST reflect it even though
             # the local switch was cleared — a stale/cleared local gate must
@@ -547,6 +588,8 @@ class RiskGate:
                 logger.warning(f"sync_with_onchain: tripping gate kill switch — {reason}")
                 self.activate_kill_switch(reason)
         except Exception as e:
+            if self.require_onchain_sync:
+                raise RuntimeError("Required onchain halt synchronization failed") from e
             # Reconciliation is a safety cross-check, not a blocking read. A
             # chain outage must never *lower* protection; log and proceed with
             # the last known-good local state (file-backed counters).

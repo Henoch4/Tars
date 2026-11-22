@@ -28,6 +28,9 @@ from .risk_gate import (
     validate_scoring_weights,
 )
 from .executor import OrderExecutor
+from .intent import ExecutionIntent, ExecutionReceipt, IntentRefused
+from .planner import ExecutionPlan, plan_intent
+from .backend import ExecutionBackend, ReadOnlyExecutionBackend
 
 __all__ = [
     "OrderSide",
@@ -49,4 +52,11 @@ __all__ = [
     "slippage_pct_to_fraction",
     "validate_scoring_weights",
     "OrderExecutor",
+    "ExecutionIntent",
+    "ExecutionReceipt",
+    "IntentRefused",
+    "ExecutionPlan",
+    "plan_intent",
+    "ExecutionBackend",
+    "ReadOnlyExecutionBackend",
 ]

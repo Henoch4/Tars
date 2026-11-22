@@ -211,14 +211,20 @@ def vault_abi():
     abi = _load_abi("TradingVault")
     address = os.getenv("VAULT_CONTRACT_ADDRESS", "").strip()
     usdt_address = ""
-    if address:
-        w3 = _get_web3()
-        vault = _vault_contract(w3)
-        if vault:
-            try:
-                usdt_address = vault.functions.asset().call()
-            except Exception:
-                pass
+    # An ABI/status read must remain useful on hosts where the vault has not
+    # been deployed yet. Do not probe RPC merely because a stale address is
+    # present in the environment when no local artifact exists.
+    if address and abi:
+        try:
+            w3 = _get_web3()
+            vault = _vault_contract(w3)
+            if vault:
+                try:
+                    usdt_address = vault.functions.asset().call()
+                except Exception:
+                    pass
+        except Exception as exc:  # status/ABI endpoint must be offline-safe
+            logger.info("Vault RPC unavailable while serving ABI: %s", exc)
     return {
         "abi": abi,
         "address": address,

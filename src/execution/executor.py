@@ -9,6 +9,7 @@ import asyncio
 import logging
 import math
 import uuid
+from typing import Callable
 
 from .models import (
     OrderRequest,
@@ -18,6 +19,9 @@ from .models import (
 )
 from ..metrics import inc
 from ..okx_cli import OkxCli, OkxCliError
+from .ownership import OrderClaimStore, OrderClaimConflict
+from .intent_store import IntentStore
+from .intent_reconciler import IntentReconciler
 
 logger = logging.getLogger(__name__)
 
@@ -53,10 +57,19 @@ class OrderExecutor:
 
     def __init__(self, cli: OkxCli, risk_gate, dry_run: bool = False,
                  agent_id: str = "default",
-                 fill_poll_attempts: int = 3, fill_poll_delay: float = 0.5):
+                 fill_poll_attempts: int = 3, fill_poll_delay: float = 0.5,
+                 execution_guard: Callable[[], None] | None = None,
+                 claim_store: OrderClaimStore | None = None,
+                 intent_store: IntentStore | None = None):
         self.cli = cli
         self.risk_gate = risk_gate
         self.dry_run = dry_run
+        self._execution_guard = execution_guard
+        self._claim_store = claim_store
+        self._intent_store = intent_store
+        self._intent_reconciler = (
+            IntentReconciler(cli, intent_store) if intent_store is not None else None
+        )
         # Daily-limit bucket this executor's orders count against. The agent
         # wires its own agent_id here so the executor's pre-submission check
         # (the ONLY count_trade check in the system) lands in the same daily
@@ -74,6 +87,15 @@ class OrderExecutor:
         # fetched once from `public instruments`. Needed for USD->contracts
         # conversion; failures are fatal per-order (fail closed).
         self._instruments: dict[str, dict] = {}
+
+    async def reconcile_unknown_intent(self, *, inst_id: str,
+                                       client_oid: str):
+        """Look up an ambiguous client order without submitting a retry."""
+        if self._intent_reconciler is None:
+            raise ExecutionError("Intent reconciliation is not configured")
+        return await self._intent_reconciler.reconcile(
+            logical_key=client_oid, inst_id=inst_id, client_oid=client_oid,
+        )
 
     @staticmethod
     def _infer_inst_type(inst_id: str) -> str:
@@ -272,6 +294,21 @@ class OrderExecutor:
         post-fill slippage verification below (the Liquid pattern: never print
         a fill you can't verify against a trusted reference price).
         """
+        # Runtime authorization is rechecked before any live account/venue I/O.
+        # The application builder installs this guard; bare executors remain
+        # usable by the offline component harnesses.
+        if self._execution_guard is not None:
+            try:
+                self._execution_guard()
+            except Exception as e:
+                raise ExecutionError(f"Runtime authorization failed: {e}") from e
+        if order.exit_protection_required and (
+            not order.take_trigger_px or not order.stop_trigger_px
+        ):
+            raise ExecutionError(
+                "Exit protection is required but both take-profit and stop-loss "
+                "triggers are not present; refusing unprotected entry"
+            )
         # --- Step 1: Risk gate check (non-overridable) ---
         # Live position context: the reduce-only check (gate check 8) needs to
         # know which side we are currently on. Without it the check is inert —
@@ -304,7 +341,28 @@ class OrderExecutor:
                 f"Code: {risk_check.code}"
             )
 
+        if self._claim_store is not None:
+            try:
+                self._claim_store.claim(order.client_oid or "", self.agent_id)
+            except (OrderClaimConflict, ValueError) as e:
+                raise ExecutionError(f"Execution ownership rejected order: {e}") from e
+
+        intent_key = order.client_oid or ""
+        if self._intent_store is not None:
+            try:
+                self._intent_store.create(
+                    intent_id=uuid.uuid4().hex,
+                    client_oid=intent_key,
+                    logical_key=intent_key,
+                    owner=self.agent_id,
+                )
+                self._intent_store.transition(intent_key, "AUTHORIZED")
+            except Exception as e:
+                raise ExecutionError(f"Order intent rejected: {e}") from e
+
         if self.dry_run:
+            if self._intent_store is not None:
+                self._intent_store.transition(intent_key, "SUBMITTING")
             result = OrderResult(
                 order_id=f"dryrun_{uuid.uuid4().hex[:8]}",
                 client_oid=order.client_oid or "",
@@ -320,6 +378,8 @@ class OrderExecutor:
             )
             from ..metrics import inc as _metrics_inc
             _metrics_inc("tars_orders_total", {"state": result.state.value})
+            if self._intent_store is not None:
+                self._intent_store.transition(intent_key, "ACKED")
             return self._verify_fill(order, result, reference_price=current_price)
 
         # --- Step 2: Submit to OKX via CLI ---
@@ -329,6 +389,8 @@ class OrderExecutor:
         # result reports in USD like the request.
         instrument = await self._get_instrument(order.inst_id)
         cli_size = self._cli_size(order, current_price, instrument)
+        if self._intent_store is not None:
+            self._intent_store.transition(intent_key, "SUBMITTING")
         try:
             result = await self.cli.run(
                 "trade", "order",
@@ -339,12 +401,22 @@ class OrderExecutor:
                 *(["--px", order.px] if order.px else []),
                 "--clOrdId", order.client_oid or "",
                 *(["--reduceOnly"] if order.reduce_only else []),
+                *(["--tpTriggerPx", order.take_trigger_px, "--tpOrdPx", "-1", "--tpTriggerPxType", "last"]
+                  if order.take_trigger_px else []),
+                *(["--slTriggerPx", order.stop_trigger_px, "--slOrdPx", "-1", "--slTriggerPxType", "last"]
+                  if order.stop_trigger_px else []),
                 use_global_flags=True,
             )
         except OkxCliError as e:
+            if self._intent_store is not None:
+                self._intent_store.transition(intent_key, "UNKNOWN", error=str(e))
             raise ExecutionError(f"OKX CLI order failed: {e}") from e
 
         if not result or "data" not in result:
+            if self._intent_store is not None:
+                self._intent_store.transition(
+                    intent_key, "UNKNOWN", error="missing exchange response"
+                )
             _count_response_failure("trade.order", "missing_data")
             raise ExecutionError(f"Unexpected CLI response: {result}")
 
@@ -362,6 +434,10 @@ class OrderExecutor:
             fee_ccy=order_data.get("feeCcy", "USDT"),
             raw=result,
         )
+        if self._intent_store is not None:
+            self._intent_store.transition(
+                intent_key, "ACKED", venue_order_id=order_result.order_id
+            )
         from ..metrics import inc as _metrics_inc
         _metrics_inc("tars_orders_total", {"state": order_result.state.value})
         # Market SWAP orders usually return no fillPx synchronously; without
@@ -464,6 +540,41 @@ class OrderExecutor:
             return positions[0] if positions else None
         except OkxCliError:
             return None
+
+    async def get_position_snapshot(self, inst_id: str) -> dict | None:
+        """Strict position read: empty is zero, failure is unavailable."""
+        try:
+            result = await self.cli.run(
+                "account", "positions", "--instId", inst_id,
+                use_global_flags=True,
+            )
+        except OkxCliError as exc:
+            raise ExecutionError(
+                f"Position data unavailable for {inst_id}: {exc}"
+            ) from exc
+        if isinstance(result, list):
+            positions = result
+        elif isinstance(result, dict) and isinstance(result.get("data"), list):
+            positions = result["data"]
+        else:
+            raise ExecutionError(
+                f"Malformed position response for {inst_id}: {result!r}"
+            )
+        if not positions:
+            return None
+        if not isinstance(positions[0], dict) or "pos" not in positions[0]:
+            raise ExecutionError(
+                f"Malformed position row for {inst_id}: {positions[0]!r}"
+            )
+        try:
+            amount = float(positions[0]["pos"])
+        except (TypeError, ValueError) as exc:
+            raise ExecutionError(
+                f"Non-numeric position for {inst_id}: {positions[0]!r}"
+            ) from exc
+        if not math.isfinite(amount):
+            raise ExecutionError(f"Non-finite position for {inst_id}")
+        return positions[0]
 
     async def _live_position_side(self, inst_id: str) -> str | None:
         """Resolve the current position side ("long" | "short" | None) for an

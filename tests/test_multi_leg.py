@@ -431,6 +431,148 @@ def test_amount_aware_unwind_scales_by_fill_ratio():
     assert unwind_calls[0][1] == pytest.approx(2500.0)
 
 
+def test_two_partial_legs_never_lock_and_unwind_actual_quantities():
+    mgr = MultiLegExecutionManager()
+    pkg = mgr.propose_package(two_leg_steps(), notional=10_000)
+
+    def partial_both(step, notional):
+        return LegResult(
+            step=step, requested_qty=notional, filled_qty=notional * 0.5,
+            avg_fill_price=100.0, slippage_pct=0.001,
+        )
+
+    pkg = mgr.dispatch_concurrent(pkg, partial_both)
+    assert pkg.state == PackageState.PENDING_FILL
+    assert all(r.filled for r in pkg.leg_results)  # some fill, not complete
+
+    unwind_calls = []
+    def unwind(step, notional):
+        unwind_calls.append((step.action, notional))
+        return LegResult(step=step, filled=True, fill_price=notional)
+
+    pkg = mgr.resolve(pkg, unwind)
+    assert pkg.state == PackageState.ABORTED
+    assert pkg.unwound is True
+    assert sorted(n for _, n in unwind_calls) == [2500.0, 2500.0]
+
+
+def test_fill_events_are_idempotent_monotonic_and_lock_on_late_completion():
+    mgr = MultiLegExecutionManager()
+    pkg = mgr.propose_package(two_leg_steps(), notional=10_000)
+    pkg = mgr.dispatch_concurrent(
+        pkg, lambda step, notional: LegResult(step=step, filled=False)
+    )
+    assert pkg.state == PackageState.PENDING_FILL
+    mgr.apply_fill_event(pkg, leg_index=0, event_id="fill-1",
+                         cumulative_filled_qty=2500.0)
+    mgr.apply_fill_event(pkg, leg_index=0, event_id="fill-1",
+                         cumulative_filled_qty=2500.0)
+    assert pkg.leg_results[0].filled_qty == pytest.approx(2500.0)
+    with pytest.raises(ValueError):
+        mgr.apply_fill_event(pkg, leg_index=0, event_id="fill-old",
+                             cumulative_filled_qty=1000.0)
+    mgr.apply_fill_event(pkg, leg_index=0, event_id="fill-2",
+                         cumulative_filled_qty=5000.0)
+    mgr.apply_fill_event(pkg, leg_index=1, event_id="fill-3",
+                         cumulative_filled_qty=5000.0)
+    assert pkg.state == PackageState.LOCKED
+
+
+def test_quantity_step_allows_only_exchange_rounding_dust():
+    steps = [
+        Step("venue_a", "short_perp", "BTC", 0.5, quantity_step=0.01),
+        Step("venue_b", "buy_spot", "BTC", 0.5, quantity_step=0.01),
+    ]
+    mgr = MultiLegExecutionManager()
+    pkg = mgr.propose_package(steps, notional=10_000)
+    pkg = mgr.dispatch_concurrent(pkg, lambda step, n: LegResult(step=step, filled=False))
+    # 0.005 remaining is below one exchange step, so it is dust.
+    mgr.apply_fill_event(pkg, leg_index=0, event_id="a", cumulative_filled_qty=4999.995)
+    mgr.apply_fill_event(pkg, leg_index=1, event_id="b", cumulative_filled_qty=5000.0)
+    assert pkg.state == PackageState.LOCKED
+
+
+def test_residual_above_quantity_step_does_not_lock():
+    steps = [
+        Step("venue_a", "short_perp", "BTC", 0.5, quantity_step=0.01),
+        Step("venue_b", "buy_spot", "BTC", 0.5, quantity_step=0.01),
+    ]
+    mgr = MultiLegExecutionManager()
+    pkg = mgr.propose_package(steps, notional=10_000)
+    pkg = mgr.dispatch_concurrent(pkg, lambda step, n: LegResult(step=step, filled=False))
+    mgr.apply_fill_event(pkg, leg_index=0, event_id="a", cumulative_filled_qty=4994.0)
+    mgr.apply_fill_event(pkg, leg_index=1, event_id="b", cumulative_filled_qty=5000.0)
+    assert pkg.state == PackageState.PENDING_FILL
+
+
+def test_position_reconciliation_matches_signed_leg_exposure():
+    mgr = MultiLegExecutionManager()
+    pkg = mgr.propose_package(two_leg_steps(), notional=10_000)
+    pkg = mgr.dispatch_concurrent(pkg, always_fill)
+    result = mgr.reconcile_positions(pkg, {
+        "venue_a:BTC": -5000.0,
+        "venue_b:BTC": 5000.0,
+    })
+    assert result.matched is True
+    assert pkg.position_reconciled is True
+
+
+def test_position_reconciliation_keeps_mismatch_open_and_explicit():
+    mgr = MultiLegExecutionManager()
+    pkg = mgr.propose_package(two_leg_steps(), notional=10_000)
+    pkg = mgr.dispatch_concurrent(pkg, always_fill)
+    result = mgr.reconcile_positions(pkg, {"venue_a:BTC": -4000.0})
+    assert result.matched is False
+    assert pkg.state == PackageState.LOCKED
+    assert pkg.position_reconciled is False
+    assert pkg.reconciliation_error is not None
+
+
+def test_position_reconciliation_rejects_nonfinite_snapshot():
+    mgr = MultiLegExecutionManager()
+    pkg = mgr.propose_package(two_leg_steps(), notional=10_000)
+    with pytest.raises(ValueError):
+        mgr.reconcile_positions(pkg, {"venue_a:BTC": float("nan")})
+
+
+@pytest.mark.asyncio
+async def test_position_reader_uses_explicit_step_mapping():
+    from src.execution.position_reader import PositionSnapshotReader
+
+    mgr = MultiLegExecutionManager()
+    pkg = mgr.propose_package(two_leg_steps(), notional=10_000)
+    pkg = mgr.dispatch_concurrent(pkg, always_fill)
+    calls = []
+
+    async def read(step):
+        calls.append(step.venue)
+        return -5000.0 if step.venue == "venue_a" else 5000.0
+
+    reader = PositionSnapshotReader(
+        read, lambda step: f"{step.venue}:{step.asset}"
+    )
+    result = await mgr.reconcile_from_reader(pkg, reader)
+    assert result.matched is True
+    assert calls == ["venue_a", "venue_b"]
+
+
+@pytest.mark.asyncio
+async def test_reconcile_open_packages_is_explicit_and_non_mutating():
+    from src.execution.position_reader import PositionSnapshotReader
+
+    mgr = MultiLegExecutionManager()
+    pkg = mgr.propose_package(two_leg_steps(), notional=10_000)
+    pkg = mgr.dispatch_concurrent(pkg, always_fill)
+
+    async def read(step):
+        return -5000.0 if step.venue == "venue_a" else 5000.0
+
+    reader = PositionSnapshotReader(read, lambda step: f"{step.venue}:{step.asset}")
+    results = await mgr.reconcile_open_packages(reader)
+    assert results[pkg.id].matched is True
+    assert pkg.state == PackageState.LOCKED
+
+
 def test_crash_recovery_restores_pending_package():
     """Z3/W4 regression: a restart mid-package must restore the persisted
     PENDING_FILL package (min-age interlock defers reconciliation of a

@@ -42,6 +42,7 @@ import uuid
 
 from .execution import OrderRequest, OrderResult, OrderStatus, OrderSide
 from .execution.risk_gate import DBCCurveType, DBCCurveConfig
+from .assets import slippage_model_for, SlippageModel
 import logging
 logger = logging.getLogger(__name__)
 
@@ -60,12 +61,16 @@ class Step:
     asset: str
     amount_ratio: float  # fraction of package notional for this leg
     max_slippage_pct: float = 0.003
+    slippage_model: SlippageModel = SlippageModel.FLAT_BPS
 
     # DBC-specific parameters (Meteora integration). Plain str/int/float
     # so steps stay JSON-serializable; values validated in validate_steps.
     dbc_curve: str = DBCCurveType.FLAT
     dbc_fee_bps: int = 100
     dbc_graduation: float = 0.5
+    # Exchange-native quantity increment. A residual smaller than one step is
+    # treated as rounding dust, never as an arbitrary percentage waiver.
+    quantity_step: float = 0.0
 
     def inverse(self) -> "Step":
         flip = {
@@ -74,8 +79,10 @@ class Step:
             "short_perp": "cover_perp",
             "cover_perp": "short_perp",
         }
-        return Step(self.venue, flip[self.action], self.asset, self.amount_ratio, self.max_slippage_pct,
-                    self.dbc_curve, self.dbc_fee_bps, self.dbc_graduation)
+        return Step(self.venue, flip[self.action], self.asset, self.amount_ratio,
+                    self.max_slippage_pct, self.slippage_model,
+                    self.dbc_curve, self.dbc_fee_bps, self.dbc_graduation,
+                    self.quantity_step)
 
 
 def validate_steps(steps: list[Step]) -> list[str]:
@@ -89,6 +96,18 @@ def validate_steps(steps: list[Step]) -> list[str]:
     for s in steps:
         if s.max_slippage_pct <= 0 or s.max_slippage_pct > 0.05:
             errors.append(f"step on {s.venue} has implausible max_slippage_pct={s.max_slippage_pct}")
+
+        # Venue-aware slippage model validation: the step's declared model
+        # must match the registry's model for that asset (fail-closed).
+        # Unknown assets (not in registry) skip this check — backward compat
+        # for ad-hoc steps in tests or one-off packages.
+        registry_model = slippage_model_for(s.asset)
+        if registry_model is not None and s.slippage_model != registry_model:
+            errors.append(
+                f"step on {s.venue} for {s.asset} declares slippage_model="
+                f"{s.slippage_model} but registry model is {registry_model}"
+            )
+
         # Validate DBC curve type + fee/graduation bounds (fail-closed)
         if s.dbc_curve not in [DBCCurveType.FLAT, DBCCurveType.EXPONENTIAL, DBCCurveType.LONG, DBCCurveType.CUSTOM]:
             errors.append(f"step on {s.venue} has invalid DBC curve type: {s.dbc_curve}")
@@ -96,6 +115,8 @@ def validate_steps(steps: list[Step]) -> list[str]:
             errors.append(f"step on {s.venue} has implausible dbc_fee_bps={s.dbc_fee_bps}")
         if not 0.0 < s.dbc_graduation <= 1.0:
             errors.append(f"step on {s.venue} has implausible dbc_graduation={s.dbc_graduation}")
+        if s.quantity_step < 0 or not math.isfinite(float(s.quantity_step)):
+            errors.append(f"step on {s.venue} has invalid quantity_step={s.quantity_step}")
     return errors
 
 
@@ -173,6 +194,7 @@ class LegResult:
             or self.filled_qty != 0.0
             or self.remaining_qty != 0.0
         )
+
         if not has_qty:
             # Legacy path: quantities not provided, derive placeholders.
             # Dispatcher will overwrite with real leg_notional shortly.
@@ -253,6 +275,14 @@ class LegResult:
         )
 
 
+@dataclass(frozen=True)
+class PositionReconciliation:
+    matched: bool
+    expected: dict[str, float]
+    actual: dict[str, float]
+    residuals: dict[str, float]
+
+
 @dataclass
 class Package:
     id: int
@@ -274,6 +304,11 @@ class Package:
     # at zero and only moves via record_package_funding (accrual from
     # actual rate history, never a fixed constant).
     funding_accrued_usd: float = 0.0
+    # Venue fill event IDs already applied; protects against duplicate and
+    # replayed websocket/REST events after a restart.
+    applied_fill_event_ids: set[str] = field(default_factory=set)
+    position_reconciled: bool | None = None
+    reconciliation_error: str | None = None
 
 
 class MultiLegExecutionManager:
@@ -338,6 +373,7 @@ class MultiLegExecutionManager:
                     "dbc_curve": s.dbc_curve,
                     "dbc_fee_bps": s.dbc_fee_bps,
                     "dbc_graduation": s.dbc_graduation,
+                    "quantity_step": s.quantity_step,
                 }
                 for s in pkg.steps
             ],
@@ -351,6 +387,9 @@ class MultiLegExecutionManager:
             "dispatched_legs": pkg.dispatched_legs,
             "last_fill_ts": pkg.last_fill_ts,
             "funding_accrued_usd": pkg.funding_accrued_usd,
+            "applied_fill_event_ids": sorted(pkg.applied_fill_event_ids),
+            "position_reconciled": pkg.position_reconciled,
+            "reconciliation_error": pkg.reconciliation_error,
         }
         with open(tmp, "w") as f:
             json.dump(data, f, separators=(",", ":"))
@@ -375,6 +414,7 @@ class MultiLegExecutionManager:
                         dbc_curve=s.get("dbc_curve", DBCCurveType.FLAT),
                         dbc_fee_bps=s.get("dbc_fee_bps", 100),
                         dbc_graduation=s.get("dbc_graduation", 0.5),
+                        quantity_step=s.get("quantity_step", 0.0),
                     )
                     for s in data["steps"]
                 ],
@@ -388,6 +428,9 @@ class MultiLegExecutionManager:
                 dispatched_legs=data["dispatched_legs"],
                 last_fill_ts=data.get("last_fill_ts"),
                 funding_accrued_usd=data.get("funding_accrued_usd", 0.0),
+                applied_fill_event_ids=set(data.get("applied_fill_event_ids", [])),
+                position_reconciled=data.get("position_reconciled"),
+                reconciliation_error=data.get("reconciliation_error"),
             )
             return pkg
         except (json.JSONDecodeError, KeyError, ValueError) as e:
@@ -484,17 +527,31 @@ class MultiLegExecutionManager:
         # leg's order status and compare with leg_results.
         # For now, if all legs have fill_ratio >= 0.999 (within tolerance),
         # mark LOCKED. Use actual filled_qty / requested_qty for the check.
-        TOLERANCE = 1e-3
         all_full = bool(pkg.leg_results) and all(
-            lr.filled_qty >= lr.requested_qty * (1.0 - TOLERANCE)
-            if lr.requested_qty > 0
-            else (lr.fill_ratio is not None and lr.fill_ratio >= 1.0 - TOLERANCE)
-            for lr in pkg.leg_results
+            self._is_complete_fill(lr) for lr in pkg.leg_results
         )
         if all_full and pkg.state == PackageState.PENDING_FILL:
             pkg.state = PackageState.LOCKED
             pkg.last_fill_ts = time.time()
         return pkg
+
+    @staticmethod
+    def _has_filled_quantity(result: LegResult) -> bool:
+        """True when any exposure exists; partial is not complete."""
+        return result.filled_qty > 0 or (
+            result.filled and (result.fill_ratio or 0.0) > 0
+        )
+
+    @staticmethod
+    def _is_complete_fill(result: LegResult) -> bool:
+        """Quantity-first completeness check used by every resolver branch."""
+        tolerance = 1e-3
+        if result.requested_qty > 0:
+            return result.remaining_qty <= max(
+                1e-12, result.requested_qty * tolerance,
+                result.step.quantity_step,
+            )
+        return (result.fill_ratio or 0.0) >= 1.0 - tolerance
 
     def can_open(self, asset: str) -> tuple[bool, str | None]:
         if len(self._open_packages) >= self.max_concurrent_packages:
@@ -502,6 +559,109 @@ class MultiLegExecutionManager:
         if asset in self._active_instruments:
             return False, f"duplication check failed: an active package already exists for {asset}"
         return True, None
+
+    def apply_fill_event(self, pkg: Package, *, leg_index: int,
+                         event_id: str, cumulative_filled_qty: float,
+                         avg_fill_price: float | None = None) -> Package:
+        """Apply one cumulative venue fill event exactly once.
+
+        Events are idempotent by ``event_id`` and quantities are monotonic:
+        stale or duplicate updates cannot inflate exposure. Late events are
+        accepted only for a still-pending package; terminal packages require
+        separate position reconciliation rather than mutating history.
+        """
+        if pkg.state != PackageState.PENDING_FILL:
+            raise RuntimeError("fill events cannot mutate a terminal package")
+        if not event_id:
+            raise ValueError("fill event_id is required")
+        if event_id in pkg.applied_fill_event_ids:
+            return pkg
+        if not isinstance(cumulative_filled_qty, (int, float)) or isinstance(cumulative_filled_qty, bool):
+            raise ValueError("cumulative fill quantity must be numeric")
+        if not math.isfinite(float(cumulative_filled_qty)) or cumulative_filled_qty < 0:
+            raise ValueError("cumulative fill quantity must be finite and non-negative")
+        if leg_index < 0 or leg_index >= len(pkg.leg_results):
+            raise IndexError(leg_index)
+        leg = pkg.leg_results[leg_index]
+        if cumulative_filled_qty + 1e-12 < leg.filled_qty:
+            raise ValueError("fill event quantity moved backwards")
+        if cumulative_filled_qty > leg.requested_qty + max(1e-12, leg.step.quantity_step):
+            raise ValueError("fill event quantity exceeds requested quantity")
+        leg.filled_qty = min(cumulative_filled_qty, leg.requested_qty)
+        leg.remaining_qty = max(0.0, leg.requested_qty - leg.filled_qty)
+        leg.fill_ratio = (leg.filled_qty / leg.requested_qty
+                          if leg.requested_qty > 0 else 0.0)
+        leg.filled = leg.filled_qty > 0
+        if avg_fill_price is not None:
+            if not math.isfinite(float(avg_fill_price)) or avg_fill_price <= 0:
+                raise ValueError("average fill price must be positive and finite")
+            leg.avg_fill_price = float(avg_fill_price)
+            leg.fill_price = leg.avg_fill_price
+        pkg.applied_fill_event_ids.add(event_id)
+        pkg.last_fill_ts = time.time()
+        if all(self._is_complete_fill(result) for result in pkg.leg_results):
+            pkg.state = PackageState.LOCKED
+        self._save_package(pkg)
+        return pkg
+
+    def reconcile_positions(self, pkg: Package,
+                            actual_positions: dict[str, float],
+                            *, tolerance: float = 1e-3) -> PositionReconciliation:
+        """Compare signed expected leg exposure with a venue snapshot.
+
+        Keys are ``venue:asset`` and values use the same quantity/notional
+        units as ``LegResult.filled_qty``. A mismatch is recorded and the
+        package remains open for operator/recovery handling; this method never
+        fabricates a fill or deletes exposure-bearing state.
+        """
+        if tolerance < 0 or not math.isfinite(float(tolerance)):
+            raise ValueError("tolerance must be finite and non-negative")
+        expected: dict[str, float] = {}
+        signs = {"buy_spot": 1.0, "cover_perp": 1.0,
+                 "sell_spot": -1.0, "short_perp": -1.0}
+        for leg in pkg.leg_results:
+            key = f"{leg.step.venue}:{leg.step.asset}"
+            expected[key] = expected.get(key, 0.0) + signs.get(
+                leg.step.action, 0.0
+            ) * leg.filled_qty
+        actual: dict[str, float] = {}
+        for key, value in actual_positions.items():
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"position {key} must be numeric")
+            if not math.isfinite(float(value)):
+                raise ValueError(f"position {key} must be finite")
+            actual[key] = float(value)
+        keys = set(expected) | set(actual)
+        residuals = {key: actual.get(key, 0.0) - expected.get(key, 0.0)
+                     for key in keys}
+        matched = all(abs(value) <= max(1e-12, tolerance,
+                                        abs(expected.get(key, 0.0)) * tolerance)
+                      for key, value in residuals.items())
+        pkg.position_reconciled = matched
+        pkg.reconciliation_error = None if matched else (
+            "position exposure mismatch: " + repr(residuals)
+        )
+        self._save_package(pkg)
+        return PositionReconciliation(matched, expected, actual, residuals)
+
+    async def reconcile_from_reader(self, pkg: Package, reader) -> PositionReconciliation:
+        """Read an explicit venue snapshot, then apply the same strict check."""
+        actual = await reader.read(pkg)
+        return self.reconcile_positions(pkg, actual)
+
+    async def reconcile_open_packages(self, reader) -> dict[int, PositionReconciliation]:
+        """Reconcile every non-terminal package against one venue reader.
+
+        This is intentionally an explicit recovery call, not constructor-time
+        network I/O. Callers must decide what to do with mismatches; this
+        method never settles, aborts, or submits orders.
+        """
+        results: dict[int, PositionReconciliation] = {}
+        for pkg in list(self._open_packages.values()):
+            if pkg.state in (PackageState.SETTLED, PackageState.ABORTED):
+                continue
+            results[pkg.id] = await self.reconcile_from_reader(pkg, reader)
+        return results
 
     def propose_package(self, steps: list[Step], notional: float) -> Package:
         errors = validate_steps(steps)
@@ -604,14 +764,8 @@ class MultiLegExecutionManager:
         # Package may LOCK only when every leg's actual filled quantity satisfies
         # the hedge invariant: remaining_qty <= tolerance (near-full fill).
         # Tolerance accounts for exchange minimum order sizes and rounding.
-        TOLERANCE = 1e-3  # 0.1% absolute tolerance on the filled ratio
         all_fully_filled = bool(pkg.leg_results) and all(
-            lr.filled_qty >= lr.requested_qty * (1.0 - TOLERANCE)
-            if lr.requested_qty > 0
-            else (
-                lr.fill_ratio is not None and lr.fill_ratio >= 1.0 - TOLERANCE
-            )
-            for lr in pkg.leg_results
+            self._is_complete_fill(lr) for lr in pkg.leg_results
         )
         if all_fully_filled and not pkg.slippage_breached:
             pkg.state = PackageState.LOCKED
@@ -629,8 +783,8 @@ class MultiLegExecutionManager:
 
         D1(a): amount-aware unwind — scale by actual fill_ratio, not full notional.
         """
-        filled_legs = [r for r in pkg.leg_results if r.filled]
-        unfilled_legs = [r for r in pkg.leg_results if not r.filled]
+        filled_legs = [r for r in pkg.leg_results if self._has_filled_quantity(r)]
+        unfilled_legs = [r for r in pkg.leg_results if not self._is_complete_fill(r)]
 
         if not unfilled_legs:
             pkg.state = PackageState.LOCKED
@@ -697,7 +851,7 @@ class MultiLegExecutionManager:
         """
         if pkg.slippage_breached:
             return self.resolve_slippage_breach(pkg, unwind_simulator)
-        if not all(r.filled for r in pkg.leg_results):
+        if not all(self._is_complete_fill(r) for r in pkg.leg_results):
             return self.resolve_partial_fill(pkg, unwind_simulator)
         return pkg
 
@@ -711,7 +865,7 @@ class MultiLegExecutionManager:
 
         Must only be called after dispatch flagged `slippage_breached`.
         """
-        filled_legs = [r for r in pkg.leg_results if r.filled]
+        filled_legs = [r for r in pkg.leg_results if self._has_filled_quantity(r)]
         if not filled_legs:
             pkg.state = PackageState.ABORTED
             from .metrics import inc as _metrics_inc

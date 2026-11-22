@@ -96,6 +96,12 @@ class OrderRequest:
     # order refusal at construction), never silently bypasses. Market orders
     # are never auto-converted to limit orders.
     intended_price: float | None = None
+    # Attached reduce-only protection for directional entries. These are
+    # absolute trigger prices; the executor passes them to OKX atomically
+    # with the opening order so a filled entry is never intentionally naked.
+    take_trigger_px: str | None = None
+    stop_trigger_px: str | None = None
+    exit_protection_required: bool = False
 
     def __post_init__(self):
         if not self.client_oid:
@@ -112,6 +118,14 @@ class OrderRequest:
         }
         if self.px:
             d["px"] = self.px
+        if self.take_trigger_px:
+            d["tpTriggerPx"] = self.take_trigger_px
+            d["tpOrdPx"] = "-1"
+            d["tpTriggerPxType"] = "last"
+        if self.stop_trigger_px:
+            d["slTriggerPx"] = self.stop_trigger_px
+            d["slOrdPx"] = "-1"
+            d["slTriggerPxType"] = "last"
         return d
 
 
