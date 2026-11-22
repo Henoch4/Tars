@@ -43,6 +43,7 @@ class MarketTick:
     blocks before a signal is ever built on them."""
     timestamp: float
     funding_rate: float
+    price: float | None = None
 
 
 class DataIntegrityGate:
@@ -57,7 +58,16 @@ class DataIntegrityGate:
         severity = Severity.OK
 
         for venue, tick in ticks.items():
+            if not isinstance(tick.timestamp, (int, float)) or not math.isfinite(float(tick.timestamp)):
+                reasons.append(f"{venue}: timestamp missing/non-finite -> HARD BLOCK")
+                severity = Severity.HARD_BLOCK
+                continue
+            if tick.timestamp > now_s + 5.0:
+                reasons.append(f"{venue}: timestamp is in the future -> HARD BLOCK")
+                severity = Severity.HARD_BLOCK
             age = now_s - tick.timestamp
+            if age < 0:
+                age = 0.0
             if age > self.staleness_threshold_s:
                 reasons.append(
                     f"{venue}: feed stale by {age:.1f}s (> {self.staleness_threshold_s}s) -> HARD BLOCK"
@@ -68,8 +78,16 @@ class DataIntegrityGate:
                 if severity != Severity.HARD_BLOCK:
                     severity = Severity.SOFT_WARNING
 
-            if math.isnan(tick.funding_rate):
-                reasons.append(f"{venue}: funding_rate missing -> HARD BLOCK")
+            if (not isinstance(tick.funding_rate, (int, float))
+                    or not math.isfinite(float(tick.funding_rate))):
+                reasons.append(f"{venue}: funding_rate missing/non-finite -> HARD BLOCK")
+                severity = Severity.HARD_BLOCK
+            price = getattr(tick, "price", None)
+            if price is not None and (
+                    not isinstance(price, (int, float))
+                    or not math.isfinite(float(price))
+                    or float(price) <= 0):
+                reasons.append(f"{venue}: price missing/non-finite/non-positive -> HARD BLOCK")
                 severity = Severity.HARD_BLOCK
 
         return IntegrityResult(severity=severity, reasons=reasons)

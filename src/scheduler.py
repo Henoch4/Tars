@@ -28,6 +28,8 @@ from .agent import AutonomousTradingAgent, TradingCycleResult
 from .assets import TRADE_ASSETS
 from .exchange import create_exchange_client
 from .execution import RiskGate
+from .settings import get_settings
+from .runtime import TradingRuntime, build_runtime
 
 logging.basicConfig(
     level=logging.INFO,
@@ -87,6 +89,7 @@ class TradingScheduler:
         self.config = config
         self.scheduler = AsyncIOScheduler(timezone="UTC")
         self.agent: Optional[AutonomousTradingAgent] = None
+        self.runtime: TradingRuntime | None = None
         self._shutdown = asyncio.Event()
         self._last_cycle: Optional[TradingCycleResult] = None
         self._cycle_count = 0
@@ -99,21 +102,40 @@ class TradingScheduler:
         """Initialize the trading agent and exchange client."""
         logger.info("Initializing trading scheduler...")
 
-        # Exchange client (OKX or Binance, based on EXCHANGE env var)
-        exchange = os.getenv("EXCHANGE", "okx").lower()
+        # Agent. Wiring comes from src/settings.py — the same single table
+        # src/main.py uses. This matters for R4: `scripts/deploy_vps.sh` runs
+        # `python -m src.scheduler`, so an FPZ_* env flip that only reached
+        # main.py would leave the live loop on constructor defaults (fpz off)
+        # and look deployed while doing nothing.
+        #
+        # Reading Settings here also inherits its boot validation, which this
+        # process did not previously run (e.g. ALLOW_LIVE=true requires an
+        # explicit DRY_RUN). That is fail-closed and intended — but it is a new
+        # way for the unit to refuse to start, so name the cause in the log
+        # instead of dying on a bare pydantic traceback.
+        try:
+            settings = get_settings()
+        except Exception as e:
+            logger.critical(
+                "Scheduler cannot start: wiring config failed validation (%s). "
+                "Most common cause: ALLOW_LIVE=true with DRY_RUN not set "
+                "explicitly — set DRY_RUN=true or DRY_RUN=false deliberately.",
+                e,
+            )
+            raise
+        # Keep the module-level factory as a test/deployment seam, but route
+        # every component through the shared runtime policy builder.
+        exchange = settings.exchange.lower()
         cli = create_exchange_client(exchange)
-        logger.info(f"Using exchange: {exchange}")
-
-        # Risk gate
-        risk_gate = RiskGate()
-
-        # Agent
-        self.agent = AutonomousTradingAgent(
-            okx_cli=cli,
-            risk_gate=risk_gate,
+        self.runtime = build_runtime(
+            settings,
+            role="scheduler",
+            cli=cli,
             dry_run=self.config.dry_run,
             agent_id=self.config.agent_id,
         )
+        await asyncio.to_thread(self.runtime.start)
+        self.agent = self.runtime.agent
 
         logger.info(f"Scheduler initialized (dry_run={self.config.dry_run}, interval={self.config.interval_minutes}min)")
 

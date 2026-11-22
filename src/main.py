@@ -17,6 +17,7 @@ from collections import defaultdict
 from dataclasses import asdict
 from typing import Literal
 
+from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -59,6 +60,8 @@ from .vault_api import router as vault_router
 from .reconciliation import read_vault_state, read_okx_balance, reconcile
 from .moove import MooveError, client_from_env
 from .settings import get_settings
+from .runtime import RuntimeSafetyError, build_runtime, _risk_gate as _build_risk_gate
+from .product_status import product_status_payload
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +76,14 @@ ALLOW_LIVE = settings.allow_live
 
 _MANIFEST_PATH = pathlib.Path(__file__).resolve().parent.parent / "manifest.json"
 
-app = FastAPI(title="AuditTrail Trader", version="0.1.0")
+@asynccontextmanager
+async def _lifespan(_app):
+    # Live RPC and contract reads belong to startup, never module import.
+    await asyncio.to_thread(_get_runtime().start)
+    yield
+
+
+app = FastAPI(title="AuditTrail Trader", version="0.1.0", lifespan=_lifespan)
 app.include_router(vault_router)
 
 
@@ -454,6 +464,12 @@ def health():
     }
 
 
+@app.get("/api/v1/product-status")
+def product_status():
+    """Sanitized multi-asset capability map for operator/UI surfaces."""
+    return product_status_payload()
+
+
 @app.get("/api/v1/metrics")
 def api_metrics():
     """Structured metrics snapshot (S3): counters, gauges, heartbeat, and
@@ -796,119 +812,54 @@ if _STATIC_DIR.exists():
 
 
 # --- Trading Agent Setup ---
-# W2/S9: the trade universe lives in src/assets.py — this module iterates
-# it, never re-declares it. (Kept as names for the call sites below.)
+# W2/S9: the trade universe lives in src/assets.py — this module iterates it.
 _ALLOWED_ASSETS = _trade_assets()
-# Spot companions for delta-neutral funding-arb packages (explicit per D5).
 _ALLOWED_COMPANIONS = _companions()
 
-def _make_risk_gate(onchain_logger=None) -> RiskGate:
-    return RiskGate(
-        max_position_usd=settings.max_position_usd,
-        max_daily_loss_usd=settings.max_daily_loss_usd,
-        max_daily_trades=settings.max_daily_trades,
-        max_daily_volume_usd=settings.max_daily_volume_usd,
-        max_leverage=settings.max_leverage,
-        min_confidence_bps=settings.min_confidence_bps,
-        max_price_age_seconds=settings.max_price_age_seconds,
-        max_slippage_pct=settings.max_slippage_pct,
-        max_reference_velocity_pct_per_s=settings.max_reference_velocity_pct_per_s,
-        loss_cooldown_minutes=settings.loss_cooldown_minutes,
-        drawdown_window_days=settings.drawdown_window_days,
-        drawdown_loss_mult=settings.drawdown_loss_mult,
-        allowed_assets=_ALLOWED_ASSETS,
-        allowed_companions=_ALLOWED_COMPANIONS,
-        regime_throttle=settings.regime_throttle,
-        regime_band_pct=settings.regime_band_pct,
-        regime_size_scale=settings.regime_size_scale,
-        dbc_curve_type=settings.dbc_curve_type,
-        dbc_fee_bps=settings.dbc_fee_bps,
-        dbc_graduation=settings.dbc_graduation,
-        counters_durable=True,
-        onchain_logger=onchain_logger,
-    )
+# One construction path for API and scheduler. Runtime construction is lazy:
+# importing the ASGI app must not open SQLite, touch RPC, or require writable
+# deployment state. Module-level aliases remain proxy objects because route
+# tests and operational tooling intentionally monkeypatch them.
+_runtime = None
 
-def _make_onchain_logger() -> OnchainLogger | None:
-    """Create onchain logger if configured. Returns None if not configured."""
-    rpc_url = settings.xlayer_rpc_url.strip()
-    contract_addr = settings.audit_contract_address.strip()
-    private_key = settings.agent_wallet_private_key.strip()
-    if not all([rpc_url, contract_addr, private_key]):
-        return None
-    return OnchainLogger(
-        rpc_url=rpc_url,
-        contract_address=contract_addr,
-        private_key=private_key,
-        chain_id=settings.xlayer_chain_id,
-    )
 
-def _make_solana_rail():
-    """Build the Solana second rail from env. None when disabled (default).
+def _get_runtime():
+    global _runtime
+    if _runtime is None:
+        _runtime = build_runtime(settings, role="api")
+        # Keep the legacy module-level gate and the runtime gate identical.
+        # Operational endpoints (notably kill-switch) intentionally expose
+        # this object before the heavier runtime is ready; wiring it back into
+        # the constructed agent prevents split-brain halt state.
+        _runtime.risk_gate = _risk_gate
+        _runtime.agent.risk_gate = _risk_gate
+    return _runtime
 
-    Lazy import keeps main importable when solana deps are absent; the rail
-    itself never raises (misconfigured = disabled with a warning).
-    """
-    try:
-        from .solana.dual_logger import make_solana_rail
-    except Exception:
-        return None
-    try:
-        return make_solana_rail()
-    except Exception:
-        return None
 
-def _make_curator() -> CuratorAgent | None:
-    """Create the curator from config/profiles.yaml. None if the file is absent
-    (the trading agent falls back to its neutral defaults)."""
-    profiles_path = pathlib.Path(__file__).resolve().parent.parent / "config" / "profiles.yaml"
-    if not profiles_path.exists():
-        return None
-    return CuratorAgent(profiles_path, audit_log=_audit_log)
+class _RuntimeComponent:
+    def __init__(self, name: str):
+        self.name = name
+
+    def __getattr__(self, attr):
+        return getattr(getattr(_get_runtime(), self.name), attr)
+
+    def __bool__(self):
+        return bool(getattr(_get_runtime(), self.name))
+
 
 _dry_run = settings.dry_run
-# Order matters: the onchain logger must exist before the risk gate is built,
-# so the gate can boot-strap daily counters against TradeAuditTrail at import.
-_onchain_logger = _make_onchain_logger()
-_solana_rail = _make_solana_rail()
-if _solana_rail is not None:
-    try:
-        from .solana.dual_logger import wrap_dual
-
-        _onchain_logger = wrap_dual(_onchain_logger, _solana_rail)
-    except Exception:
-        pass
-_risk_gate = _make_risk_gate(onchain_logger=_onchain_logger)
-_exchange = settings.exchange.lower()
-_cli = create_exchange_client(_exchange)
-_audit_log = AuditLog(path=settings.audit_log_path)
-_curator = _make_curator()
-_integrity_gate = DataIntegrityGate(
-    staleness_threshold_s=settings.data_staleness_seconds,
-)
-_multi_leg_manager = MultiLegExecutionManager(
-    max_concurrent_packages=settings.max_concurrent_packages,
-    # Persistent scratch for multi-leg crash recovery (D1(a)/Z3/W4): package
-    # state is saved per leg so a restart mid-package reconciles instead of
-    # leaving a naked leg. Must live on persistent storage in production
-    # (same requirement as RISK_STATE_PATH) — temp dirs defeat recovery.
-    persist_dir=settings.multi_leg_state_dir,
-)
-_trading_agent = AutonomousTradingAgent(
-    okx_cli=_cli,
-    risk_gate=_risk_gate,
-    onchain_logger=_onchain_logger,
-    dry_run=_dry_run,
-    max_position_usd=settings.max_position_usd,
-    agent_id=settings.agent_id,
-    sizing_mode=settings.sizing_mode,
-    kelly_fraction=settings.kelly_fraction,
-    integrity_gate=_integrity_gate,
-    curator=_curator,
-    audit_log=_audit_log,
-    multi_leg_manager=_multi_leg_manager,
-    funding_arb_min_rate=settings.funding_arb_min_rate,
-    regime_filter_window=settings.regime_filter_window,
-)
+_onchain_logger = _RuntimeComponent("onchain_logger")
+# The kill switch must remain usable even when durable execution storage is
+# unavailable. Construct only the in-process risk gate at import time; all
+# network/database-backed runtime components remain lazy.
+_risk_gate = _build_risk_gate(settings)
+_cli = _RuntimeComponent("cli")
+_audit_log = _RuntimeComponent("audit_log")
+_curator = _RuntimeComponent("curator")
+_integrity_gate = _RuntimeComponent("integrity_gate")
+_multi_leg_manager = _RuntimeComponent("multi_leg_manager")
+_trading_agent = _RuntimeComponent("agent")
+_solana_rail = None  # Optional second rail remains disabled unless explicitly wired.
 
 
 class TradeRequest(BaseModel):
@@ -1025,17 +976,13 @@ def rails_status():
     """
     import os
 
-    logger = _onchain_logger
-    if logger is not None and hasattr(logger, "rails_summary"):
-        try:
-            summary = logger.rails_summary()
-        except Exception:
-            summary = {"evm": {"configured": True}, "solana": {"configured": False}}
-        evm_on = bool(summary.get("evm", {}).get("configured"))
-        sol_on = bool(summary.get("solana", {}).get("configured"))
-    else:
-        evm_on = logger is not None
-        sol_on = False
+    # Status must remain read-only and import-safe. Do not dereference the
+    # lazy logger proxy here: that would construct the full trading runtime
+    # merely to render a dashboard card.
+    evm_on = bool(settings.xlayer_rpc_url.strip()
+                  and settings.audit_contract_address.strip()
+                  and settings.agent_wallet_private_key.strip())
+    sol_on = False
     sol_rpc = (os.getenv("SOLANA_RPC_URL", "") or "").strip()
     sol_program = (os.getenv("SOLANA_PROGRAM_ID", "") or "").strip()
     try:

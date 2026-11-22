@@ -36,6 +36,9 @@ htmlcov/
 .nox/
 .coverage
 
+# Pytest basetemp (Windows temp dir workaround; test artifacts only)
+.pytest_basetemp/
+
 # Artifacts (kept in repo but gitignore the heavy bytecode)
 contracts/artifacts/*.txt
 
