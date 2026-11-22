@@ -23,7 +23,8 @@ jobs:
       MAX_POSITION_USD: ${{ secrets.MAX_POSITION_USD }}
       MAX_DAILY_LOSS_USD: ${{ secrets.MAX_DAILY_LOSS_USD }}
       MIN_CONFIDENCE_BPS: ${{ secrets.MIN_CONFIDENCE_BPS }}
-      ALLOW_LIVE: "true"
+      # CI is never an authorization surface; live execution is impossible here.
+      ALLOW_LIVE: "false"
 
     steps:
       - name: Checkout repository

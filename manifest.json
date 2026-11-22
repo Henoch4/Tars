@@ -82,6 +82,11 @@
       "description": "Full x402 price card (I3): every priced route with tier and USDC"
     },
     {
+      "path": "/api/v1/product-status",
+      "method": "GET",
+      "description": "Sanitized multi-asset capability map for operator/UI surfaces."
+    },
+    {
       "path": "/api/v1/rails",
       "method": "GET",
       "description": "Multichain rail status for the dashboard (public, never leaks keys)."

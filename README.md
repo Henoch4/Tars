@@ -65,12 +65,37 @@ drives the curator):
   integrity block, confidence-floor skip, and risk-gate rejection, complementing
   the on-chain decision log. Surface: `GET /api/v1/curator-profile`.
 
-Tests: `python -m pytest tests/ -q` — 280 tests, fully offline.
+Tests: `python -m pytest tests/ -q` — 1,670 tests, fully offline.
 
 > **Backronym reminder**: TARS = Trade Audit & Risk System. Every decision is
 > logged before execution. The gap between what it decided and what it was
 > allowed to do is zero. You can check everything yourself — the same record
 > the robot follows is public.
+
+## Current State
+
+TARS runs in **paper-first mode**: live execution is disabled by default
+(`DRY_RUN=true`, `ALLOW_LIVE=false`). No real capital is at risk. The system
+is organized around four public-facing layers:
+
+- **Product status** (`src/product_status.py`, `GET /api/v1/product-status`)
+  — sanitized, read-only capability map. Reports paper/shadow-only mode across
+  crypto majors, memecoins, utility tokens, equities, audit/vault rails, and
+  perpetuals. No credentials, no live controls.
+- **Execution intent and reconciliation** (`src/execution/`,
+  `src/reconciliation.py`) — client-order identity, ownership leases, intent
+  state machine, venue reconciliation, reduce-only enforcement, slippage
+  collar, and atomic multi-leg packages with slippage-breach unwind.
+- **Experiment parity and FPZ lifecycle** (`src/experiment_schema.py`,
+  `src/fpz_lifecycle.py`, `src/parity_report.py`, `src/provider_quality.py`)
+  — matched paper/shadow experiments, funding-persistence-z accounting,
+  shadow-vs-live decision parity, and provider quality scoring.
+- **Operator surface** (`static/landing.html`, `static/index.html`,
+  `scripts/safety_freeze_check.py`, `scripts/fresh_host_smoke.py`) — landing
+  page, read-only dashboard, and pre-publish safety checks.
+
+Tests run fully offline with no network. Safety freeze and fresh-host smoke
+checks pass before any release.
 
 ## Files
 
@@ -84,10 +109,12 @@ AuditTrailTrader/
 │   └── scripts/deploy.js                 # Hardhat deploy script
 ├── src/
 │   ├── main.py          # FastAPI: /hire, /trade, /audit-stats, /risk-stats,
-│   │                    #   /kill-switch, /api/v1/{validation,curator-profile}
+│   │                    #   /kill-switch, /api/v1/{validation,curator-profile,
+│   │                    #   product-status}
 │   ├── agent.py         # Multi-agent orchestrator
 │   ├── signals.py       # Signal: mean rev + momentum + funding
 │   ├── execution.py     # OrderExecutor + RiskGate (non-overridable)
+│   ├── execution/       # Execution intent, ownership, reconciliation, lifecycle
 │   ├── audit_logger.py  # OnchainLogger (local audit)
 │   ├── auditor.py       # Existing risk audit (extended)
 │   ├── okx_cli.py       # OKX CLI wrapper
@@ -95,7 +122,16 @@ AuditTrailTrader/
 │   ├── data_integrity.py# Pre-signal integrity gate (staleness/NaN/ledger/orphan)
 │   ├── audit_trail.py   # Local append-only JSONL audit log
 │   ├── multi_leg.py     # Atomic multi-leg execution (state machine, simulated fills)
-│   └── curator.py       # Profile selector (allowlist, cooldown, auto-revert)
+│   ├── curator.py       # Profile selector (allowlist, cooldown, auto-revert)
+│   ├── product_status.py# Sanitized product capability map (paper/shadow only)
+│   ├── runtime.py       # Paper-first runtime with fail-closed counters
+│   ├── runtime_health.py# Heartbeat and stall watchdog
+│   ├── strategy_lifecycle.py  # Strategy enrollment and evidence gating
+│   ├── scheduler.py     # Cycle scheduling
+│   ├── experiment_schema.py   # Paper/shadow matched experiments
+│   ├── fpz_lifecycle.py   # Funding-persistence-z lifecycle accounting
+│   ├── parity_report.py   # Shadow-vs-live decision parity
+│   ├── provider_quality.py  # Data and execution provider scoring
 ├── config/
 │   └── profiles.yaml    # Fixed profile allowlist for the curator
 ├── tests/
@@ -108,10 +144,24 @@ AuditTrailTrader/
 │ ├── test_multi_leg.py     # multi-leg state machine (incl. slippage unwind)
 │ ├── test_curator.py       # curator + default-passthrough env knobs
 │ ├── test_agent_wiring.py  # integrity + curator wired into the trading loop
-│ └── test_agent_sizing.py  # fractional-Kelly sizing
+│ ├── test_agent_sizing.py  # fractional-Kelly sizing
+│ ├── test_product_status.py
+│ ├── test_runtime_health.py
+│ ├── test_runtime_lifecycle.py
+│ ├── test_runtime_bootstrap.py
+│ ├── test_experiment_schema.py
+│ ├── test_fpz_lifecycle.py
+│ ├── test_parity_report.py
+│ └── test_provider_quality.py
 ├── scripts/
 │   ├── smoke_test.py            # Legacy audit smoke test
-│   └── smoke_test_trading.py    # Trading pipeline smoke test
+│   ├── smoke_test_trading.py    # Trading pipeline smoke test
+│   ├── safety_freeze_check.py   # Pre-publish: no live-enabling flags
+│   ├── fresh_host_smoke.py      # Clean import, no live start, no network
+│   └── build_artifact_manifest.py
+├── static/
+│   ├── landing.html    # Public landing page (paper-first, live disabled)
+│   └── index.html      # Operator dashboard (read-only)
 ├── manifest.json          # ASP manifest for okx.ai
 ├── requirements.txt
 └── HACKATHON_SUBMISSION.md
