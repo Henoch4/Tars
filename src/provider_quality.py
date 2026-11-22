@@ -47,7 +47,7 @@ def measure_provider_quality(rows: Iterable[ProviderObservation]) -> ProviderQua
     providers = Counter(row.provider for row in rows)
     return ProviderQualityReport(
         observations=len(rows), complete=statuses["complete"],
-        status_counts=dict(statuses), provider_counts=dict(providers),
+        status_counts=dict(statuses.items()), provider_counts=dict(providers.items()),
         conflicts=statuses["conflict"], rate_limited=statuses["rate_limited"],
     )
 
