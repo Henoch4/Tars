@@ -1,0 +1,27 @@
+[allowlist]
+  # Local environment files — not committed, contain operator-local secrets.
+  # These are gitignored and must never be added to the repository.
+  [[rules]]
+    id = "local-env-files"
+    description = "Allowlist local environment files containing operator secrets"
+    regex = '''
+    (?x)
+    ^(?:
+      \.env(?:\.local)?$ |
+      goplus_secret\.env$ |
+      \.vercel/.*\.env.*$
+    )
+    '''
+    path = ''
+
+  # Virtual environment — contains cryptographic test vectors from
+  # pycryptodome, numpy, and x402 that trigger false positives on
+  # generic-api-key and private-key rules. Not committed to the repo.
+  [[rules]]
+    id = "venv-test-vectors"
+    description = "Allowlist .venv directory containing test vectors"
+    regex = '''
+    (?x)
+    ^\.venv/
+    '''
+    path = ''

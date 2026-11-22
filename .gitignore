@@ -128,3 +128,6 @@ ml_output/
 .vercel
 .env*
 critical_path_files.zip
+
+# Virtual environment (contains test vector false positives for secret scanners)
+.venv/
