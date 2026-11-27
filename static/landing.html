@@ -425,6 +425,12 @@ footer{border-top:1px solid var(--border);padding:var(--sp-700) 0 var(--sp-500);
 #prog{position:fixed;left:0;right:0;top:env(safe-area-inset-top,0px);height:3px;z-index:50;background:linear-gradient(90deg,var(--accent),var(--accent-dim));transform:scaleX(0);transform-origin:left}
 
 /* Heading words light up on scroll */
+h1 .w{display:inline-block;overflow:hidden;vertical-align:top;padding-bottom:.12em}
+h1 .w span{display:inline-block;transform:translateY(110%);transition:transform var(--slow) var(--out);transition-delay:calc(var(--i)*60ms + 150ms)}
+.ready h1 .w span{transform:none}
+.ready .lede,.ready .cta,.ready .hero-actions{opacity:1}
+.ready .hero-anim{opacity:1;transform:none}
+.ready .product-card,.ready .path-card{opacity:1;transform:none}
 h2 .w{display:inline-block;overflow:hidden;vertical-align:top;padding-bottom:.12em}
 h2 .w span{display:inline-block;transform:translateY(110%);transition:transform var(--slow) var(--out);transition-delay:calc(var(--i)*50ms)}
 h2.in .w span{transform:none}
