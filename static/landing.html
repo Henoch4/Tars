@@ -386,6 +386,7 @@ footer{border-top:1px solid var(--border);padding:var(--sp-700) 0 var(--sp-500);
 .paper-label{font-size:0.78rem;color:var(--ink-soft);font-family:'Geist Mono',monospace;}
 .paper-note{margin-top:var(--sp-500);max-width:640px;margin-left:auto;margin-right:auto;}
 .paper-note p{font-size:0.88rem;color:var(--ink-soft);line-height:1.6;}
+.paper-note b{color:var(--ink);}
 .road-wrap{display:flex;gap:var(--sp-400);flex-wrap:wrap;justify-content:center;max-width:800px;margin:0 auto;}
 .road-card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:var(--sp-500);text-align:center;min-width:160px;}
 .road-tag{font-family:'Geist Mono',monospace;font-size:0.72rem;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:var(--sp-200);display:block;}
@@ -393,6 +394,7 @@ footer{border-top:1px solid var(--border);padding:var(--sp-700) 0 var(--sp-500);
 .road-desc{font-size:0.88rem;color:var(--ink-soft);line-height:1.5;}
 .road-note{margin-top:var(--sp-500);max-width:800px;margin-left:auto;margin-right:auto;}
 .paper-note p{font-size:0.88rem;color:var(--ink-soft);line-height:1.6;}
+.paper-note b{color:var(--ink);}
 /* Motion tokens */
 :root{--fast:200ms;--base:560ms;--slow:1100ms;--out:cubic-bezier(.16,1,.3,1)}
 
@@ -436,6 +438,22 @@ h2.in .w span{transform:none}
 .ph{max-width:640px;font:700 clamp(28px,4vw,38px)/1.25 var(--ink);letter-spacing:-.02em}
 .ph span{opacity:.18;transition:opacity 300ms linear}
 .ph span.lit{opacity:1}
+
+/* Violin diagrams in path cards */
+.viz{height:84px;margin:4px 0 20px;position:relative}
+.viz svg{width:100%;height:100%;overflow:visible}
+.l2{fill:none;stroke:currentColor;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1;stroke-dashoffset:1}
+.in .l2{stroke-dashoffset:0;transition:stroke-dashoffset 1.8s var(--out) calc(var(--dl,0ms) + 500ms)}
+.cp{fill:none;stroke:currentColor;stroke-width:1.5;stroke-dasharray:4 5;opacity:.55}
+.vb{display:flex;gap:14px;align-items:flex-end;height:84px;position:relative;border-bottom:1.5px solid currentColor}
+.vb i{flex:1;background:currentColor;opacity:.85;border-radius:6px 6px 0 0;height:var(--h);transform:scaleY(0);transform-origin:bottom;transition:transform var(--slow) var(--out) calc(var(--dl,0ms) + var(--k)*140ms + 400ms)}
+.in .vb i{transform:scaleY(1)}
+.vb i.lo{opacity:.3}
+.vb:after{content:"70%";position:absolute;left:0;right:0;bottom:70%;border-top:1.5px dashed currentColor;font:500 11px var(--mono);text-align:right;opacity:.7}
+.hx{font:500 12.5px/1.75 var(--mono);height:84px;overflow:hidden}
+.hx span{display:block;width:0;overflow:hidden;white-space:nowrap}
+.in .hx span{animation:ty .9s steps(30) forwards;animation-delay:calc(var(--dl,0ms) + 500ms + var(--k)*800ms)}
+@keyframes ty{to{width:32ch}}
 
 /* Reduced motion */
 @media (prefers-reduced-motion:reduce){
@@ -579,6 +597,7 @@ h2.in .w span{transform:none}
             <li>An emergency stop backed by an onchain record, so restarting can't clear it</li>
           </ul>
           <div class="path-stats">6 HARD LIMITS &middot; ENFORCED AUTOMATICALLY</div>
+          <div class="viz"><svg viewBox="0 0 300 84" preserveAspectRatio="none" aria-hidden="true"><path class="cp" d="M0 70L300 58"/><path class="l2" pathLength="1" d="M0 78L40 64L70 68L110 50L150 54L190 36L230 40L300 12"/></svg></div>
           <a class="path-cta" href="#binder">See the exact limits <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
         </div>
       </div>
@@ -594,6 +613,7 @@ h2.in .w span{transform:none}
             <li>Less than 70% sure? It does nothing at all</li>
           </ul>
           <div class="path-stats">1 METHOD LIVE &middot; OTHERS GATED BY THE EXAM</div>
+          <div class="viz vb" aria-hidden="true"><i style="--h:82%;--k:0"></i><i class="lo" style="--h:64%;--k:1"></i><i style="--h:91%;--k:2"></i></div>
           <a class="path-cta" href="https://github.com/Henoch4/Tars/blob/main/src/signals.py" target="_blank" rel="noopener">See the decision code <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
         </div>
       </div>
@@ -609,6 +629,7 @@ h2.in .w span{transform:none}
             <li>Records can't be edited or deleted after the fact</li>
           </ul>
           <div class="path-stats">PUBLIC LEDGER &middot; CANNOT BE EDITED</div>
+          <div class="viz hx" aria-hidden="true"><span style="--k:0">decide  BTC buy 78%</span><span style="--k:1">check   6 of 6 limits ok</span><span style="--k:2">write   0x6019…d07c done</span></div>
           <a class="path-cta" href="https://github.com/Henoch4/Tars/blob/main/contracts/contracts/TradeAuditTrail.sol" target="_blank" rel="noopener">See the rulebook code <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
         </div>
       </div>
@@ -625,6 +646,7 @@ h2.in .w span{transform:none}
             <li>1,600+ automated checks run fully offline</li>
           </ul>
           <div class="path-stats">AGENT LIVE ON REAL EXCHANGE DATA &middot; 1,600+ AUTOMATED CHECKS PASS</div>
+          <div class="viz"><svg viewBox="0 0 300 84" preserveAspectRatio="none" aria-hidden="true"><path class="cp" d="M0 72L40 64L70 68L110 50L150 54L190 36L230 40L300 12"/><path class="l2" pathLength="1" d="M0 72L40 64L70 68L110 50L150 54L190 36L230 40L300 12"/></svg></div>
           <a class="path-cta" href="https://github.com/Henoch4/Tars/blob/main/src/validation.py" target="_blank" rel="noopener">See how strategies are tested <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
         </div>
       </div>
@@ -1361,6 +1383,24 @@ if(ph){
     document.addEventListener('DOMContentLoaded', () => {
       syncThemeColorMeta(document.documentElement.classList.contains('dark') ? 'dark' : 'light');
     });
+
+/* Violin diagrams: draw in on scroll */
+var vizIo=new IntersectionObserver(function(es){
+  es.forEach(function(e){
+    if(e.isIntersecting){
+      e.target.querySelectorAll('.l2').forEach(function(p){
+        p.style.strokeDashoffset='0';
+      });
+      e.target.querySelectorAll('.vb i').forEach(function(b){
+        b.style.transform='scaleY(1)';
+      });
+      e.target.querySelectorAll('.hx span').forEach(function(s){
+        s.style.width='32ch';
+      });
+      vizIo.unobserve(e.target);
+    }
+  }},{threshold:.3});
+$$('.viz').forEach(function(v){vizIo.observe(v)});
 </script>
 </body>
 </html>
