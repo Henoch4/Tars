@@ -436,6 +436,21 @@
         <div id="fundingArbBody" class="empty-state">No funding data yet. Run a cycle to populate.</div>
       </div>
 
+      <div class="card" id="providerQualityCard">
+        <h2 class="card-title">Satellite Evidence Quality</h2>
+        <div id="providerQualityBody" class="empty-state">Loading provider quality…</div>
+      </div>
+
+      <div class="card" id="controlPlaneCard">
+        <h2 class="card-title">Operator Control Plane</h2>
+        <div id="controlPlaneBody" class="empty-state">Task tray is protected; operator token required.</div>
+      </div>
+
+      <div class="card" id="systemReadinessCard">
+        <h2 class="card-title">System Readiness</h2>
+        <div id="systemReadinessBody" class="empty-state">Checking deployment state…</div>
+      </div>
+
       <div class="card" id="injectiveCard">
         <h2 class="card-title">Injective <span class="badge badge-injective" style="margin-left:0.4rem; vertical-align: middle;">Testnet</span></h2>
         <div id="injectiveBody" class="empty-state">Loading Injective markets…</div>
@@ -992,6 +1007,62 @@
       }
     }
 
+    async function loadProviderQuality() {
+      const body = document.getElementById('providerQualityBody');
+      try {
+        const res = await fetch('/api/v1/meme/provider-quality');
+        if (!res.ok) throw new Error('provider-quality request failed');
+        const data = await res.json();
+        const statuses = data.status_counts || {};
+        const providers = Object.entries(data.provider_counts || {})
+          .map(([name, count]) => '<tr><td>' + escapeHtml(name) + '</td><td class="num">' + count + '</td></tr>')
+          .join('');
+        body.className = '';
+        body.innerHTML = '<div class="meta" style="margin-bottom:0.7rem;">' +
+          '<div class="meta-item"><div class="value num">' + Number(data.completeness_pct || 0).toFixed(1) + '%</div><div class="key">Complete</div></div>' +
+          '<div class="meta-item"><div class="value num">' + Number(data.observations || 0) + '</div><div class="key">Observations</div></div>' +
+          '</div>' +
+          '<table class="table"><thead><tr><th>Provider</th><th class="num">Records</th></tr></thead><tbody>' + (providers || '<tr><td colspan="2" class="empty-state">No provider records yet</td></tr>') + '</tbody></table>' +
+          '<div class="schedule-note" style="margin-top:0.5rem;">Unknown ' + (statuses.unknown || 0) + ' · Errors ' + (statuses.error || 0) + ' · Rate-limited ' + (statuses.rate_limited || 0) + ' · Conflicts ' + (statuses.conflict || 0) + '</div>';
+      } catch (err) {
+        if (body) body.innerHTML = 'Provider quality unavailable: ' + escapeHtml(err.message);
+      }
+    }
+
+    async function loadControlPlane() {
+      const body = document.getElementById('controlPlaneBody');
+      const token = window.__TARS_TASK_TRAY_TOKEN;
+      if (!token) return;
+      try {
+        const res = await fetch('/api/v1/control-plane/tasks', {headers: {'X-Task-Tray-Token': token}});
+        if (!res.ok) throw new Error('control-plane unavailable');
+        const data = await res.json();
+        const rows = (data.tasks || []).map(task => '<tr><td>' + escapeHtml(task.title) + '</td><td><span class="badge">' + escapeHtml(task.state) + '</span></td><td>' + escapeHtml(task.next_action || '—') + '</td></tr>').join('');
+        body.className = '';
+        body.innerHTML = '<table class="table"><thead><tr><th>Task</th><th>State</th><th>Next action</th></tr></thead><tbody>' + (rows || '<tr><td colspan="3" class="empty-state">No tasks recorded</td></tr>') + '</tbody></table><div class="schedule-note">Ready: ' + (data.ready || []).length + ' · Read-only</div>';
+      } catch (err) { body.innerHTML = 'Control plane unavailable: ' + escapeHtml(err.message); }
+    }
+
+    async function loadSystemReadiness() {
+      const body = document.getElementById('systemReadinessBody');
+      try {
+        const results = await Promise.allSettled([
+          fetch('/health').then(r => r.ok ? r.json() : Promise.reject(new Error('health unavailable'))),
+          fetch('/manifest').then(r => r.ok ? r.json() : Promise.reject(new Error('manifest unavailable')))
+        ]);
+        const health = results[0].status === 'fulfilled' ? results[0].value : null;
+        const manifest = results[1].status === 'fulfilled' ? results[1].value : null;
+        const safety = manifest && manifest.safety ? manifest.safety : null;
+        const badge = (ok, yes, no) => '<span class="badge ' + (ok ? 'badge-approved' : 'badge-neutral') + '">' + (ok ? yes : no) + '</span>';
+        body.className = '';
+        body.innerHTML = '<div class="meta">' +
+          '<div class="meta-item"><div class="value">' + badge(Boolean(health), 'API healthy', 'API unavailable') + '</div><div class="key">Service</div></div>' +
+          '<div class="meta-item"><div class="value">' + badge(Boolean(manifest && manifest.version), manifest && manifest.version ? escapeHtml(manifest.version) : 'Unknown', 'Unknown') + '</div><div class="key">Manifest</div></div>' +
+          '<div class="meta-item"><div class="value">' + badge(Boolean(safety && safety.dry_run === true), 'Paper-only', 'Verify flags') + '</div><div class="key">Execution</div></div>' +
+          '</div><div class="schedule-note" style="margin-top:0.5rem;">' + (safety && safety.allow_live === false ? 'Live execution disabled.' : 'Live state requires operator verification.') + '</div>';
+      } catch (err) { body.innerHTML = 'Readiness unavailable: ' + escapeHtml(err.message); }
+    }
+
     async function loadReconciliation() {
       try {
         const res = await fetch('/api/v1/vault/reconciliation');
@@ -1090,6 +1161,9 @@
       loadStats();
       loadPositions();
       loadFundingArb();
+      loadProviderQuality();
+      loadControlPlane();
+      loadSystemReadiness();
       loadReconciliation();
       loadRails();
       loadInjective();

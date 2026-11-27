@@ -8,6 +8,7 @@ Run locally (after completing README.md setup):
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import logging
 import os
@@ -54,11 +55,13 @@ from .validation import validation_report
 from .multi_leg import MultiLegExecutionManager
 from .audit_trail import AuditLog
 from .curator import CuratorAgent
+from .task_tray import TaskTray
 from .data_integrity import DataIntegrityGate
 from .vault_api import router as vault_router
 from .reconciliation import read_vault_state, read_okx_balance, reconcile
 from .moove import MooveError, client_from_env
 from .settings import get_settings
+from .provider_quality import provider_quality_from_jsonl
 
 logger = logging.getLogger(__name__)
 
@@ -454,6 +457,42 @@ def health():
     }
 
 
+@app.get("/api/v1/meme/provider-quality")
+def meme_provider_quality():
+    """Read-only provider quality metrics for the paper satellite."""
+    path = os.getenv("MEME_BLOTTER_PATH", "data/meme_satellite/blotter.jsonl")
+    report = provider_quality_from_jsonl(path)
+    return {
+        "source": path,
+        "read_only": True,
+        "observations": report.observations,
+        "complete": report.complete,
+        "completeness_pct": report.completeness_pct,
+        "status_counts": report.status_counts,
+        "provider_counts": report.provider_counts,
+        "failure_reasons": report.failure_reasons,
+    }
+
+
+@app.get("/api/v1/control-plane/tasks")
+def control_plane_tasks(x_task_tray_token: str | None = Header(default=None)):
+    """Read-only task-tray projection; disabled unless an admin token is configured."""
+    expected = os.getenv("TASK_TRAY_READ_TOKEN", "").strip()
+    if not expected or not x_task_tray_token or not hmac.compare_digest(x_task_tray_token, expected):
+        raise HTTPException(status_code=404, detail="not found")
+    path = os.getenv("TASK_TRAY_PATH", "data/task_tray.jsonl")
+    tray = TaskTray(path)
+    tasks = []
+    for task in tray.latest().values():
+        row = asdict(task)
+        row["dependencies"] = list(task.dependencies)
+        row["evidence"] = list(task.evidence)
+        row["approvals"] = tray.approvals(task.task_id)
+        tasks.append(row)
+    return {"read_only": True, "source": path, "tasks": tasks,
+            "ready": [task.task_id for task in tray.ready()]}
+
+
 @app.get("/api/v1/metrics")
 def api_metrics():
     """Structured metrics snapshot (S3): counters, gauges, heartbeat, and
@@ -830,17 +869,32 @@ def _make_risk_gate(onchain_logger=None) -> RiskGate:
 
 def _make_onchain_logger() -> OnchainLogger | None:
     """Create onchain logger if configured. Returns None if not configured."""
+    # Importing the API must remain offline-safe. Paper/test collection never
+    # performs an RPC health check; an operator can opt into paper audit reads
+    # explicitly without making credentials a test prerequisite.
+    if ("pytest" in os.sys.modules or "pytest" in pathlib.Path(os.sys.argv[0]).name.lower()
+            or os.getenv("TARS_SKIP_ONCHAIN", "").lower() in {"1", "true", "yes"}):
+        return None
+    if settings.dry_run and os.getenv("PAPER_ONCHAIN_AUDIT", "false").lower() != "true":
+        return None
     rpc_url = settings.xlayer_rpc_url.strip()
     contract_addr = settings.audit_contract_address.strip()
     private_key = settings.agent_wallet_private_key.strip()
     if not all([rpc_url, contract_addr, private_key]):
         return None
-    return OnchainLogger(
-        rpc_url=rpc_url,
-        contract_address=contract_addr,
-        private_key=private_key,
-        chain_id=settings.xlayer_chain_id,
-    )
+    try:
+        return OnchainLogger(
+            rpc_url=rpc_url,
+            contract_address=contract_addr,
+            private_key=private_key,
+            chain_id=settings.xlayer_chain_id,
+        )
+    except ConnectionError:
+        # A configured but unreachable audit RPC must not make paper/test
+        # imports unusable. Live authorization still fails closed elsewhere.
+        if not settings.allow_live:
+            return None
+        raise
 
 def _make_solana_rail():
     """Build the Solana second rail from env. None when disabled (default).

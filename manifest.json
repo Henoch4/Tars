@@ -27,6 +27,16 @@
   },
   "endpoints": [
     {
+      "path": "/api/v1/control-plane/tasks",
+      "method": "GET",
+      "description": "Authenticated read-only operator task-tray projection."
+    },
+    {
+      "path": "/api/v1/meme/provider-quality",
+      "method": "GET",
+      "description": "Read-only satellite provider completeness and failure-quality metrics."
+    },
+    {
       "path": "/.well-known/agent-card.json",
       "method": "GET",
       "description": "A2A-compatible discovery card (I4): capabilities, tool catalog with"
