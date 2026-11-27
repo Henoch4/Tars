@@ -762,27 +762,27 @@ h2.in .w span{transform:none}
     </div>
     <div class="paper-wrap reveal">
       <div class="paper-card">
-        <div class="paper-stat"><b>28</b></div>
+        <div class="paper-stat"><b data-n="28">28</b></div>
         <div class="paper-label">SOL funding carry trades</div>
       </div>
       <div class="paper-card">
-        <div class="paper-stat"><b>+13.6%</b></div>
+        <div class="paper-stat"><b data-n="13.6" data-p="+" data-s="%" data-d="1">+13.6%</b></div>
         <div class="paper-label">SOL net, after slippage + fees</div>
       </div>
       <div class="paper-card">
-        <div class="paper-stat"><b>135</b></div>
+        <div class="paper-stat"><b data-n="135">135</b></div>
         <div class="paper-label">Meme satellite entries</div>
       </div>
       <div class="paper-card">
-        <div class="paper-stat"><b>135</b></div>
+        <div class="paper-stat"><b data-n="135">135</b></div>
         <div class="paper-label">Meme satellite exits</div>
       </div>
       <div class="paper-card">
-        <div class="paper-stat"><b>+$67.72</b></div>
+        <div class="paper-stat"><b data-n="67.72" data-p="+">+$67.72</b></div>
         <div class="paper-label">Meme net realized paper result</div>
       </div>
       <div class="paper-card">
-        <div class="paper-stat"><b>$0</b></div>
+        <div class="paper-stat"><b data-n="0" data-p="$">$0</b></div>
         <div class="paper-label">Real capital at risk</div>
       </div>
     </div>
@@ -1165,6 +1165,24 @@ var io=new IntersectionObserver(function(es){
     }
   }},{threshold:.18});
 $$('.path-card').forEach(function(c){io.observe(c)});
+
+/* Stats counter: count up when scrolled into view */
+var statIo=new IntersectionObserver(function(es){
+  es.forEach(function(e){
+    if(e.isIntersecting){
+      var b=e.target.querySelector('b');
+      if(b&&!b.dataset.done){
+        b.dataset.done='1';
+        var n=+b.dataset.n||0,dec=b.dataset.d?1:0,p=b.dataset.p||'',s=b.dataset.s||'',t0=null,dur=1200;
+        function f(t){t0=t0||t;var k=Math.min((t-t0)/dur,1),ease=1-Math.pow(1-k,4),v=n*ease;
+          b.textContent=p+(dec?(v).toFixed(dec):Math.round(v))+s;
+          if(k<1)requestAnimationFrame(f)}
+        requestAnimationFrame(f);
+        statIo.unobserve(e.target);
+      }
+    }
+  }},{threshold:.3});
+$$('.paper-stat').forEach(function(c){statIo.observe(c)});
 
 /* Pointer parallax on hero robot */
 var hs=document.querySelector('.hero-stage');
