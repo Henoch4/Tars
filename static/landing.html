@@ -390,6 +390,26 @@ footer{border-top:1px solid var(--border);padding:var(--sp-700) 0 var(--sp-500);
 .road-desc{font-size:0.88rem;color:var(--ink-soft);line-height:1.5;}
 .road-note{margin-top:var(--sp-500);max-width:800px;margin-left:auto;margin-right:auto;}
 .paper-note p{font-size:0.88rem;color:var(--ink-soft);line-height:1.6;}
+/* Motion tokens */
+:root{--fast:200ms;--base:560ms;--slow:1100ms;--out:cubic-bezier(.16,1,.3,1)}
+
+/* Bootstrap screen */
+#boot{position:fixed;inset:0;z-index:100;background:#0e1822;color:#d7e6f5;display:grid;place-items:center;clip-path:inset(0 0 0 0);transition:clip-path var(--slow) var(--out);padding:24px}
+#boot.out{clip-path:inset(0 0 100% 0);pointer-events:none}
+.boot-in{width:min(460px,100%)}
+.bot{width:46px;height:56px;margin-bottom:28px;position:relative}
+.bot i{position:absolute;display:block}
+.bot .h{inset:0 3px 26px;background:#05080c;border-radius:12px;box-shadow:inset 0 0 0 2px #26405a}
+.bot .e{left:12px;right:12px;top:12px;height:6px;border-radius:3px;background:#4d7cff;box-shadow:0 0 14px #4d7cff;animation:blink 2.4s infinite}
+.bot .b{inset:32px 8px 0;background:#05080c;border-radius:9px;box-shadow:inset 0 0 0 2px #26405a}
+@keyframes blink{0%,44%,48%,100%{transform:scaleY(1)}46%{transform:scaleY(.1)}}
+.ln{font:500 14px/2.1 var(--mono);display:flex;gap:10px;opacity:0;transform:translateY(6px);transition:opacity var(--base) var(--out),transform var(--base) var(--out)}
+.ln.on{opacity:1;transform:none}
+.ln b{margin-left:auto;color:#6FE0A6;font-weight:700;opacity:0;transition:opacity var(--fast)}
+.ln.ok b{opacity:1}
+.bar{height:2px;background:#1d2d3d;margin-top:22px;border-radius:2px;overflow:hidden}
+.bar span{display:block;height:100%;width:100%;background:#6FE0A6;transform:scaleX(0);transform-origin:left;transition:transform .38s linear}
+.skip{position:absolute;right:20px;bottom:calc(20px + env(safe-area-inset-bottom,0px));background:none;border:1px solid #2b4259;color:#8fa9c2;font:500 13px var(--mono);padding:8px 14px;border-radius:99px;cursor:pointer}
 .paper-note b{color:var(--ink);}
 .hero-stage{position:relative;display:inline-block;transform:translate(var(--px,0),var(--py,0));transition:transform 160ms linear}
 
@@ -425,6 +445,18 @@ h2.in .w span{transform:none}
 </head>
 <body>
 <div id="prog"></div>
+<div id="boot" role="status" aria-live="polite" aria-label="Loading TARS">
+  <div class="boot-in">
+    <div class="bot" aria-hidden="true"><i class="h"></i><i class="e"></i><i class="b"></i></div>
+    <div class="ln"><span>fresh price data</span><b>ok</b></div>
+    <div class="ln"><span>6 hard limits loaded</span><b>ok</b></div>
+    <div class="ln"><span>confidence floor 70%</span><b>ok</b></div>
+    <div class="ln"><span>writing public record</span><b>ok</b></div>
+    <div class="ln"><span>record written, trading allowed</span><b>ok</b></div>
+    <div class="bar"><span></span></div>
+  </div>
+  <button class="skip" id="skip">Skip intro</button>
+</div>
 <a href="#main" class="skip-link">Skip to content</a>
 
 <div class="announce" id="announce">
@@ -971,6 +1003,9 @@ h2.in .w span{transform:none}
 
 <script>
 (function(){
+  /* $$ helper */
+  function $$(s,r){return Array.prototype.slice.call((r||document).querySelectorAll(s));}
+
   /* Each feature is isolated: one failure can never take down the others
      (previously a single JS error left every .reveal section stuck at
      opacity:0 &mdash; invisible content, "animations not working"). */
@@ -1167,6 +1202,14 @@ var io=new IntersectionObserver(function(es){
     }
   }},{threshold:.18});
 $$('.path-card').forEach(function(c){io.observe(c)});
+var reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* Bootstrap audit screen */
+var boot=document.getElementById('boot'),bootLines=$$(".ln",boot),bootBar=$(".bar span",boot),bootTimers=[];
+function bootFinish(){bootTimers.forEach(clearTimeout);bootTimers=[];boot.classList.add("out");body.classList.remove("booting");body.classList.add("ready");setTimeout(function(){$$('.paper-stat b').forEach(function(b){if(b.dataset.n)requestAnimationFrame(statCount(b));}),900);}
+function bootRun(){body.classList.remove("ready");body.classList.add("booting");boot.classList.remove("out");bootLines.forEach(function(l){l.classList.remove("on","ok")});bootBar.style.transform="scaleX(0)";bootLines.forEach(function(l,i){bootTimers.push(setTimeout(function(){l.classList.add("on");bootBar.style.transform="scaleX("+((i+1)/bootLines.length)+")"},300+i*380));bootTimers.push(setTimeout(function(){l.classList.add("ok")},300+i*380+260));});bootTimers.push(setTimeout(bootFinish,300+bootLines.length*380+520));}
+document.getElementById("skip").onclick=bootFinish;
+if(reduce){bootFinish();}else{bootRun();}
 var reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /* Stats counter: count up when scrolled into view */
