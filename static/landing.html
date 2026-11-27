@@ -694,26 +694,31 @@ h2.in .w span{transform:none}
       <div class="binder">
         <div class="binder-row">
           <span class="binder-num">01</span>
+          <svg class="check" viewBox="0 0 24 24" width="32" height="32" style="stroke:#1d1408;fill:none;stroke-width:2.6;stroke-dasharray:24;stroke-dashoffset:24;transition:stroke-dashoffset var(--base) var(--out);transition-delay:0ms"><path d="M5 12.5l4.5 4.5L19 7"/></svg>
           <div class="binder-swatch" style="background:#F4B942;"><svg viewBox="0 0 24 24" fill="none" stroke="#3A2600" stroke-width="2"><path d="M12 3 4 6.5v5c0 5 3.4 8.5 8 9.5 4.6-1 8-4.5 8-9.5v-5L12 3Z"/></svg></div>
           <div><div class="binder-title">Fresh data check</div><div class="binder-sub">Trading pauses if price data looks stale or broken</div></div>
         </div>
         <div class="binder-row">
           <span class="binder-num">02</span>
+          <svg class="check" viewBox="0 0 24 24" width="32" height="32" style="stroke:#1d1408;fill:none;stroke-width:2.6;stroke-dasharray:24;stroke-dashoffset:24;transition:stroke-dashoffset var(--base) var(--out);transition-delay:330ms"><path d="M5 12.5l4.5 4.5L19 7"/></svg>
           <div class="binder-swatch" style="background:#6FE0A6;"><svg viewBox="0 0 24 24" fill="none" stroke="#0B2E1D" stroke-width="2"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg></div>
           <div><div class="binder-title">Automatic gear switching</div><div class="binder-sub">Shifts to safer settings after rough results</div></div>
         </div>
         <div class="binder-row">
           <span class="binder-num">03</span>
+          <svg class="check" viewBox="0 0 24 24" width="32" height="32" style="stroke:#1d1408;fill:none;stroke-width:2.6;stroke-dasharray:24;stroke-dashoffset:24;transition:stroke-dashoffset var(--base) var(--out);transition-delay:660ms"><path d="M5 12.5l4.5 4.5L19 7"/></svg>
           <div class="binder-swatch" style="background:#79C7E8;"><svg viewBox="0 0 24 24" fill="none" stroke="#062232" stroke-width="2"><path d="M4 7h7M4 12h16M4 17h7"/></svg></div>
           <div><div class="binder-title">All-or-nothing paired trades</div><div class="binder-sub">Either both sides complete, or everything cancels safely</div></div>
         </div>
         <div class="binder-row">
           <span class="binder-num">04</span>
+          <svg class="check" viewBox="0 0 24 24" width="32" height="32" style="stroke:#1d1408;fill:none;stroke-width:2.6;stroke-dasharray:24;stroke-dashoffset:24;transition:stroke-dashoffset var(--base) var(--out);transition-delay:990ms"><path d="M5 12.5l4.5 4.5L19 7"/></svg>
           <div class="binder-swatch" style="background:#C9BFF5;"><svg viewBox="0 0 24 24" fill="none" stroke="#221A44" stroke-width="2"><path d="M4 19V6.5A2.5 2.5 0 0 1 6.5 4H16l4 4v11a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1Z"/><path d="M8 13h8M8 16.5h5"/></svg></div>
           <div><div class="binder-title">History exam</div><div class="binder-sub">Must prove itself on past data before real money</div></div>
         </div>
         <div class="binder-row">
           <span class="binder-num">05</span>
+          <svg class="check" viewBox="0 0 24 24" width="32" height="32" style="stroke:#1d1408;fill:none;stroke-width:2.6;stroke-dasharray:24;stroke-dashoffset:24;transition:stroke-dashoffset var(--base) var(--out);transition-delay:1320ms"><path d="M5 12.5l4.5 4.5L19 7"/></svg>
           <div class="binder-swatch" style="background:#F3B9BE;"><svg viewBox="0 0 24 24" fill="none" stroke="#3A0D12" stroke-width="2"><path d="M6 6h12M6 10h12M6 14h8"/></svg></div>
           <div><div class="binder-title">Backup record book</div><div class="binder-sub">Every event saved twice: public chain + local file</div></div>
         </div>
@@ -1205,6 +1210,16 @@ var io=new IntersectionObserver(function(es){
     }
   }},{threshold:.18});
 $$('.path-card').forEach(function(c){io.observe(c)});
+var binderIo=new IntersectionObserver(function(es){
+  es.forEach(function(e){
+    if(e.isIntersecting){
+      e.target.querySelectorAll('.check').forEach(function(p){
+        p.style.strokeDashoffset='0';
+      });
+      binderIo.unobserve(e.target);
+    }
+  }},{threshold:.3});
+binderIo.observe(document.getElementById('binder'));
 var reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /* Bootstrap audit screen */
