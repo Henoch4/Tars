@@ -35,7 +35,10 @@ def _loop(tmp_path, **kw):
 
 def test_screen_passes_clean_rejects_dirty(tmp_path):
     loop = _loop(tmp_path)
-    snaps = [_snap("GOOD"), _snap("BAD", top10_hold_pct=90.0)]
+    snaps = [_snap("GOOD", provider_statuses={"dexscreener": "complete"},
+                   provider_reasons={}), _snap("BAD", top10_hold_pct=90.0,
+                   provider_statuses={"dexscreener": "unknown"},
+                   provider_reasons={"dexscreener": "stale response"})]
     passed = loop.screen_candidates(snaps)
     assert [s.mint for s in passed] == ["GOOD"]
     # Every screen is recorded
@@ -44,6 +47,8 @@ def test_screen_passes_clean_rejects_dirty(tmp_path):
     recs = [json.loads(r) for r in records]
     assert recs[0]["passed"] is True
     assert recs[1]["passed"] is False
+    assert recs[0]["provider_statuses"] == {"dexscreener": "complete"}
+    assert recs[1]["provider_reasons"]["dexscreener"] == "stale response"
 
 
 def test_enter_creates_position_and_tracks_spend(tmp_path):

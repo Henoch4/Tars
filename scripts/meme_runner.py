@@ -139,12 +139,17 @@ def _enrich(mint, via=None):
     only total Helius failure skips the mint."""
     from src.meme_discovery import DiscoveryError, enrich_mint
     from src.meme_feed import FeedError, HeliusFeed
+    provider_statuses = {}
+    provider_reasons = {}
     # DexScreener first (liquidity, volume, age, venue, price) — optional
     info = {}
     try:
         info = enrich_mint(mint)
+        provider_statuses["dexscreener"] = "complete"
     except DiscoveryError as e:
         info = {"_dex_error": str(e)}
+        provider_statuses["dexscreener"] = "error"
+        provider_reasons["dexscreener"] = str(e)
     # Helius always (holders, authorities — chain truth, no indexing lag)
     extra = {
         "age_s": info.get("age_s"),
@@ -160,13 +165,15 @@ def _enrich(mint, via=None):
     try:
         from src.meme_rugcheck import rugcheck_mint
         rc = rugcheck_mint(mint)
+        provider_statuses["rugcheck"] = "complete"
         extra["creator_address"] = rc.get("creator_address")
         extra["rugcheck_rugged"] = rc.get("rugcheck_rugged")
         extra["rugcheck_score"] = rc.get("rugcheck_score")
         if rc.get("creator_hold_pct") is not None:
             extra["creator_hold_pct"] = rc.get("creator_hold_pct")
-    except Exception:
-        pass
+    except Exception as e:
+        provider_statuses["rugcheck"] = "rate_limited" if "429" in str(e) else "error"
+        provider_reasons["rugcheck"] = type(e).__name__
     # Jupiter token profile (keyless). PRIMARY creator source now that
     # RugCheck's domain is dead (NXDOMAIN since 2026-10-18 23:25Z). The
     # `dev` field is the deployer wallet -> creator_address (which also
@@ -181,6 +188,7 @@ def _enrich(mint, via=None):
         if info.get("graduated"):
             from src.meme_jupiter import token_info
             prof = token_info(mint)
+            provider_statuses["jupiter_profile"] = "complete" if prof else "unknown"
             if prof:
                 if not extra.get("creator_address") and prof.get("dev"):
                     extra["creator_address"] = prof["dev"]
@@ -191,8 +199,9 @@ def _enrich(mint, via=None):
                     extra["creator_hold_pct"] = prof["dev_hold_pct"]
                 if prof.get("organic_score") is not None:
                     extra["organic_score"] = prof["organic_score"]
-    except Exception:
-        pass
+    except Exception as e:
+        provider_statuses["jupiter_profile"] = "rate_limited" if "429" in str(e) else "error"
+        provider_reasons["jupiter_profile"] = type(e).__name__
     # Launch forensics (block-0 buyers + dev-minute-1 — measurement only,
     # no gate reads these yet). Graduates ONLY: newborns die at unconfirmed
     # regardless, so spending ~11 RPC calls on them is pure load. Results
@@ -230,11 +239,19 @@ def _enrich(mint, via=None):
             rt = round_trip_cost_pct(mint, price_usd=info.get("price_usd"))
             if rt is not None:
                 extra["round_trip_cost_pct"] = rt
-    except Exception:
-        pass
+                provider_statuses["jupiter_round_trip"] = "complete"
+            else:
+                provider_statuses["jupiter_round_trip"] = "unknown"
+                provider_reasons["jupiter_round_trip"] = "no quote result"
+    except Exception as e:
+        provider_statuses["jupiter_round_trip"] = "rate_limited" if "429" in str(e) else "error"
+        provider_reasons["jupiter_round_trip"] = type(e).__name__
     try:
         feed = HeliusFeed()
         snap = feed.snapshot_for_mint(mint, extra)
+        provider_statuses["helius"] = "complete"
+        snap.provider_statuses = provider_statuses
+        snap.provider_reasons = provider_reasons
         snap._price_usd = info.get("price_usd") or 0
         snap._volume_24h_usd = info.get("volume_24h_usd") or 0
         # Jupiter price fallback when DexScreener has no price yet
@@ -248,6 +265,8 @@ def _enrich(mint, via=None):
                 pass
         return snap, None
     except FeedError as e:
+        provider_statuses["helius"] = "rate_limited" if "429" in str(e) else "error"
+        provider_reasons["helius"] = str(e)
         return None, f"feed: {e}"
 
 

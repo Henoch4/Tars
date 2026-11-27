@@ -235,6 +235,8 @@ class SatelliteLoop:
                 # readers must tolerate their absence on pre-change rows.
                 "creator_address": getattr(snap, "creator_address", None),
                 "rugcheck_rugged": getattr(snap, "rugcheck_rugged", None),
+                "provider_statuses": dict(getattr(snap, "provider_statuses", {}) or {}),
+                "provider_reasons": dict(getattr(snap, "provider_reasons", {}) or {}),
             })
             if verdict.passed:
                 passed.append(snap)

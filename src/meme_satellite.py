@@ -98,10 +98,22 @@ class TokenSnapshot:
     organic_score: float | None = None  # Jupiter organic/bundled read (note only)
     creator_past_rugs: int | None = None
     creator_launches: int | None = None  # Jupiter dev_mints (serial deployer; note only)
+    creator_launch_count: int | None = None  # compatibility alias for experiment fixtures
     graduated: bool = False  # bonding-curve graduation / survival confirmation
     mcap_usd: float | None = None  # best-pool market cap (DexScreener)
+    price_usd: float | None = None  # compatibility alias for experiment snapshots
     block0_buyers: int | None = None  # distinct buyers in creation slot
     dev_sold_minute1: bool | None = None  # creator sold <=60s after creation
+    # Provider provenance is additive: absent metadata remains unknown in
+    # reports and never becomes an implicit pass.
+    provider_statuses: dict[str, str] = field(default_factory=dict)
+    provider_reasons: dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self):
+        if self.creator_launches is None and self.creator_launch_count is not None:
+            self.creator_launches = self.creator_launch_count
+        elif self.creator_launch_count is None and self.creator_launches is not None:
+            self.creator_launch_count = self.creator_launches
 
 
 @dataclass
