@@ -376,6 +376,14 @@ footer{border-top:1px solid var(--border);padding:var(--sp-700) 0 var(--sp-500);
   box-shadow:0 4px 16px rgba(21,23,26,0.2);z-index:50;}
 .back-to-top.visible{opacity:1;transform:translateY(0);}
 .back-to-top:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(21,23,26,0.3);}
+.paper-results{background:var(--bg-soft);}
+.paper-wrap{display:flex;gap:var(--sp-400);flex-wrap:wrap;justify-content:center;max-width:640px;margin:0 auto;}
+.paper-card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:var(--sp-500);text-align:center;min-width:160px;}
+.paper-stat{font-family:'Geist Mono',monospace;font-weight:700;font-size:2rem;color:var(--ink);display:block;margin-bottom:6px;}
+.paper-label{font-size:0.78rem;color:var(--ink-soft);font-family:'Geist Mono',monospace;}
+.paper-note{margin-top:var(--sp-500);max-width:640px;margin-left:auto;margin-right:auto;}
+.paper-note p{font-size:0.88rem;color:var(--ink-soft);line-height:1.6;}
+.paper-note b{color:var(--ink);}
 </style>
 </head>
 <body>
@@ -706,6 +714,32 @@ footer{border-top:1px solid var(--border);padding:var(--sp-700) 0 var(--sp-500);
         </div>
         <p class="fee-desc">Vault fees haven't been decided. They'll be published here the day deposits open, not before.</p>
       </div>
+    </div>
+  </div>
+</section>
+
+<section class="paper-results">
+  <div class="container">
+    <div class="section-head reveal">
+      <div class="section-eyebrow">Paper Results — Honest Numbers</div>
+      <h2>What paper trading actually produced</h2>
+    </div>
+    <div class="paper-wrap reveal">
+      <div class="paper-card">
+        <div class="paper-stat"><b>28</b> trades</div>
+        <div class="paper-label">SOL funding carry, paper trading</div>
+      </div>
+      <div class="paper-card">
+        <div class="paper-stat"><b>+13.6%</b> net</div>
+        <div class="paper-label">After slippage and fees</div>
+      </div>
+      <div class="paper-card">
+        <div class="paper-stat"><b>$0</b> real money</div>
+        <div class="paper-label">Paper trading only — no live capital</div>
+      </div>
+    </div>
+    <div class="paper-note reveal">
+      <p><b>This is paper trading, not live trading.</b> No real capital was ever at risk. Paper results show what the strategy would have done — they are not a promise of what live trading would do. Live results can be worse, better, or nothing like paper. Never deposit more than you can afford to lose entirely.</p>
     </div>
   </div>
 </section>
