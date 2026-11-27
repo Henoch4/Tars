@@ -82,13 +82,14 @@ def safety_net(
         be = carry_break_even_rate(survival_prob=survival, pin_state=pin_state)
         # Approximate funding as signal's funding_rate * hold 21 periods
         fr = signal.metadata.get("funding_rate", 0.0) if isinstance(signal.metadata, dict) else 0.0
-        exp = fr * 21 * survival - be * 21  # rough
+        exp_rate = fr * 21 * survival - be * 21  # rough per-dollar carry
         if pin_state != 0:
             # clamped — need quantile feature, be conservative
-            exp *= 0.5
+            exp_rate *= 0.5
+        exp = exp_rate * size_usd
 
     if exp < risk_usd * target_rr:
-        return SafetyNetResult(False, f"E[PnL] {exp:.2f} < R*RR {risk_usd*target_rr:.2f}", expected_pnl=exp)
+        return SafetyNetResult(False, f"E[PnL] ${exp:.2f} < R*RR ${risk_usd*target_rr:.2f}", expected_pnl=exp)
 
     take_pct = stop_pct * target_rr
     return SafetyNetResult(True, "SafetyNet pass", size_usd=size_usd, stop_pct=stop_pct, take_pct=take_pct, expected_pnl=exp)

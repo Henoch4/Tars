@@ -6,6 +6,7 @@ Fully offline — OkxCli is a stub that returns canned market data.
 Run: pytest tests/test_agent_wiring.py -v
 """
 import os
+import time
 from pathlib import Path
 
 import pytest
@@ -25,9 +26,9 @@ class _StubCli:
     async def run(self, *args, **kwargs):
         cmd = args[:1]
         if cmd == ("market",) and "trades" in args:
-            return {"data": [{"px": "100", "sz": "1"}]}
+            return {"data": [{"px": "100", "sz": "1", "ts": str(int(time.time() * 1000))}]}
         if cmd == ("market",) and "funding-rate" in args:
-            return {"data": [{"fundingRate": "0.005"}]}
+            return {"data": [{"fundingRate": "0.005", "ts": str(int(time.time() * 1000))}]}
         if cmd == ("account",) and "positions" in args:
             return {"data": []}
         return {"data": []}

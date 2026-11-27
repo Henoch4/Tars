@@ -12,6 +12,7 @@ This is the main entry point — the /hire endpoint calls run_trading_cycle().
 from __future__ import annotations
 
 import asyncio
+import math
 import json
 import logging
 import os
@@ -287,24 +288,46 @@ class AutonomousTradingAgent:
             funding = [{"fundingRate": "0"}]
 
         # Fetch current position
-        position = await self.executor.get_position(asset)
+        get_position = getattr(self.executor, "get_position", None)
+        position = await get_position(asset) if get_position else None
 
         # okx CLI 1.4.4 returns JSON arrays directly for market data, not {"data": [...]}
         trade_list = trades if isinstance(trades, list) else trades.get("data", []) if isinstance(trades, dict) else []
+        funding_available = True
         if isinstance(funding, list):
-            funding_rate = float(funding[0].get("fundingRate", "0")) if funding else 0.0
+            try: funding_rate = float(funding[0].get("fundingRate", "nan")) if funding else float("nan")
+            except (TypeError, ValueError): funding_rate = float("nan")
         elif isinstance(funding, dict):
-            funding_rate = float(funding.get("data", [{}])[0].get("fundingRate", "0"))
+            try: funding_rate = float(funding.get("data", [{}])[0].get("fundingRate", "nan"))
+            except (TypeError, ValueError, IndexError): funding_rate = float("nan")
         else:
-            funding_rate = 0.0
+            funding_rate = float("nan")
+        if not math.isfinite(funding_rate): funding_rate, funding_available = 0.0, False
+        first_trade = trade_list[0] if trade_list else {}
+        timestamp = self._normalize_exchange_timestamp(first_trade.get("ts"))
+        timestamp_available = timestamp is not None
+        try: price_available = any(math.isfinite(float(t.get("px"))) and float(t.get("px")) > 0 for t in trade_list)
+        except (TypeError, ValueError): price_available = False
 
         return {
             "asset": asset,
             "trades": trade_list,
             "funding_rate": funding_rate,
             "position": position,
-            "timestamp": time.time(),
+            "timestamp": timestamp if timestamp is not None else time.time(),
+            "timestamp_available": timestamp_available,
+            "price_available": price_available,
+            "funding_available": funding_available,
         }
+
+    @staticmethod
+    def _normalize_exchange_timestamp(raw):
+        try:
+            value = float(raw)
+            if not math.isfinite(value) or value <= 0: return None
+            return int(value / 1000) if value >= 1e12 else int(value)
+        except (TypeError, ValueError):
+            return None
 
     def _extract_prices(self, market_data: dict) -> list[float]:
         """Extract close prices from trade data.
@@ -420,8 +443,13 @@ class AutonomousTradingAgent:
         plus self.expected_equity) — fabricating zeros would defeat the whole
         point of the check.
         """
-        if not self.integrity_gate:
+        if not getattr(self, "integrity_gate", None):
             return None
+        from .data_integrity import IntegrityResult, Severity
+        if market_data.get("timestamp_available") is False:
+            return IntegrityResult(Severity.HARD_BLOCK, [f"{asset}: timestamp unavailable"])
+        if market_data.get("price_available") is False:
+            return IntegrityResult(Severity.HARD_BLOCK, [f"{asset}: price unavailable"])
 
         now_s = time.time()
         tick = MarketTick(
@@ -629,7 +657,7 @@ class AutonomousTradingAgent:
             side=side_map[signal.direction],
             order_type="market",
             size=f"{order_size:.2f}",
-            client_oid=f"signal_{signal.strategy}_{uuid.uuid4().hex[:8]}",
+            client_oid=("signal" + "".join(ch for ch in str(signal.strategy) if ch.isascii() and ch.isalnum()) + uuid.uuid4().hex[:8])[:32],
             # Entries are never reduce-only: reduceOnly on a SHORT entry is
             # rejected by OKX (or silently reduces an existing long instead
             # of opening the modeled short). Position reduction happens via
@@ -1212,6 +1240,9 @@ class AutonomousTradingAgent:
         """
         asset = md["asset"]
         out: dict = {"signals": [], "decisions": [], "executions": [], "errors": []}
+        if md.get("funding_available") is False:
+            out["errors"].append(f"funding unavailable for {asset}")
+            return out
 
         # --- Phase 1.5: Pre-Signal Integrity Gate ---
         integrity = self._check_integrity(asset, md)
@@ -1234,7 +1265,7 @@ class AutonomousTradingAgent:
         # or buy primary positions as part of the trading cycle. This
         # integrates Panta's prediction market infrastructure with tarstrade's
         # risk-gated execution pipeline.
-        if self.panta_client is not None:
+        if getattr(self, "panta_client", None) is not None:
             panta_outcome = await self._panta_phase(asset, md, cycle_id, out)
             if panta_outcome is not None:
                 return panta_outcome

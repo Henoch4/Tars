@@ -212,13 +212,15 @@ def vault_abi():
     address = os.getenv("VAULT_CONTRACT_ADDRESS", "").strip()
     usdt_address = ""
     if address:
-        w3 = _get_web3()
-        vault = _vault_contract(w3)
-        if vault:
-            try:
-                usdt_address = vault.functions.asset().call()
-            except Exception:
-                pass
+        try:
+            w3 = _get_web3()
+            vault = _vault_contract(w3)
+            if vault:
+                try: usdt_address = vault.functions.asset().call()
+                except Exception: pass
+        except (ConnectionError, OSError):
+            # ABI discovery remains available offline; RPC is optional here.
+            usdt_address = ""
     return {
         "abi": abi,
         "address": address,
