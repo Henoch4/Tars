@@ -389,6 +389,7 @@ footer{border-top:1px solid var(--border);padding:var(--sp-700) 0 var(--sp-500);
 .road-title{font-weight:700;color:var(--ink);font-size:1rem;display:block;margin-bottom:10px;}
 .road-desc{font-size:0.88rem;color:var(--ink-soft);line-height:1.5;}
 .road-note{margin-top:var(--sp-500);max-width:800px;margin-left:auto;margin-right:auto;}
+.paper-note p{font-size:0.88rem;color:var(--ink-soft);line-height:1.6;}
 .paper-note b{color:var(--ink);}
 .hero-stage{position:relative;display:inline-block;transform:translate(var(--px,0),var(--py,0));transition:transform 160ms linear}
 
@@ -418,6 +419,7 @@ h2.in .w span{transform:none}
 .path-card{opacity:1!important;transform:none!important}
 .h2 .w span,.ph span{transform:none!important;opacity:1!important}
 #prog{display:none}
+.paper-stat b{animation:none!important}
 }
 </style>
 </head>
@@ -1165,6 +1167,7 @@ var io=new IntersectionObserver(function(es){
     }
   }},{threshold:.18});
 $$('.path-card').forEach(function(c){io.observe(c)});
+var reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /* Stats counter: count up when scrolled into view */
 var statIo=new IntersectionObserver(function(es){
@@ -1173,7 +1176,7 @@ var statIo=new IntersectionObserver(function(es){
       var b=e.target.querySelector('b');
       if(b&&!b.dataset.done){
         b.dataset.done='1';
-        var n=+b.dataset.n||0,dec=b.dataset.d?1:0,p=b.dataset.p||'',s=b.dataset.s||'',t0=null,dur=1200;
+        var n=+b.dataset.n||0,dec=b.dataset.d?1:0,p=b.dataset.p||'',s=b.dataset.s||'',t0=null,dur=reduce?1:1200;
         function f(t){t0=t0||t;var k=Math.min((t-t0)/dur,1),ease=1-Math.pow(1-k,4),v=n*ease;
           b.textContent=p+(dec?(v).toFixed(dec):Math.round(v))+s;
           if(k<1)requestAnimationFrame(f)}
