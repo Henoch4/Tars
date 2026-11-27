@@ -1,0 +1,2 @@
+{"event": "entry", "mint": "M1", "size_usd": 25.0, "price": 1.0, "sized_from_liquidity_usd": 50000.0, "sized_from_volume_usd": 50000.0, "paper": true, "ts": 1795315550.3571553, "cycle": 0}
+{"event": "exit", "mint": "M1", "reason": "time box expired (7d max dwell)", "entry_price": 1.0, "exit_price": 1.5, "peak_price": 1.5, "size_usd": 25.0, "gross_usd": 12.5, "costs_usd": 1.0, "net_usd": 11.5, "hold_time_s": 604801.0, "ts": 1795315550.3593569, "cycle": 0}

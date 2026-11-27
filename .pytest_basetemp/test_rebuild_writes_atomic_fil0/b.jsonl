@@ -1,0 +1,3 @@
+{"event": "screen", "mint": "M1", "passed": false, "rejected_by": "x", "reasons": [], "ts": 1000.0, "creator_address": "C1", "rugcheck_rugged": true}
+{"event": "screen", "mint": "M2", "passed": false, "rejected_by": "x", "reasons": [], "ts": 1001.0, "creator_address": "C1", "rugcheck_rugged": false}
+{"event": "screen", "mint": "M3", "passed": false, "rejected_by": "x", "reasons": [], "ts": 1002.0, "creator_address": "C2", "rugcheck_rugged": false}

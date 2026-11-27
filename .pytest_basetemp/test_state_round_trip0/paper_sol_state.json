@@ -1,0 +1,22 @@
+{
+  "funding_history": [
+    0.0001,
+    0.0002
+  ],
+  "price_history": [],
+  "open_position": {
+    "asset": "SOL-USDT-SWAP",
+    "direction": "SHORT",
+    "entry_price": 100.0,
+    "ref_price": 100.0,
+    "size_usd": 10000.0,
+    "entry_ts": 0.0,
+    "entry_fee_usd": 5.0,
+    "entry_slippage_bps": 3.0,
+    "funding_accrued_usd": 0.0,
+    "signal_meta": {}
+  },
+  "closed_trades": [],
+  "net_carry_usd": -12.34,
+  "cycle_count": 0
+}

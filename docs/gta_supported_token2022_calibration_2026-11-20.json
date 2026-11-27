@@ -1,0 +1,10 @@
+{
+  "commitment": "finalized",
+  "slot": 471762860,
+  "candidates": [
+    {"mint": "BsbsB3WLq7vbY5En3MBCAsTrcwaCxNKY2Mp5pGuLpump", "owner": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb", "adapter_status": "decoded", "freshness": "fresh", "transfer_fee": "absent", "hook_present": false, "sell_restrictions": "unknown", "classification": "unknown", "reason": "sell behavior requires independent evidence"},
+    {"mint": "2hwaRQs4WqThnp26XLpch5MBZhAHqses3vSv1Bkupump", "owner": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb", "adapter_status": "decoded", "freshness": "fresh", "transfer_fee": "absent", "hook_present": false, "sell_restrictions": "unknown", "classification": "unknown", "reason": "sell behavior requires independent evidence"}
+  ],
+  "decision": "blocked",
+  "policy": "classic SPL blocked; unassessed Token-2022 sell restrictions blocked; no candidate promoted"
+}

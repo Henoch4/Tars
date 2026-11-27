@@ -1,0 +1,17 @@
+{
+  "status": "passed",
+  "mode": "synthetic_replay",
+  "simulation_only": true,
+  "signed": false,
+  "broadcast": false,
+  "candidate_mint": "BsbsB3WLq7vbY5En3MBCAsTrcwaCxNKY2Mp5pGuLpump",
+  "input_lamports": 1000000,
+  "buy_token_raw": 357240043,
+  "buy_error": null,
+  "sell_error": null,
+  "sell_quote_raw": 976272,
+  "effective_loss_pct": 2.3728,
+  "buy_slot": 471761193,
+  "sell_slot": null,
+  "provenance_note": "Helius read-only simulations; no signed or broadcast transaction. Sell response did not expose a context slot."
+}

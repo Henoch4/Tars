@@ -1,0 +1,54 @@
+{
+  "positions": [
+    {
+      "mint": "A",
+      "symbol": "",
+      "entry_price": 1.0,
+      "entry_usd": 25.0,
+      "size_usd": 25.0,
+      "entry_ts": 1795315524.2643971,
+      "entry_window_volume_usd": 10000.0,
+      "peak_price": 1.0,
+      "last_price": 1.0,
+      "last_volume_24h_usd": null,
+      "lp_reserve_usd": 50000.0,
+      "lp_reserve_at_entry_usd": 50000.0,
+      "sell_tax_pct_now": null
+    },
+    {
+      "mint": "B",
+      "symbol": "",
+      "entry_price": 1.0,
+      "entry_usd": 25.0,
+      "size_usd": 25.0,
+      "entry_ts": 1795315524.2669804,
+      "entry_window_volume_usd": 10000.0,
+      "peak_price": 1.0,
+      "last_price": 1.0,
+      "last_volume_24h_usd": null,
+      "lp_reserve_usd": 50000.0,
+      "lp_reserve_at_entry_usd": 50000.0,
+      "sell_tax_pct_now": null
+    },
+    {
+      "mint": "C",
+      "symbol": "",
+      "entry_price": 1.0,
+      "entry_usd": 25.0,
+      "size_usd": 25.0,
+      "entry_ts": 1795315524.2694743,
+      "entry_window_volume_usd": 10000.0,
+      "peak_price": 1.0,
+      "last_price": 1.0,
+      "last_volume_24h_usd": null,
+      "lp_reserve_usd": 50000.0,
+      "lp_reserve_at_entry_usd": 50000.0,
+      "sell_tax_pct_now": null
+    }
+  ],
+  "spent_usd": 75.0,
+  "realized_net_usd": 0.0,
+  "cycle_count": 0,
+  "reentry_cooldown": {},
+  "updated_at": 1795315524.2705698
+}

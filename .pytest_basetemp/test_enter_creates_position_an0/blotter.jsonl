@@ -1,0 +1,2 @@
+{"event": "entry", "mint": "M1", "size_usd": 25.0, "price": 1.0, "sized_from_liquidity_usd": 50000.0, "sized_from_volume_usd": 10000.0, "paper": true, "ts": 1795315550.289057, "cycle": 0}
+{"event": "entry_blocked", "mint": "M2", "reason": "session cap", "ts": 1795315550.2917967, "cycle": 0}

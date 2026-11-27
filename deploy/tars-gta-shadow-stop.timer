@@ -1,0 +1,10 @@
+[Unit]
+Description=Reserved stop timer for TARS GTA shadow; operator readiness-gated
+
+[Timer]
+OnBootSec=365d
+Persistent=false
+Unit=tars-gta-shadow-stop.service
+
+[Install]
+WantedBy=timers.target

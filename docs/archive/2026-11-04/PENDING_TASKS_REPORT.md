@@ -1,0 +1,178 @@
+# TARS Pending Tasks & Constraints Report
+
+**Generated:** 2026-09-04 · Updated 2026-09-12 · Updated 2026-10-01 (VPS provisioned, 641 tests green)  
+**Status:** Keys rotated 2026-09-12 — new `AGENT_WALLET_PRIVATE_KEY` + OKX/Binance creds active in `.env` (old `0x4E80…` from `829576c` permanently invalidated)
+
+---
+
+## ✅ COMPLETED WORK
+
+### Phase 1 - Core Infrastructure (DONE)
+- [x] S8: Canonical decision hash (`governance.py:canonical_decision_hash`)
+- [x] Z2: Truthiness audit regression test
+- [x] D1(a)/Z3/W4: Amount-aware partial unwind + min-age + crash recovery
+- [x] S5/W3: ML fallback fail-closed + typed degradation
+- [x] S1/S3/S4/W6: Watchdog + metrics + transport/response split + op-stage events
+- [x] W2: Single asset registry (`src/assets.py`)
+- [x] S6 + Z4: Profit net-vs-gross audit pins
+
+### Phase 2 - Edge Math (DONE)
+- [x] Z1: Fee-aware carry break-even gate (`carry_break_even_rate`)
+
+### Phase 3 (DONE)
+- [x] I7: Manifest from live routes + doctor CI gate
+- [x] I4: Agent-card + x402 well-known
+- [x] I3/I6: Pricing tiers + estimate + limits
+- [x] I13: MCP bridge (unwired)
+
+### Phase 4 (DONE)
+- [x] I8: Cooldown + drawdown + graded risk score
+- [x] Swarm divergence quarantine
+
+### Phase 5 (DOCS DONE)
+- [x] SECURITY.md (W1 threat model)
+- [x] CHANGELOG.md (W5)
+- [x] offramp-module.md (W6)
+- [x] TreasuryMultisig threshold multisig
+- [x] Key rotation script (OKX + Binance support)
+
+---
+
+## ✅ CRITICAL BLOCKERS — RESOLVED 2026-09-12
+
+### 1. **KEY ROTATION — DONE 2026-09-12**
+- **Status:** ✅ New `AGENT_WALLET_PRIVATE_KEY` + OKX/Binance credentials generated 2026-09-12, active in `.env` (gitignored)
+- **Old key:** `0x4E80…` (commit `829576c`) permanently invalidated — scrubbed from history, gitleaks guards in place
+- **Verification:** `git diff` clean, `.env` gitignored, `scripts/preflight_check.py` passes `AGENT_WALLET_PRIVATE_KEY valid` without printing key
+
+### 2. **PERSISTENT HOST PROVISIONING — DONE 2026-10-01**
+- **Status:** ✅ Contabo Cloud VPS 4 provisioned (4 vCPU, 8 GB RAM, 100 GB SSD, Ubuntu 24.04, UK region)
+- **IP:** `80.190.82.127` | **Instance:** `vmi3624433` | **Order ID:** `15478597` | **$9.90/mo** (1-month term)
+- **Deploy:** `scripts/deploy_vps.sh` executed (patched for Python 3.12 on Ubuntu 24.04, commit `141bba2`)
+- **Verified:** 641 tests pass (`python -m pytest tests/ -q`), durable dirs (`/data/risk_state`, `/data/audit_log`, `/var/log/tars`), env (`DRY_RUN=true`, `ALLOW_LIVE=false`), firewall (UFW)
+- **Runbook:** `docs/PERSISTENT_HOST_DECISION.md`
+
+### 3. **PUBLIC REPO SYNC**
+- **Blocker:** Local `.env` has real credentials; must rotate keys BEFORE sync
+- **Action:** After key rotation → `git push` → secret scan passes → public repo current
+
+---
+
+## 📋 PHASE 4 & 5 STATUS
+
+### Phase 4 (Audit + Bug Bounty) - PENDING
+- [ ] Professional audit (~$15-30K)
+- [ ] Bug bounty program
+- **Blocker:** Phase 1-3 must be production-ready first
+
+### Phase 5 (Legal/Compliance) - PENDING
+- [ ] Legal/compliance memo (~$3-8K)
+- [ ] Fee structure decision (mgmt + perf fee, high-water mark)
+- [ ] First-loss capital commitment
+- [ ] First-loss tranche on-chain (`TradingVault.sol`)
+- [ ] TreasuryMultisig deployed (DONE - `contracts/contracts/TreasuryMultisig.sol`)
+
+---
+
+## 🛡️ SECURITY POSTURE
+
+### ✅ SECURED
+- Key rotation script: `scripts/rotate_keys.py` (tested, supports OKX + Binance)
+- Signer abstraction: `src/signer.py` (EnvKeySigner + DelegatedSigner)
+- TreasuryMultisig: `contracts/contracts/TreasuryMultisig.sol` (2-of-3, timelocked)
+- Key rotation script: `scripts/rotate_keys.py` (tested with Binance)
+- Key rotation docs: `docs/PERSISTENT_HOST_DECISION.md`, `scripts/rotate_keys.py`
+- VPS deployment: `scripts/deploy_vps.sh` + `docs/PERSISTENT_HOST_DECISION.md`
+
+### ✅ ROTATED 2026-09-12 (HISTORY SCRUBBED, OLD KEY INVALIDATED)
+- Old private key was in `.env` and git history (commit `829576c` scrubbed; `0x4E80…` permanently invalid)
+- **Action:** Rotation completed 2026-09-12 — new key active in `.env`, old key invalidated, forks/clones warned
+- **Note:** Former chat history exposure mitigated by rotation; gitleaks + pre-commit enforce no reintroduction
+
+### ✅ DONE 2026-09-12 / ❌ REMAINING
+- [x] Binance API keys rotated 2026-09-12 (active in `.env`)
+- [x] OKX API keys rotated 2026-09-12 (active in `.env`)
+- [x] VPS provisioned 2026-10-01 (Contabo Cloud VPS 4, `80.190.82.127`, 641 tests green)
+- [x] `scripts/deploy_vps.sh` executed on Ubuntu 24.04 (patched for Python 3.12)
+- [ ] Public repo synced (`git push` after secret scan)
+- [ ] Phase 4: Professional audit ($15-30K)
+- [ ] Phase 5: Legal memo, fee structure, first-loss capital
+
+---
+
+## 🔒 CONSTRAINTS & HARD LIMITS
+
+| Constraint | Impact | Resolution |
+|------------|--------|------------|
+| **No real keys in git** | `.env` in `.gitignore`, but history has old key | Rotated; history scrubbed but forks exist |
+| **No secrets in chat** | Exposed once in this session | Rotated immediately |
+| **No OKX withdrawal perms** | API keys: Read + Trade only | Enforced at exchange level |
+| **No Binance withdrawal perms** | Same | Enforced at exchange level |
+| **Vault TVL cap** | `MAX_TVL` immutable per deploy | Redeploy to scale |
+| **Audit first** | Legal/audit before strangers | Hard gate |
+| **First-loss capital** | Operator bears first loss | Phase 6 gate |
+| **OKX API perms** | Read + Trade only, NO withdrawal | Exchange-level enforcement |
+| **Binance API perms** | Read + Trade, NO withdrawal | Exchange-level enforcement |
+| **Key rotation automation** | Script ready, manual OKX step required | Binance/OKX require manual key gen |
+
+---
+
+## 📦 REPO STATE (as of commit `ca9b348`)
+
+### Tests Passing
+- 559 passed, 16 pre-existing Windows tmp errors, 3 env 401s
+- New tests: `test_learning_store.py`, `test_audit_seal.py`, `test_ml_degradation.py`, `test_risk_dynamic.py`, `test_carry_breakeven.py`, `test_consensus_quarantine.py`, `test_mcp_bridge.py`, `test_signer.py`, `test_asset_registry.py`, `test_carry_breakeven.py`, `test_pricing.py`, `test_observability.py`, `test_ml_degradation.py`, `test_manifest.py`, `test_canonical_hash.py`, `test_signature_roundtrip.py`, `test_audit_trail_contract.py`, `test_consensus_quarantine.py`, `test_multi_leg.py`, `test_signer.py`
+
+### Recent Commits
+| Hash | Message |
+|--------|---------|
+| `4ba0675` | Persistent host decision + key rotation script |
+| `fd9f810` | TreasuryMultisig |
+| `8cb796f` | Phase 5 docs (SECURITY.md, CHANGELOG.md, offramp-module.md) |
+| `3db0961` | I12 learning-store |
+| `6c8a1de` | I5+I11 audit seal + Merkle |
+| `0121ee5` | Signer interface (D10) |
+| `647656c` | Consensus quarantine |
+| `85d98a5` | I8 cooldown/drawdown/score |
+| `70c8c7b` | MCP bridge (I13) |
+| `2913b6e` | I3/I6 pricing tiers |
+| `342061b` | I4 agent-card + x402 |
+| `d2d85b4` | S1/S3/S4/W6 observability |
+| `be3e80e` | S5/W3 ML fallback |
+| `05aa3ec` | S8 canonical hash |
+
+---
+
+## 🚀 IMMEDIATE NEXT STEPS
+
+1. **Keys rotated 2026-09-12** — verified `preflight_check.py` + `git diff` clean
+2. **VPS provisioned 2026-10-01** — `80.190.82.127`, 641 tests green ✅
+3. **Fix Decision 1** — multi-leg partial-fill accounting (`OPEN_DECISIONS.md` #1, amount-aware unwinds)
+4. **Phase 1 hardening** — kill-switch durability, dual ledger reconciliation, fill verification, equity attest, audit logger hardening, volume enforcement, allowlist semantics
+5. **Sync repo** - `git push` after secret scan (no `.env`/secrets)
+6. **Phase 4** - Audit + bug bounty ($15-30K)
+7. **Phase 5** - Legal, fee structure, first-loss capital
+
+---
+
+## 📝 CONSTRAINTS SUMMARY
+
+| Constraint | Status | Notes |
+|------------|--------|-------|
+| No real keys in git | ✅ Enforced | `.env` in `.gitignore`, rotated 2026-09-12 |
+| No secrets in chat | ✅ Rotated 2026-09-12 | Old `0x4E80…` invalidated; gitleaks guards |
+| No withdrawal perms | ✅ Enforced | Exchange-level |
+| TVL cap immutable | ✅ Enforced | Per deploy |
+| Audit before public | 🚫 Not done | Phase 4 gate |
+| First-loss capital | 🚫 Not funded | Phase 6 gate |
+| Key rotation automation | ✅ Done 2026-09-12 | New keys active in `.env` |
+| Persistent host | 📋 Documented | Contabo VPS runbook ready |
+| Public repo sync | ✅ Unblocked 2026-09-12 | Keys rotated; `git diff` clean |
+| Legal memo | ⏳ Phase 5 | Pre-stranger gate |
+| First-loss capital | ⏳ Phase 6 | Operator-funded |
+
+---
+
+**Document Location:** `docs/PENDING_TASKS_REPORT.md`  
+**Last Updated:** 2026-09-12 (rotation verified; VPS next)  
+**Next Review:** After VPS provisioning

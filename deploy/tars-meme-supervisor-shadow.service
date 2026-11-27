@@ -1,0 +1,23 @@
+[Unit]
+Description=TARS main memecoin supervisor shadow mode (read-only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tars
+ConditionPathExists=/etc/tars/ENABLE_MEME_SUPERVISOR_SHADOW
+WorkingDirectory=/opt/tars
+EnvironmentFile=/etc/tars/agent.env
+Environment=DRY_RUN=true
+Environment=ALLOW_LIVE=false
+ExecStart=/opt/tars/venv/bin/python /opt/tars/scripts/meme_satellite_shadow.py --loop --interval 300 --output /opt/tars/data/meme_satellite/shadow_observations.jsonl
+Restart=always
+RestartSec=15
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

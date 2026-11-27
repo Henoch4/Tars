@@ -1,0 +1,25 @@
+{
+  "name": "tarstrade",
+  "version": "1.0.0",
+  "description": "**Automated crypto carry agent with strict safety limits it cannot override, and a public record of every decision — written down before any trade happens.**",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Henoch4/Tars.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Henoch4/Tars/issues"
+  },
+  "homepage": "https://github.com/Henoch4/Tars#readme"
+}

@@ -1,0 +1,2 @@
+{"ts": 1795315554.623722, "event_type": "mutation_proposed", "proof": "execution", "payload": {"key": "k1", "surface": "brittle", "action": "do", "requested_by": "op", "state": "proposed", "detail": {"by": "op"}}}
+{"ts": 1795315554.6246684, "event_type": "mutation_failed", "proof": "execution", "payload": {"key": "k1", "surface": "brittle", "action": "do", "requested_by": "op", "state": "failed", "detail": {"error": "RuntimeError: chain down"}}}

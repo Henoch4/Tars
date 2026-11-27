@@ -1,0 +1,1 @@
+{"built_ts": 1795315550.1044397, "deployer_count": 2, "deployers": {"C1": {"launches": 2, "rugged_seen": 1, "first_ts": 1000.0, "last_ts": 1001.0, "mints": ["M1", "M2"]}, "C2": {"launches": 1, "rugged_seen": 0, "first_ts": 1002.0, "last_ts": 1002.0, "mints": ["M3"]}}}

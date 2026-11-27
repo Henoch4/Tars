@@ -1,0 +1,3 @@
+{"event": "screen", "mint": "G1", "passed": true, "rejected_by": null, "reasons": ["25 holders visible", "survival confirmed: structural entry allowed"], "cycle": 1}
+{"event": "screen", "mint": "N1", "passed": false, "rejected_by": "unconfirmed", "reasons": ["25 holders visible", "no survival confirmation (graduation/liquidity floor)"], "cycle": 1}
+{"event": "entry", "mint": "G1"}

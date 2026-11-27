@@ -1,0 +1,1 @@
+{"event": "emergency_stop", "flatten": {"attempted": true, "result": {"unresolved": []}}, "reason": "kill switch", "state": "halted", "ts": 1795315551.9649584}

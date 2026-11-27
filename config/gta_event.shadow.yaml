@@ -1,0 +1,36 @@
+# GTA VI event satellite policy — SHADOW MODE (read-only, no broadcast)
+# enabled: true  -> evaluate_candidate runs on real mints
+# live_enabled: false -> broadcast_allowed() always returns False
+# This keeps the runner in fail-closed evaluation only; no wallet, no signing, no broadcast.
+enabled: true
+live_enabled: false
+start_utc: "2026-11-18T00:00:00Z"
+end_utc: "2026-11-22T00:00:00Z"
+max_total_usd: 9.0
+max_per_token_usd: 3.0
+max_open_positions: 3
+max_top10_pct: 20.0
+min_liquidity_multiple: 10.0
+min_holders: 100
+exits:
+  stop_loss_pct: 35.0
+  take_profit_ladder:
+    - sell_pct: 45.0
+      gain_pct: 100.0
+    - sell_pct: 30.0
+      gain_pct: 200.0
+  runner_trailing_stop_pct: 25.0
+  max_hold_hours: 96
+  force_flat_utc: "2026-11-22T00:00:00Z"
+keywords:
+  - gta
+  - gta6
+  - gta vi
+  - grand theft
+  - dacity
+  - audacity
+  - vice city
+  - leonida
+  - lucia
+  - jason
+  - wasted

@@ -23,6 +23,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 WSOL = "So11111111111111111111111111111111111111112"
 KEYPATH = "/etc/tars/book2-satellite.json"
+KEYPATH_DEFAULT = KEYPATH
+
+
+def resolve_keypath(cli_value=None):
+    """Resolve an explicit CLI path, then env override, then VPS default."""
+    if cli_value and str(cli_value).strip():
+        return str(cli_value).strip()
+    return os.getenv("MEME_KEYPAIR_PATH", "").strip() or KEYPATH_DEFAULT
 
 
 def main(argv=None):

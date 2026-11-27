@@ -1,0 +1,27 @@
+[Unit]
+Description=TARS GTA VI Shadow Scanner (read-only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tars
+ConditionPathExists=/etc/tars/ENABLE_GTA_SHADOW
+WorkingDirectory=/opt/tars
+EnvironmentFile=/etc/tars/agent.env
+# The scanner has no wallet/broadcast path. Keep the global runtime safety
+# flags explicit even while this service is shadow-only.
+Environment=DRY_RUN=true
+Environment=ALLOW_LIVE=false
+# Bounded graph sampling: two candidates per discovery round. This remains
+# read-only and does not affect the live-disabled policy path.
+ExecStart=/opt/tars/venv/bin/python /opt/tars/scripts/gta_shadow.py --loop --interval 300 --limit 25 --bundle-budget 2 --config /opt/tars/config/gta_event.yaml --output /opt/tars/data/gta_event/shadow_observations.jsonl
+Restart=always
+RestartSec=15
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

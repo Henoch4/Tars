@@ -1,0 +1,8 @@
+{"event": "screen", "mint": "A0", "passed": false, "rejected_by": "x", "reasons": [], "ts": 1000.0, "creator_address": "BIG", "rugcheck_rugged": false}
+{"event": "screen", "mint": "A1", "passed": false, "rejected_by": "x", "reasons": [], "ts": 1001.0, "creator_address": "BIG", "rugcheck_rugged": false}
+{"event": "screen", "mint": "A2", "passed": false, "rejected_by": "x", "reasons": [], "ts": 1002.0, "creator_address": "BIG", "rugcheck_rugged": false}
+{"event": "screen", "mint": "A3", "passed": false, "rejected_by": "x", "reasons": [], "ts": 1003.0, "creator_address": "BIG", "rugcheck_rugged": false}
+{"event": "screen", "mint": "B0", "passed": false, "rejected_by": "x", "reasons": [], "ts": 2000.0, "creator_address": "MID", "rugcheck_rugged": false}
+{"event": "screen", "mint": "B1", "passed": false, "rejected_by": "x", "reasons": [], "ts": 2001.0, "creator_address": "MID", "rugcheck_rugged": false}
+{"event": "screen", "mint": "B2", "passed": false, "rejected_by": "x", "reasons": [], "ts": 2002.0, "creator_address": "MID", "rugcheck_rugged": false}
+{"event": "screen", "mint": "C0", "passed": false, "rejected_by": "x", "reasons": [], "ts": 3000.0, "creator_address": "SMALL", "rugcheck_rugged": false}

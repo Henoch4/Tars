@@ -1,0 +1,14 @@
+{
+  "positions": [],
+  "spent_usd": 0.0,
+  "realized_net_usd": 11.5,
+  "cycle_count": 0,
+  "reentry_cooldown": {
+    "M1": {
+      "ts": 1795315550.3590007,
+      "cooldown_s": 2700.0,
+      "reason": "time box expired (7d max dwell)"
+    }
+  },
+  "updated_at": 1795315550.3600833
+}

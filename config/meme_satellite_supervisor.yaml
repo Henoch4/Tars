@@ -1,0 +1,9 @@
+# Main memecoin satellite control-plane defaults.
+# This file is intentionally inert until the operator completes the separate
+# shadow, canary, and live-authorization gates.
+enabled: false
+live_enabled: false
+interval_s: 60
+reconcile_every_cycles: 1
+state_path: data/meme_satellite/supervisor_state.json
+event_log_path: data/meme_satellite/supervisor_events.jsonl

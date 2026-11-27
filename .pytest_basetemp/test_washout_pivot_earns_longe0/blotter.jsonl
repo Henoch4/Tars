@@ -1,0 +1,2 @@
+{"event": "entry", "mint": "M1", "size_usd": 25.0, "price": 1.0, "sized_from_liquidity_usd": 50000.0, "sized_from_volume_usd": 50000.0, "paper": true, "ts": 1795315550.4657516, "cycle": 0}
+{"event": "exit", "mint": "M1", "reason": "pivot: -28% off peak (>25%)", "entry_price": 1.0, "exit_price": 0.72, "peak_price": 1.0, "size_usd": 25.0, "gross_usd": -7.0, "costs_usd": 1.0, "net_usd": -8.0, "hold_time_s": 0.0, "ts": 1795315550.4677532, "cycle": 0}

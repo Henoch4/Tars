@@ -1,0 +1,2 @@
+{"event": "entry", "mint": "M1", "size_usd": 25.0, "price": 1.0, "sized_from_liquidity_usd": 50000.0, "sized_from_volume_usd": 10000.0, "paper": true, "ts": 1795315550.327077, "cycle": 0}
+{"event": "entry", "mint": "M2", "size_usd": 25.0, "price": 1.0, "sized_from_liquidity_usd": 50000.0, "sized_from_volume_usd": 10000.0, "paper": true, "ts": 1795315550.3290572, "cycle": 0}

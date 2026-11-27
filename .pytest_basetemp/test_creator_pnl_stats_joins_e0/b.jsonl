@@ -1,0 +1,7 @@
+{"event": "screen", "mint": "M1", "passed": false, "rejected_by": "x", "reasons": [], "ts": 1000.0, "creator_address": "C1", "rugcheck_rugged": false}
+{"event": "screen", "mint": "M2", "passed": false, "rejected_by": "x", "reasons": [], "ts": 1001.0, "creator_address": "C1", "rugcheck_rugged": false}
+{"event": "screen", "mint": "M3", "passed": false, "rejected_by": "x", "reasons": [], "ts": 1002.0, "creator_address": "C2", "rugcheck_rugged": false}
+{"event": "exit", "mint": "M1", "net_usd": 10.0, "ts": 2000.0, "creator_address": null}
+{"event": "exit", "mint": "M2", "net_usd": -5.0, "ts": 2001.0, "creator_address": null}
+{"event": "exit", "mint": "M3", "net_usd": 20.0, "ts": 2002.0, "creator_address": null}
+{"event": "exit", "mint": "M9", "net_usd": 99.0, "ts": 2003.0, "creator_address": null}

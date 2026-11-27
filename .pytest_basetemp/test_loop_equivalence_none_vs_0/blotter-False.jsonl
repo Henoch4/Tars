@@ -1,0 +1,3 @@
+{"event": "entry", "mint": "A", "size_usd": 25.0, "price": 1.0, "sized_from_liquidity_usd": 50000.0, "sized_from_volume_usd": 10000.0, "paper": true, "ts": 1795315524.2646055, "cycle": 0}
+{"event": "entry", "mint": "B", "size_usd": 25.0, "price": 1.0, "sized_from_liquidity_usd": 50000.0, "sized_from_volume_usd": 10000.0, "paper": true, "ts": 1795315524.2675157, "cycle": 0}
+{"event": "entry", "mint": "C", "size_usd": 25.0, "price": 1.0, "sized_from_liquidity_usd": 50000.0, "sized_from_volume_usd": 10000.0, "paper": true, "ts": 1795315524.2697186, "cycle": 0}

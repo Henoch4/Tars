@@ -1,0 +1,14 @@
+{
+  "positions": [],
+  "spent_usd": 0.0,
+  "realized_net_usd": 0.2500000000000011,
+  "cycle_count": 0,
+  "reentry_cooldown": {
+    "M1": {
+      "ts": 1795315550.478382,
+      "cooldown_s": 2700.0,
+      "reason": "pivot: volume collapsed (dead tape)"
+    }
+  },
+  "updated_at": 1795315550.479412
+}

@@ -1,0 +1,1 @@
+{"event": "close", "closed_at": "2026-11-22 02:45:55", "reason": "max_hold", "direction": "SHORT", "size_usd": 10000.0, "entry_price": 100.0, "exit_price": 99.01865, "entry_fee_usd": 5.0, "exit_fee_usd": 5.0, "exit_slippage_bps": 1.88, "funding_accrued_usd": 2.0, "gross_pnl_usd": 98.135, "net_pnl_usd": 90.135, "hold_periods": 2.0, "signal_meta": {}}

@@ -1,0 +1,2 @@
+{"event": "reconciliation_failed", "reason": "reconciliation handler unavailable", "state": "running", "ts": 1795315551.9921856}
+{"event": "halted", "reason": "reconciliation handler unavailable", "state": "halted", "ts": 1795315551.9930944}

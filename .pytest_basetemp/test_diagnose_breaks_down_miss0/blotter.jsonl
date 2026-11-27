@@ -1,0 +1,3 @@
+{"event": "screen", "mint": "A", "passed": false, "rejected_by": "missing_data", "reasons": ["creator_past_rugs unobserved (type NoneType)"]}
+{"event": "screen", "mint": "B", "passed": false, "rejected_by": "missing_data", "reasons": ["creator_past_rugs unobserved (type NoneType)"]}
+{"event": "screen", "mint": "C", "passed": false, "rejected_by": "missing_data", "reasons": ["liquidity_usd unobserved (type NoneType)"]}

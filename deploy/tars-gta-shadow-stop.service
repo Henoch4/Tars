@@ -1,0 +1,7 @@
+[Unit]
+Description=Stop TARS GTA shadow scanner at the end of the observation window
+
+[Service]
+Type=oneshot
+ConditionPathExists=/etc/tars/ENABLE_GTA_SHADOW
+ExecStart=/bin/systemctl stop tars-gta-shadow.service

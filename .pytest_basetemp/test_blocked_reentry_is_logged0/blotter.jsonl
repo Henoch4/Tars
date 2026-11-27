@@ -1,0 +1,3 @@
+{"event": "entry", "mint": "M1", "size_usd": 25.0, "price": 1.0, "sized_from_liquidity_usd": 50000.0, "sized_from_volume_usd": 50000.0, "paper": true, "ts": 1795315550.4231434, "cycle": 0}
+{"event": "exit", "mint": "M1", "reason": "pivot: volume collapsed (dead tape)", "entry_price": 1.0, "exit_price": 1.05, "peak_price": 1.05, "size_usd": 25.0, "gross_usd": 1.25, "costs_usd": 1.0, "net_usd": 0.25, "hold_time_s": 0.0, "ts": 1795315550.4258459, "cycle": 0}
+{"event": "entry_blocked", "mint": "M1", "reason": "re-entry cooldown", "remaining_s": 2700.0, "orig_exit_reason": "pivot: volume collapsed (dead tape)", "ts": 1795315550.427562, "cycle": 0}

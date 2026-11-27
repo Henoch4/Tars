@@ -1,0 +1,1 @@
+{"event": "created", "task": {"area": "research", "dependencies": [], "evidence": [], "live_impact": false, "next_action": "", "owner": "operator", "requires_approval": false, "state": "queued", "task_id": "T1", "title": "mine data"}, "ts": "2026-11-22T02:46:01.780127+00:00"}

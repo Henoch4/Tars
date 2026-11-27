@@ -1,0 +1,1 @@
+{"ts": 1795315495.646729, "event_type": "integrity_block", "proof": "evidence", "payload": {"asset": "BTC-USDT-SWAP", "reasons": ["BTC-USDT-SWAP: feed stale by 1795315495.6s (> 1e-09s) -> HARD BLOCK"]}}

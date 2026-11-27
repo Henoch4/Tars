@@ -1,0 +1,2 @@
+{"event": "reconciliation_ok", "report": {"ok": true}, "state": "running", "ts": 1795315551.9251573}
+{"candidates": 1, "cycle": 1, "event": "cycle_completed", "exits": [], "mode": "shadow", "observations": [{"candidate": {"mint": "x"}, "result": {"broadcast": false, "reason": "shadow mode"}}], "state": "running", "ts": 1795315551.9262779}

@@ -1,0 +1,10 @@
+[Unit]
+Description=Reserved stop timer for memecoin supervisor shadow; operator readiness-gated
+
+[Timer]
+OnBootSec=365d
+Persistent=false
+Unit=tars-meme-supervisor-shadow-stop.service
+
+[Install]
+WantedBy=timers.target

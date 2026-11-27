@@ -1,0 +1,5 @@
+{"event": "screen", "mint": "A", "passed": true, "ts": 1700000000.0}
+{"event": "screen", "mint": "B", "passed": false, "rejected_by": "thin_liquidity"}
+{"event": "screen", "mint": "C", "passed": false, "rejected_by": "thin_liquidity"}
+{"event": "entry_blocked", "mint": "A", "reason": "re-entry cooldown"}
+{"event": "entry_blocked", "mint": "A", "reason": "session cap"}

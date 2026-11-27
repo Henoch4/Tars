@@ -1,0 +1,947 @@
+================================================================================
+TARS — BOOK-2 MEMECOIN SATELLITE  ·  "WHAT'S LEFT" RESEARCH HANDOFF
+Generated 2026-10-17 (VPS clock, all times local to the Contabo host)
+Prepared for: a crypto-native researcher
+Purpose: explain why the paper satellite has placed ZERO entries after 10,320
+         screens, and hand over the open questions that decide whether it ever
+         trades — each one grounded in numbers we can reproduce, each one
+         answerable with community/on-chain evidence.
+================================================================================
+
+--------------------------------------------------------------------------------
+0. READ ME FIRST (the 60-second version)
+--------------------------------------------------------------------------------
+This is a PAPER-ONLY Solana memecoin trading satellite. It screens ~10 new
+candidates every 5 minutes and has never passed one. The reason is NOT "the
+market is bad" and NOT "the strategy is broken" — it is a FILTER that is
+rejecting candidates for MISSING DATA, in a specific place.
+
+The dominant wall today is Gate 3 (creator history / creator share): 2,854
+candidates were rejected because the field `creator_past_rugs` was UNAVAILABLE
+(no data supplier returns it for fresh mints), and 379 because `creator_hold_pct`
+was unavailable. Those are data-supply gaps, not risk verdicts. Everything below
+is the evidence for that claim and the questions that follow from it.
+
+STATUS (2026-10-17, late — updated; + 2026-10-19):
+  - Q1 (creator_past_rugs): ANSWERED + SHIPPED -> REMOVED (§12).
+  - Q2 (creator_hold_pct): ANSWERED + now IMPLEMENTED via on-chain
+    Helius calc (no third-party needed) -> accumulated with §16 (2026-10-19).
+  - Q3 (graduation filter): ANSWERED (keep it), no pending change -> REMOVED (§13).
+  - Q4 (liquidity floor), Q5 (concentration), Q6 (probe sizing): ANSWERED, each
+    with a PENDING action -> RETAINED, detailed (§5, §13).
+  - Q7 (Gate 1 graduation confirmation): NEW decision point — answered (keep
+    strict, measure first), decision still pending -> RETAINED (§5, §13).
+  - 2026-10-19: data-source repair SHIPPED, G1 clock restarted (see §16).
+    The next useful action is MEASUREMENT under the repaired funnel, NOT a
+    code change.
+
+RULE FOR THIS FILE: once a question is answered AND has no pending work, it is
+REMOVED. An answered question that still has pending work or an open
+clarification STAYS, written out in detail.
+
+--------------------------------------------------------------------------------
+1. WHAT THE SYSTEM IS (context in one page)
+--------------------------------------------------------------------------------
+- Repo: Tarstrade. Component: the "Book-2" memecoin satellite.
+- Service: `tars-satellite` (systemd) on Contabo VPS 80.190.82.127, user `tars`,
+  dir /opt/tars. Loop: `python -u scripts/meme_runner.py --loop --interval 300`.
+- Mode: PAPER ONLY. Entry size $25 adaptive (clamped $5..$100/token, $250/day).
+  It will NOT go live by itself — live requires ALLOW_LIVE=true + restart, and
+  only after the G1 gate (see §7).
+- Discovery: DexScreener (primary while Blur websocket is down, see §4.6). 10
+  candidates per cycle.
+- Enrichment (`scripts/meme_runner.py::_enrich`): DexScreener (price, liquidity,
+  volume, age, mcap, graduation) + Helius (holder set, authorities, chain truth)
+  + RugCheck (creator identity, rugged verdict) + Jupiter (price fallback and,
+  new today, round-trip sellability).
+- Filter (`src/meme_satellite.py::scream_filter`) is a strict ordered pipeline.
+  Doctrine: MISSING DATA = REJECT ("SKIP default"), never default-pass. So a
+  data gap and a real risk both surface as `passed=False` — you must read
+  `rejected_by` to tell them apart. That distinction is everything in §3.
+- Audit: append-only blotter at data/meme_satellite/blotter.jsonl (one JSON line
+  per screen: passed, rejected_by, reasons[]). The `reasons[]` array is the
+  audit trail; the LAST "X unobserved" note names the gate that killed the row.
+- No secrets in this file. Wallet keys/API creds live only in env
+  (/etc/tars/agent.env on the VPS, .env locally, both gitignored).
+
+--------------------------------------------------------------------------------
+2. THE GATE PIPELINE (exact thresholds, from source)
+--------------------------------------------------------------------------------
+Order and semantics per `scream_filter` (src/meme_satellite.py). Read codes are
+the values you see in the blotter / diagnose output.
+
+  Gate 0  rugcheck_rugged is TRUE  -> reject("rugged_confirmed")   [independent
+          RugCheck verdict wins over everything else]
+  Floor   holder_count < MIN_HOLDERS (10) -> reject("too_few_holders")
+          [top-10 concentration of <10 holders is mathematically vacuous]
+  Gate 1  graduated is False/absent -> reject("unconfirmed")
+  Gate 2  creator_past_rugs > MAX_PAST_RUGS_CREATOR (0) -> reject("creator_history")
+          creator_past_rugs ABSENT -> NOTE only (Q1 SHIPPED 2026-10-17; was reject)
+  Gate 3  top10_hold_pct > MAX_TOP10_HOLD_PCT (50) -> reject("holder_concentration")
+          top10_hold_pct ABSENT -> reject("missing_data")
+  Gate 3b creator_hold_pct > MAX_CREATOR_HOLD_PCT (10) -> reject("insider_heavy")
+          creator_hold_pct ABSENT -> reject("missing_data")   [Q2 pending — §11]
+  Gate 4  buy_tax_pct > MAX_BUY_TAX_PCT (5) or sell_tax_pct > MAX_SELL_TAX_PCT (10)
+            -> reject("honeypot_tax")
+          if BOTH taxes absent -> use measured Jupiter round-trip:
+            round_trip_cost_pct > MAX_ROUND_TRIP_COST_PCT (15) -> reject("honeypot_tax")
+            round_trip_cost_pct ABSENT -> reject("missing_data")
+  Gate 5  liquidity_usd < MIN_LIQUIDITY_USD (20,000) -> reject("thin_liquidity")
+          liquidity_usd ABSENT -> reject("missing_data")
+  Gate 6  mcap_usd < MIN_MCAP_USD (10,000) -> reject("thin_mcap")
+
+  NOTES ONLY — appear in reasons[] but NEVER reject:
+    lp_locked, mint_authority_renounced, freeze_authority_renounced, age_s
+    (measured non-predictive, demoted Oct 2026), creator_past_rugs-ABSENT
+    (demoted 2026-10-17 by Q1), and organic_score (Jupiter bundledness read).
+    (regression test: tests/test_meme_satellite.py::
+     test_demoted_checks_note_but_never_gate)
+
+Other constants that matter for your analysis:
+  MAX_CREATOR_HOLD_PCT = 10.0     MIN_LIQUIDITY_USD   = 20_000.0
+  MAX_BUY_TAX_PCT      = 5.0      MIN_MCAP_USD        = 10_000.0
+  MAX_SELL_TAX_PCT     = 10.0     MIN_HOLDERS         = 10
+  MAX_ROUND_TRIP_COST_PCT = 15.0  MIN_ENTRY_USD       = 5.0
+  MAX_PAST_RUGS_CREATOR = 0       MAX_TOP10_HOLD_PCT  = 50
+
+--------------------------------------------------------------------------------
+3. THE GROUNDED EVIDENCE (reproducible, verbatim)
+--------------------------------------------------------------------------------
+Reproduce with:
+  ssh root@80.190.82.127
+  cd /opt/tars && venv/bin/python -u scripts/meme_runner.py --diagnose
+
+RUN @ 10,320 screens (~2026-10-17 17:50 host time) — verdict mix:
+    === screen diagnosis | 10320 screened, 0 passed (0.0% pass rate) ===
+       5382  unconfirmed                 <- Gate 1 (not graduated)
+       3233  missing_data                <- data-supply gap (see below)
+       1412  holder_concentration        <- Gate 3 (top10 > 50%)
+        293  too_few_holders             <- holder floor (<10 holders)
+
+    --- missing_data by field (data-supply gaps) ---
+       2854  creator_past_rugs           <- Gate 2: NO supplier returns this
+        379  creator_hold_pct            <- Gate 3b: no supplier / creator not visible
+
+RUN @ 10,270 screens (same day, full output incl. concentration) — for context:
+    verdicts: 5344 unconfirmed / 3221 missing_data / 1412 holder_concentration / 293 too_few_holders
+    missing by field: 2854 creator_past_rugs / 367 creator_hold_pct
+    --- top10 concentration (n=1779 rows that reported a number, bar=50%) ---
+        min 5.3% | median 98.1% | max 100.0%
+           19  near-miss 50-55%
+           47  over 55-65%
+           67  over 65-80%
+         1279  over 80%  (structurally held)
+    --- serial deployers (bootstrapped history, min 3 launches) ---
+        11 launches  0 rugged  CderVJsSvXny...
+        10 launches  0 rugged  7pmcuRvwunBr...
+         9 launches  0 rugged  54WmJViSaYK4...
+         8 launches  0 rugged  BYqoFP4tYCY1...
+         5 launches  0 rugged  FM1w2rhLurY3...
+         4 launches  0 rugged  95tNGUSzUA51... / CFNsVsSf94Ht... / CVibB54bBHMA...
+         3 launches  0 rugged  7vc1twmpbjMy... / 8rwh68LhKbwA...
+
+READ THIS CAREFULLY — the two facts that drive everything:
+  (a) `creator_past_rugs` is absent for 2,854 of 3,233 missing_data rows. This was
+      a hard reject in Gate 2. But NOTHING in the pipeline SUPPLIES that field
+      for a fresh mint: RugCheck gives creator identity + a rugged flag, not a
+      per-creator prior-rug count; our own deployer_history only compounds
+      RugCheck verdicts as mints are screened (cold start — see §4.1). So Gate 2
+      was rejecting on its own data gap, not on a risk signal.
+      [ADDRESSED 2026-10-17: Q1 shipped — absent is now a NOTE. See §12.]
+  (b) `creator_hold_pct` is absent for 379 rows. Plausible cause: the creator is
+      simply NOT among the current top holders (sold out or never held) — which
+      may be a NEUTRAL or GOOD sign, yet is treated as a fatal gap.
+      [ANSWERED 2026-10-17: Q2 — demote to NOTE, implementation still PENDING.
+       See §5/Q2 and §11.]
+
+LIVE PROOF THE SCREENING ITSELF CAN ADVANCE (concentration fix, shipped today):
+  Before: top10 read ~95% because the PumpSwap pool VAULT accounts (82-96% of
+  supply by construction) were counted as "insiders".
+  After `pool_vault_accounts()` owner-exclusion shipped (src/meme_feed.py):
+      first post-fix screen -> "top10 holds 20.9%: dispersed enough"
+  ...then that candidate died at Gate 3b: "creator_hold_pct unobserved".
+  So the funnel moved one full gate deeper, and immediately hit the creator gap.
+
+LIVE PROOF THE SELLABILITY PROBE WORKS (Gate 4, shipped today):
+  New Jupiter round-trip probe (src/meme_jupiter.py) at $25 / 100bps:
+      BONK  round_trip_cost_pct = 0.2226
+      WIF   round_trip_cost_pct = 0.2646
+      USDC  round_trip_cost_pct = 0.0343
+  End-to-end through the real enrichment path (graduated mint):
+      snapshot.round_trip_cost_pct = 0.2236
+  Meaning: we can now MEASURE round-trip cost/honeypot behavior live. But it is
+  UNEXERCISED — no market candidate reaches Gate 4 yet, because Gate 2 (and 3b)
+  kill them first.
+
+--------------------------------------------------------------------------------
+4. WHAT'S LEFT — the walls, ranked
+--------------------------------------------------------------------------------
+4.1 [ADDRESSED 2026-10-17: Q1 SHIPPED] WALL #1 — Gate 2 creator-history gap
+    Was: reject("missing_data") with note "creator_past_rugs unobserved".
+    Mechanism: `MAX_PAST_RUGS_CREATOR = 0` meant "any prior rug = reject", and
+    the SKIP-default doctrine turned "we don't know this creator's history" into
+    the same reject. `deployer_history` bootstraps from RugCheck verdicts as
+    mints get screened, so it is EMPTY AT COLD START — a first-time-for-us
+    creator always rejected, no matter how clean.
+    FIX (shipped): absent `creator_past_rugs` is now a NOTE; a KNOWN rug (> 0)
+    still hard-rejects. Regression:
+    tests/test_meme_satellite.py::test_unknown_creator_history_is_note_not_reject.
+    See §12.
+
+4.2 [ANSWERED 2026-10-17: Q2 — implementation PENDING] WALL #2 — Gate 3b gap
+    Was: reject("missing_data") note "creator_hold_pct unobserved" (379 rows).
+    ANSWER: "creator absent from top10" is the NORMAL, healthy post-graduation
+    case (creator sold at the curve / never held) — treating it as fatal is
+    backwards. Rule: absent -> NOTE; keep reject only when the % is known and
+    > 10.
+    PENDING: not shipped yet — §7 forbids loosening Gate 2 and Gate 3b in the
+    same change, and Q1 (Gate 2) went first. Meanwhile a new keyless Jupiter
+    supplier FILLS `creator_hold_pct` from audit.devBalancePercentage for
+    graduates, shrinking the gap with real data. Full rule in §11.
+
+4.3 [ANSWERED 2026-10-17: Q3 — KEEP the hard filter] WALL #3 — Gate 1 graduation
+    We require graduation (pump.fun curve -> real pool). Keeps the structural
+    filter, throws away pre-graduation names.
+    ANSWER: KEEP graduation as a hard filter for now. Pre-graduation is a
+    DIFFERENT (much higher-variance sniper/bundle) strategy needing its own risk
+    model, sizing and data (curve progress, unique buyers) — a new product, not a
+    gate change. Graduation is NOT safety: only ~9% of graduates still trade
+    at/above graduation mcap after 24h, ~3% after 7d; the first 10 min post-grad
+    is violent (38% touched -80%, dumps clustered ~2.2 min). Measure
+    post-graduation expectancy via the G1 clock first; only consider a parallel
+    pre-grad book after real paper round-trips. Full answer in §13.
+
+4.4 [ANSWERED 2026-10-17: Q4 — floor too high, DO NOT change yet] WALL #4 — Gate 5
+    liquidity ($20k floor). Observed graduates run ~$2-3k of pool liquidity.
+    ANSWER: the $20k floor was written for larger size and at $25 is discarding
+    the only graduates we see. On a ~$2.5k pool a $25 round-trip lands ~5-15% once
+    fees + impact + priority are counted — inside MAX_ROUND_TRIP_COST_PCT = 15.
+    PENDING: do NOT lower MIN_LIQUIDITY_USD until we have LIVE measured
+    round_trip_cost_pct on real graduates that survive the earlier gates. Then
+    either lower the floor (~$3-5k) AND keep the measured round-trip gate, or keep
+    the floor and accept near-zero flow. Full answer in §13.
+
+4.5 [ANSWERED 2026-10-17: Q5 — partly real, partly over-stated] CONCENTRATION
+    Median top10 (post vault-exclusion) still 98.1%, 1,279/1,779 rows >80%.
+    ANSWER: probably still somewhat overstated AND the market is genuinely
+    concentrated. Bubblemaps/Birdeye/Solscan label/exclude known pools/LP/routers;
+    the bundling playbook (§10) spreads supply across MEV buckets, so naive top-N
+    can both OVER-count (residual vaults) and UNDER-count (one entity, many
+    wallets). Treat the 50% bar as a FIRST filter, not gospel.
+    PENDING (no policy change yet): spot-check 10 RECENT graduates the system now
+    scores — compare our top10_hold_pct vs Birdeye holder distribution + a
+    Bubblemaps view of the SAME mint. Systematic gap -> tighten the exclusion list
+    in pool_vault_accounts()/known-account filters. Close numbers -> the market
+    really is that concentrated and the bar is doing real work. Full answer in §13.
+
+4.6 OTHER OPEN THREADS (not gate-related)
+    - Blur websocket: OUT OF BANDWIDTH — server closes with code 4002
+      "no bandwidth and balance under the $0.06 minimum; buy bandwidth or top up".
+      Discovery is running on the DexScreener fallback meanwhile. Needs a ~$0.06+
+      top-up (an operator/money action, not code).
+    - G1 clock: not started. Needs >=7 days AND >=30 completed paper round-trips,
+      net-positive after fees, before any live flip. With 0 entries, the clock is
+      at 0.
+    - kill_switch_active gauge reads null on /health (EVM-side wiring).
+    - Latent bug class: a Jupiter price parser silently returned None for EVERY
+      mint because it unwrapped a "data" key the API doesn't return (fixed today,
+      regression test added). Worth auditing for other "assumed wrapper" shapes.
+
+--------------------------------------------------------------------------------
+5. THE OPEN QUESTIONS (stated so they can be answered)
+--------------------------------------------------------------------------------
+For each: what we KNOW (grounded) | what we DON'T | how the answer changes the build.
+STATUS 2026-10-17 (updated): answered-and-fully-closed questions are REMOVED;
+answered-but-pending ones stay, detailed.
+  REMOVED: Q1 (shipped, §12), Q3 (keep the graduation filter — fully answered, §13).
+  RETAINED (answered, PENDING action): Q2 (§11), Q4, Q5, Q6 — answers in §13.
+  NEW: Q7 Gate 1 graduation confirmation — answered, decision pending the ~24h
+  checkpoint; answers in §13.
+
+Q2. [ANSWERED 2026-10-17 — implementation PARKED] Is "creator not in top-10
+    holders" neutral/healthy or a red flag?
+    ANSWER: absent `creator_hold_pct` is NEUTRAL — demote the ABSENT case to a
+    NOTE; keep the hard reject ONLY when the % is KNOWN and > MAX_CREATOR_HOLD_PCT
+    (10). Full rationale + evidence in §11.
+    KNOWN: 379 rows die on the absent `creator_hold_pct`; RugCheck routinely
+    reports "Creator Balance: SOLD" as a normal post-graduation state; pump.fun
+    burns LP at graduation, so classic LP-pull is impossible — the residual
+    creator risk is SELLING the bag, best measured by the OBSERVED hold %, not by
+    absence from the top-10 list.
+    PENDING (why it is still here): deliberately NOT shipped yet — §7 forbids
+    loosening Gate 2 and Gate 3b in the same change, and Q1 (Gate 2) went first.
+    NEXT STEPS (in order):
+      1. Measure the post-Q1 pass rate + what reaches Gate 4/5 (must see the
+         funnel move before stacking another change).
+      2. If warranted, ship the Q2 rule as its OWN change: absent -> note,
+         present-and->10 -> reject("insider_heavy"). New regression required
+         (e.g. test_absent_creator_hold_is_note_not_reject), and move
+         "creator_hold_pct" out of test_missing_data_is_skip_not_pass.
+      3. A keyless Jupiter supplier ALREADY fills `creator_hold_pct` for graduates
+         (audit.devBalancePercentage), so some of the 379 rows may resolve to a
+         real number before any policy change — measure that first.
+    CHECKPOINT / TIMELINE: ~1 day of post-restart screens (last restart
+    2026-10-17 18:36 CEST, when the shipped files went live). Rate ~2,880
+    screens/day, ~half graduate -> partial read after ~3-6h, decision-grade
+    after ~24h. THEN:
+      - if Gate 3b's absent `creator_hold_pct` is the dominant remaining wall and
+        the supplier is NOT filling it -> ship Q2 as its own change (~30-60 min).
+      - if the supplier fills it with real numbers -> Q2 is MOOT; no policy change.
+    DECIDES: whether Gate 3b is a real insider check or a broken one.
+
+Q4. [ANSWERED 2026-10-17 — action PENDING] What is realistic round-trip slippage
+    at $25 on a $2–3k pool?
+    ANSWER: the $20k liquidity floor is almost certainly too high for a $25 entry.
+    On a ~$2.5k pool a $25 round-trip lands ~5–15% (fees + impact + priority),
+    INSIDE the existing MAX_ROUND_TRIP_COST_PCT = 15 — so the round-trip gate is
+    probably fine; the FLOOR is the problem. Full answer in §13.
+    PENDING (why it stays): do NOT lower MIN_LIQUIDITY_USD yet — no live measured
+    round_trip_cost_pct on the micro-pools we actually see. NEXT: once candidates
+    reach Gate 5, lower the floor (~$3–5k) AND keep the measured round-trip gate,
+    as its OWN change. DECIDES: whether Gate 5 is calibrated or is discarding the
+    only tradeable graduates.
+
+Q5. [ANSWERED 2026-10-17 — verification PENDING] After the vault-exclusion fix, is
+    top10 concentration still over-stated?
+    ANSWER: probably somewhat overstated AND genuinely concentrated — treat 50% as
+    a FIRST filter, not gospel. Bundling spreads supply across MEV buckets, so
+    naive top-N can over- AND under-count. Full answer in §13.
+    PENDING: spot-check 10 recent graduates — compare our top10_hold_pct against
+    Birdeye holder distribution + Bubblemaps for the SAME mint. Systematic gap ->
+    tighten pool_vault_accounts()/known-account exclusions; close numbers -> the
+    bar is doing real work. NO policy change required.
+
+Q6. [ANSWERED 2026-10-17 — action PENDING] Should the sellability probe run at the
+    ADAPTIVE entry size, not a flat $25?
+    ANSWER: YES eventually, but the fixed $25 probe is the correct CONSERVATIVE
+    choice for now (larger size -> higher impact -> pessimistic reading). Full
+    answer in §13.
+    PENDING: keep $25 until the first paper entries appear and we can see how often
+    the adaptive clamp ($5–$20) actually fires; then make the probe size-aware as a
+    single tested change. NO change now.
+
+Q7. [ANSWERED 2026-10-17 — decision PENDING after the ~24h checkpoint] Gate 1
+    graduation confirmation: keep strict, or accept DexScreener pair existence?
+    ANSWER: DO NOT loosen Gate 1 yet. DexScreener listing a real pool
+    (PumpSwap/Raydium) is a strong proxy for "curve completed + LP burned", but
+    measure first. Full answer in §13.
+    PENDING: at the ~24h post-Q1 checkpoint, count how many tokens now reach
+    Gate 3/4/5 and what their liquidity + measured round-trip look like; THEN
+    decide whether the graduation SOURCE is the bottleneck or the downstream gates
+    (esp. the $20k floor) are. One change at a time. DECIDES: whether Gate 1 is the
+    wall or a red herring.
+
+--------------------------------------------------------------------------------
+6. WHERE THE COMMUNITY / NETIZEN EVIDENCE SHOULD COME FROM
+--------------------------------------------------------------------------------
+Combine the grounded numbers in §3 with field evidence. Specific asks:
+
+A. RUGCHECK COVERAGE. [RESOLVED 2026-10-17 — Q1 answered + shipped; see §12.]
+
+B. PUMP.FUN CREATOR BEHAVIOR. [RESOLVED 2026-10-17 — Q2 answered (the base-rate
+   question is settled); only the implementation remains, see §11.]
+
+C. CONCENTRATION METHODOLOGY. [ANSWERED 2026-10-17 — Q5 direction settled; the
+   remaining action is a LOCAL spot-check of 10 graduates, see §5/Q5 + §13.]
+
+D. $25 SLIPPAGE ON MICRO-POOLS. [ANSWERED 2026-10-17 — Q4: ~5-15% round-trip at
+   $25 on a ~$2.5k pool; the FLOOR is the problem, see §13.]
+
+E. PRE- VS POST-GRADUATION EDGE. [ANSWERED 2026-10-17 — Q3: keep the graduation
+   filter; pre-grad is a separate product. Q3 REMOVED from §5, see §13.]
+
+F. BLUR ENDPOINT. Latest on Blur's Solana websocket pricing/limits (the 4002
+   "no bandwidth" is a paid-tier message).
+
+Preferred sources (all public): pump.fun docs, RugCheck API docs, Jupiter API docs,
+Birdeye/Solscan/Bubblemaps, Dune dashboards, DexScreener, and crypto-native
+communities on X and Reddit.
+
+--------------------------------------------------------------------------------
+7. GUARDRAILS (so the handoff doesn't get mis-applied)
+--------------------------------------------------------------------------------
+- PAPER-ONLY. Nothing here justifies a live trade. Live requires the G1 gate
+  (>=7 days AND >=30 net-positive paper round-trips) AND a manual ALLOW_LIVE flip.
+- FAIL-CLOSED DOCTRINE. "Missing = reject" is deliberate. ANY proposal to loosen
+  it (e.g. Q1 — shipped; Q2 — pending) is a real risk decision, not a bug fix — it
+  must be justified with evidence and a regression test, and it must not silently
+  pass unknowns.
+- TESTS ARE A LOCKED ZONE. Never edit a test to make a change look green. Every
+  bug/behavior change ships with a NEW regression test (house rule).
+- DON'T LOOSEN TWO GATES AT ONCE. If Q1 and Q2 are both loosened in the same
+  change, you can't attribute the resulting entries.
+- SECRETS. Never commit .env, /etc/tars/agent.env contents, or any key. The old
+  AGENT_WALLET_PRIVATE_KEY is burned; signing with it is forbidden.
+
+--------------------------------------------------------------------------------
+8. EVIDENCE PROVENANCE (how to reproduce everything above)
+--------------------------------------------------------------------------------
+Host: root@80.190.82.127  (Contabo VMI3624433)   Path: /opt/tars
+Commands:
+  # verdict mix + missing-field gaps + concentration + serial deployers
+  cd /opt/tars && venv/bin/python -u scripts/meme_runner.py --diagnose
+
+  # raw append-only screen log (one JSON line per screen)
+  tail -n 200 /opt/tars/data/meme_satellite/blotter.jsonl
+
+  # live loop
+  journalctl -u tars-satellite -n 30 --no-pager
+
+  # sellability probe smoke test (keyless, read-only)
+  #   BONK DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263
+  #   WIF  EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm
+  #   USDC EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
+
+Key code (for reading, not the researcher's job to edit):
+  src/meme_satellite.py   scream_filter (gates + thresholds + reasons[])
+  src/meme_feed.py        snapshot_for_mint, pool_vault_accounts (vault exclusion)
+  src/meme_runner.py      _enrich (all data sources), --diagnose (the report above)
+  scripts/meme_jupiter.py round_trip_cost_pct (the $25 sellability measurement)
+  src/meme_rugcheck.py    creator identity + rugged verdict (source of Gate 2 input)
+  src/meme_history.py     deployer_history (bootstrapped prior-rug count)
+  src/meme_loop.py        blotter writer (BLOTTER_PATH)
+
+Backups taken before today's ships:
+  /root/tars_backup_satfix_20261017.tar.gz   (data/ + /etc/tars)
+  /opt/tars/src.bak-20261017                 (full src tree)
+  /opt/tars/backup-juptrip/                  (files replaced by today's ships)
+
+--------------------------------------------------------------------------------
+9. GLOSSARY (for anyone reading the numbers cold)
+--------------------------------------------------------------------------------
+- graduated: token completed the pump.fun-style bonding curve and migrated to a
+  real pool (PumpSwap/Raydium). Gate 1 requires it.
+- rejected_by: the FIRST failing GATE's code. missing_data = a required field was
+  absent (SKIP-default reject), NOT evidence of risk. Read reasons[] for which.
+- reasons[]: audit trail; the LAST "<field> unobserved" note names the fatal gap.
+- round_trip_cost_pct: measured cost (%) to buy $25 of the mint and sell it back,
+  via live Jupiter quotes. Honeypot/sell-block shows as ~100.
+- top10_hold_pct: share of supply held by the 10 largest non-vault accounts.
+- deployer_history: our own per-creator prior-rug tally, bootstrapped from
+  RugCheck verdicts as mints are screened (empty at cold start).
+- G1 clock: the paper-to-live gate: >=7 days AND >=30 completed round-trips,
+  net-positive after fees.
+
+================================================================================
+10. NETIZEN EVIDENCE + VERIFIED API LEADS  (parked 2026-10-17)
+================================================================================
+Sources are two public X posts (community claims — treat as leads, not truth),
+fetched via api.fxtwitter.com. The ENDPOINTS below were then probed by us and
+are marked VERIFIED (live, keyless) vs CLAIMED (from the post).
+
+POST A — @TheMaran, 2026-10-17 14:23 UTC ("how pumpfun traders bundle & make
+$50,000+ daily"). Playbook for a bundling tool ("Proxima"):
+  - generate/import 10-40+ wallets, fund via CEX or privacy rails
+  - "launch in block 0 mode so multiple wallets buy in at the same time"
+  - "spread supply across front mev > back mev > holders so no single wallet
+    looks heavy"
+  - post-launch: vol bots, "cleanup" (redistribute supply across wallets),
+    sniper guard, multi-wallet buy/sell
+  - claim: "99% tokens launching these days are actually bundled"; "some tokens
+    still top low because early controlled wallets are already deep in profit"
+  - pre-ape checklist: bubblemaps (early clusters); solscan (first-block buyers
+    + FUNDING SOURCES); "check if many wallets were funded around the same time";
+    "see if top holders are still sitting or already selling"
+
+POST B — @zettelkastten, 2026-10-17 15:42 UTC ("5 FREE memecoin APIs. 0 keys").
+Lists DexScreener, GeckoTerminal, DexPaprika, Jupiter (api.jup.ag — "holders,
+organic score, mint/freeze authority, launchpad, graduation time"), RugCheck
+(api.rugcheck.xyz — "risk score, list of risks, % of LP locked", live rug feed),
+Helius, CoinGecko demo.
+
+VERIFIED ENDPOINTS (our live probes, keyless) — these are the actionable part:
+  GET https://api.jup.ag/tokens/v2/search?query=<mint>   -> array[1], incl.:
+      dev                      = the CREATOR wallet address
+      audit.devBalancePercentage  = creator/dev hold %  (= our creator_hold_pct)
+      audit.topHoldersPercentage  = top-holder concentration
+      audit.devMints              = how many tokens this dev has minted (serial)
+      audit.mintAuthorityDisabled / freezeAuthorityDisabled
+      organicScore + organicScoreLabel ("high"), and per-window numOrganicBuyers,
+      buyOrganicVolume / sellOrganicVolume  (organic-vs-bot/bundled activity)
+      holderCount, firstPool.createdAt, tags[]
+    Worked for BONK with NO API key. Direct supplier for Gate 3b's field
+    (creator_hold_pct) AND a new bundledness signal (organic score).
+  GET https://api.rugcheck.xyz/v1/tokens/<mint>/report/summary   ->:
+      risks[] (named), score / score_normalised, lpLockedPct
+    Confirms the post's claim for the standard token path.
+  NOTE (CLAIMED, not yet verified by us): a documented `GET /v1/creators/{wallet}`
+  creator-stats endpoint, and third-party creator-track-record services
+  (xAxios, Daybreak, DeFade, ...) exist. These are the candidates for a real
+  `creator_past_rugs` supplier — see Q1.
+
+IMPLICATION FOR TARS (why this matters):
+  - Post A is field evidence for Q5: naive top-N concentration is GAMED BY
+    DESIGN (supply spread across MEV buckets + holders; the dev may not appear
+    heavy). It is a feature menu too: same-time funding and first-block buyers.
+  - Jupiter's token API (keyless) supplies `dev` + `devMints` (creator identity /
+    serial-deployer count -> could feed creator_past_rugs) and
+    `devBalancePercentage` (-> creator_hold_pct). The devBalancePercentage ->
+    creator_hold_pct supplier is NOW SHIPPED (§12); using devMints as a prior-rug
+    feed is still future work (Q1's answer deferred it to a second opinion).
+  - organicScore gives a cheap organic-vs-bundled read that Gate 3 cannot see.
+
+================================================================================
+11. RESEARCH ANSWER TO Q2  (Q1's answer is now SHIPPED — see §12)
+================================================================================
+AUTHORED BY: operator-supplied research (2026-10-17), grounded in the §3 numbers
+plus public evidence. Q1 has been answered AND shipped (removed from §5). Q2 is
+answered below; its implementation is PARKED pending the post-Q1 measurement.
+Per §7, DO NOT loosen Gate 2 and Gate 3b in the same change.
+
+Q2 — Is "creator not in top-10 holders" neutral/healthy or a red flag?
+  ANSWER: treat ABSENT `creator_hold_pct` as NEUTRAL / note. Do not hard-reject.
+  RATIONALE:
+    - 379 rows die on this gap. For many graduates the creator is simply NOT in
+      the current top-10 (sold at the curve, never held a big bag, or holds via
+      wallets the top-10 view does not attribute to the creator address).
+    - RugCheck routinely reports "Creator Balance: SOLD" as a normal state.
+    - Empirical (operator-supplied sample, 2,193 graduates, 10-12 Oct 2026):
+        dev still holding >5% at graduation -> 33.6% touched -80% in first 10 min
+        dev already sold to <=5%          -> 47.4% touched -80%, BUT also hit 2x
+                                             far more often (28% vs 7%)
+      i.e. "sold" is higher-variance BOTH ways, not a pure red flag; "still
+      holding a meaningful %" is the clearer residual risk — already covered by
+      the existing MAX_CREATOR_HOLD_PCT = 10 threshold when the number exists.
+    - Pump.fun burns LP at graduation, so classic LP-pull is impossible; the
+      remaining creator risk is selling their bag — best measured by the
+      OBSERVED hold %, not by absence from the top-10 list.
+  PROPOSED RULE (fail-closed where it matters):
+    creator_hold_pct present and > 10 -> hard reject ("insider_heavy")
+    creator_hold_pct absent           -> note only ("creator_hold_pct unobserved;
+                                         creator not in top holders / not
+                                         attributed")
+    (optional) surface RugCheck "Creator Balance: SOLD" as an info note.
+  IMPLEMENTATION PLAN (pending, in order):
+    1. CHECKPOINT: wait ~1 day of post-restart screens (partial read ~3-6h,
+       decision-grade ~24h), THEN measure the post-Q1 funnel — what now passes
+       Gate 2 and reaches Gate 4/5, and whether the supplier fills
+       creator_hold_pct. Do not stack a second gate change before that data
+       exists.
+    2. The new keyless Jupiter supplier (§12) now FILLS creator_hold_pct for
+       graduates from audit.devBalancePercentage — so part of the 379-row gap may
+       become a real number with NO policy change. Quantify before deciding.
+    3. If the residual absent-rate still walls the funnel, ship the rule above as
+       its OWN change: move "creator_hold_pct" out of
+       test_missing_data_is_skip_not_pass and add
+       test_absent_creator_hold_is_note_not_reject.
+    4. Risk note: like Q1, this lets through cases we cannot measure. Remaining
+       controls: Gate 0 (rugcheck_rugged), concentration, liquidity, sellability,
+       and the G1 paper clock.
+
+WHAT THIS UNLOCKS (and what it does NOT):
+  - Q1 is shipped; Q2 remains the last missing-data wall at Gate 3b. Once it is
+    resolved (by policy OR by the supplier filling the field), the funnel
+    advances past Gate 2/3b to the walls §4 already ranked: Gate 5 liquidity
+    ($20k floor vs ~$2-3k pools — Q4), concentration methodology (median still
+    98% — Q5), and whether graduation is the right survival filter (Q3).
+  - Measure after each single change; attribute before stacking the next.
+  - Paper mode + the G1 clock remain the ONLY path to live. Nothing above
+    authorises a live trade.
+
+================================================================================
+END OF HANDOFF. Ground truth is §3. Answered-and-closed questions are REMOVED;
+answered-with-pending ones stay, detailed. SHIPPED: Q1 (§12). PENDING decisions:
+Q2 (§11) and Q4/Q5/Q6/Q7 (§5, §13). The next useful action is MEASUREMENT at the
+~24h post-Q1 checkpoint — NOT another code change. Everything remains paper-only.
+================================================================================
+
+
+================================================================================
+SECTION 12 - SHIPPED 2026-10-17 (this session): Q1 + Jupiter supplier
+================================================================================
+STATUS: SHIPPED + md5-verified on VPS; services restarted healthy.
+  Full pytest 1030 passed; check_release.py EXITCODE=2 (open-with-skips; only
+  gitleaks SKIP); secret scan CLEAN.
+
+CHANGE 1 - Jupiter token supplier (the tweets' actionable lead):
+  - src/meme_jupiter.py: NEW token_info(mint) -> keyless GET /tokens/v2/search
+    (array body). Returns {dev, dev_hold_pct, dev_mints, top_holders_pct,
+    organic_score, organic_label, holder_count}. Fail-soft -> {}.
+  - Its own transport _get_json() (list-tolerant) because meme_execute._http
+    ASSERTS an object body and RAISED SwapError("jupiter returned non-object")
+    on the array -> supplier was silently empty. Regression:
+    test_token_info_default_transport_accepts_array.
+  - scripts/meme_runner.py::_enrich: graduates-only; fills creator_hold_pct
+    fallback from audit.devBalancePercentage when RugCheck left it absent, and
+    captures organic_score.
+  - src/meme_satellite.py: TokenSnapshot.organic_score + informational note
+    ("jupiter organic score N (informational)"); src/meme_feed.py passthrough.
+  - NOT a gate-semantics change: absent still SKIP-defaults.
+
+CHANGE 2 - Q1 policy (Gate 2 creator history):
+  - UNKNOWN creator_past_rugs -> NOTE ("creator_history unobserved ..."), no
+    reject. KNOWN rug (> 0) still hard-rejects "creator_history".
+  - Spec change flagged: removed creator_past_rugs from
+    test_missing_data_is_skip_not_pass; added
+    test_unknown_creator_history_is_note_not_reject; added creator_past_rugs
+    to test_demoted_checks_note_but_never_gate.
+  - Q2 (creator_hold_pct unknown still rejects) HELD per the one-gate
+    guardrail; the supplier reduces its missing rate with real data instead.
+
+LIVE VERIFICATION (shipped files on VPS, /tmp/vps_verify.py):
+  Q1 unknown -> passed True, note present; known rug(1) -> creator_history.
+  organic note -> passed True.
+  token_info BONK: dev_hold_pct 1.66e-07, organic 84.10, dev 9AhKqLR6, mints 10.
+  token_info WIF:  dev_hold_pct 3.82e-06, organic 73.58, dev wifq4CRw, mints 15.
+
+SHIPPED md5: src/meme_jupiter.py 363f2081591a588836726abc6ad754c2
+             tests/test_meme_jupiter.py 935c4828d39bbd5ea5f04fff0c30a8ae
+             src/meme_satellite.py 7e2571fd870d1164a6572bcea8a7dd0b
+             src/meme_feed.py e9700ace70774070ebc95c8c375d9a93
+             scripts/meme_runner.py b299291bb587c6ddbf18ebba2a28b127
+             tests/test_meme_satellite.py 5b7e833eed7bf9f341f7ce34fc5bff07
+
+STILL BLOCKED (unchanged): first paper entry. Dominant wall is Gate 1
+unconfirmed (5443 of 10390 screens); the supplier/Q1 only bite on GRADUATED
+candidates, of which ~none currently survive to Gate 2. Next decision point:
+the graduation-confirmation source (Gate 1), or accept DexScreener-graduated
+as confirmed. No live trade authorised.
+================================================================================
+
+
+================================================================================
+13. RESEARCH ANSWERS TO Q3-Q6 + GATE-1 DECISION  (2026-10-17, operator-supplied)
+================================================================================
+Grounded in the §3 numbers plus public evidence. Applying the file rule:
+  - Q3: fully answered (no pending change) -> REMOVED from §5.
+  - Q4, Q5, Q6: answered but each carries a PENDING action -> RETAINED, §5.
+  - Q7 (new): Gate 1 graduation confirmation -> answered, decision pending the
+    ~24h checkpoint -> RETAINED, §5.
+Nothing here authorises a live trade. No code change until measured.
+
+--------------------------------------------------------------------------------
+Q7 (NEW DECISION POINT) — Gate 1 graduation confirmation: strict, or accept
+DexScreener pair existence as evidence of graduation?
+--------------------------------------------------------------------------------
+Context: DexScreener is the primary discovery source (Blur is bandwidth-starved).
+The filter requires a positive "graduated" signal.
+Options:
+  1. KEEP STRICT — only accept what the enrichment path marks as graduated
+     (current behaviour; conservative structural-survival gate).
+  2. ACCEPT DexScreener pair existence as confirmation for pump.fun-style tokens
+     once a real pool appears (PumpSwap/Raydium). DexScreener lists a pair after
+     the migration trade -> a strong proxy for "curve completed + LP burned".
+ANSWER / RECOMMENDATION: do NOT loosen Gate 1 yet. Option 2 is plausibly
+workable, but MEASURE FIRST.
+Evidence:
+  - Graduation itself is rare (~0.2-2.6% of launches, window/denominator
+    dependent); most launches never reach a real pool.
+  - After graduation the first 10 min are extremely violent: a 2,193-graduate
+    sample showed 38% touched -80% (median low -50% from the +10s price); big
+    dumps cluster at a median ~2.2 min post-graduation.
+  - Post-graduation survival is poor: only ~9% of graduates still trade at/above
+    graduation mcap after 24h, ~3% after 7d (MemeFees-style measurements).
+  => Graduation is NOT safety; it is merely the point at which a real (often thin)
+     pool exists.
+NEXT: at the ~24h post-Q1 checkpoint, count how many tokens now reach Gate 3/4/5
+and what their actual liquidity + measured round-trip look like. Only then decide
+whether the graduation SOURCE is the bottleneck or whether the downstream gates
+(especially the $20k floor) are. One change at a time.
+
+--------------------------------------------------------------------------------
+Q3 — Is graduation the right survival filter, or should pre-graduation be
+tradable?   [ANSWERED -> REMOVED from §5]
+--------------------------------------------------------------------------------
+ANSWER: KEEP graduation as a hard filter for now. Pre-graduation is a DIFFERENT
+(much higher-variance) strategy.
+  - Pre-graduation edge is almost entirely sniper / bundle / early-curve dynamics.
+    The curve itself cannot be LP-rugged, but insider selling and coordinated
+    dumps are the dominant failure mode.
+  - Post-graduation removes the classic LP-pull vector (LP is burned) but replaces
+    it with thin-pool dump risk; most graduates still die hard in the first
+    minutes/hours.
+  - The current paper size ($25 adaptive) and the Jupiter sellability probe are
+    calibrated for a real pool, not curve trades. Opening pre-graduation needs a
+    different risk model, different sizing, and different data (curve progress,
+    unique buyers) — a NEW PRODUCT, not a one-line gate change.
+  - Measure post-graduation expectancy first (that IS the G1 clock). Only after
+    real paper round-trips should a parallel pre-grad book even be considered.
+
+--------------------------------------------------------------------------------
+Q4 — Realistic round-trip slippage at $25 on a $2-3k pool?   [ANSWERED, PENDING]
+--------------------------------------------------------------------------------
+ANSWER: the $20k liquidity floor is almost certainly too HIGH for a $25 entry;
+MAX_ROUND_TRIP_COST_PCT=15 is probably still usable — but measure on the actual
+micro-pools.
+  - Deep pools (our probe): ~0.22% (BONK) to ~0.03% (USDC).
+  - Thin $2-3k pools: constant-product arithmetic on a ~$2.5k pool -> single-leg
+    impact in the low-to-mid single digits; round-trip can land 5-15% once fees +
+    priority + sandwich risk are included — exactly the band MAX_ROUND_TRIP_COST_PCT
+    already allows.
+  - The $20k floor was written for larger size. At $25 it discards the only
+    graduates we actually see.
+PENDING: do NOT change the floor until we have LIVE measured round_trip_cost_pct
+on real graduates that survive the earlier gates. Then EITHER lower
+MIN_LIQUIDITY_USD (~$3-5k) AND keep the measured round-trip gate, OR keep the floor
+and accept that almost nothing passes.
+
+--------------------------------------------------------------------------------
+Q5 — After the vault-exclusion fix, is top-10 concentration still over-stated?
+                                              [ANSWERED, VERIFICATION PENDING]
+--------------------------------------------------------------------------------
+ANSWER: probably still somewhat overstated, AND the market is genuinely
+concentrated. Treat the 50% bar as a FIRST filter, not gospel.
+  - Median 98% (post vault-exclusion) is extreme. Birdeye/Solscan/Bubblemaps all
+    try to label/exclude known pool/LP/router/exchange wallets; pure top-10 still
+    looks high on fresh graduates because real free float is small and often
+    spread across coordinated wallets.
+  - The bundling playbook (§10 Post A) explicitly spreads supply across
+    "front MEV / back MEV / holders" so no single wallet looks heavy -> a naive
+    top-10 can BOTH over-count (residual vaults/routers) AND under-count true
+    control (one entity fragmented).
+PENDING (NO policy change required): spot-check 10 recent graduates the system now
+scores. Compare our top10_hold_pct vs Birdeye holder distribution AND a Bubblemaps
+view of the SAME mint.
+  - Systematic gap -> tighten the exclusion list in pool_vault_accounts() /
+    known-account filters.
+  - Numbers roughly agree -> the market really is that concentrated and the 50%
+    bar is doing real work.
+
+--------------------------------------------------------------------------------
+Q6 — Should the sellability probe run at the ADAPTIVE entry size, not flat $25?
+                                                            [ANSWERED, PENDING]
+--------------------------------------------------------------------------------
+ANSWER: YES eventually. For now the fixed $25 probe is the correct CONSERVATIVE
+choice.
+  - When liquidity clamps the entry to $5-20, a $25 quote is pessimistic (larger
+    size -> higher impact). Probe at the ACTUAL intended size later for an
+    accurate go/no-go.
+  - Changing it now adds complexity before we have any real passes.
+PENDING: keep the $25 probe until the first paper entries appear and we can see how
+often the adaptive clamp actually fires; then make the probe size-aware in a
+single, tested change.
+
+--------------------------------------------------------------------------------
+RECOMMENDED SEQUENCE (one gate / one change at a time)
+--------------------------------------------------------------------------------
+1. NOW -> ~24h: let post-Q1 screens accumulate. Run --diagnose and look at:
+     - how many tokens now pass Gate 2;
+     - of those, what fraction still die on absent creator_hold_pct (Gate 3b) vs
+       get a real number from the Jupiter supplier;
+     - what liquidity + measured round-trip numbers appear on anything reaching
+       Gate 4/5.
+2. AFTER the checkpoint:
+     - Gate 3b absent still dominant AND supplier not filling it -> ship the Q2
+       rule (absent -> note) as its own change + new regression test.
+     - Supplier filling most of the gap -> Q2 becomes MOOT; no policy change.
+3. ONLY THEN look at Gate 5 ($20k floor) and the Gate 1 graduation source. Do not
+   touch both in the same change.
+4. Everything remains paper-only. G1 clock still needs >=7 days + >=30
+   net-positive round-trips before any live consideration.
+
+BOTTOM LINE: the machine is now correctly stopped on a DATA/POLICY question, not a
+data-supply bug. The next useful action is MEASUREMENT, not another code change.
+================================================================================
+
+
+================================================================================
+14. SHIPPED 2026-10-18 — Re-entry cooldown (post-exit churn fix)
+================================================================================
+STATUS: SHIPPED + md5-verified on VPS; tars-satellite restarted healthy and
+  cycling on the new code. Full pytest 1034 passed; check_release.py EXITCODE=2
+  (open-with-skips; only gitleaks SKIP); secret scan CLEAN.
+
+CONTEXT (measured, not theoretical). The ~30h post-restart checkpoint showed the
+  first-ever paper activity: 9 entries + 9 exits (lifetime = post-restart;
+  pre-restart 0). But 34 "passes" were only 4 UNIQUE mints, and one mint
+  (7UAW...pump) was entered/exited 4x in ~3h -> 3 losses. Root cause: try_enter
+  deduped only against OPEN positions, so an exited mint re-passed and was
+  re-bought immediately (violating the loop's own "never re-buy a rug" rule).
+  Net +$13.05 was carried by a single winner (+45.83) -> fragile.
+
+THE CHANGE (one logical change + one regression-test family):
+  - src/meme_loop.py: constants REENTRY_COOLDOWN_S=45m, RUG_REENTRY_COOLDOWN_S=
+    135m, RUG_REENTRY_LOSS_FRAC=0.25.
+  - try_enter: a recently-exited mint is BLOCKED until its window closes; the
+    block is LOGGED (event entry_blocked / reason "re-entry cooldown" /
+    remaining_s / orig_exit_reason) so it can be measured later.
+  - check_exits: arms the window on every exit; a rug-sentinel exit OR a
+    washout (net <= -25% of size) earns the longer 135m window.
+  - Persistence: cooldowns live in positions.json ("reentry_cooldown") and
+    survive restarts; expired entries are swept on load.
+  - scripts/meme_runner.py: --reentry-cooldown (minutes, default 45).
+  - Fresh confirmation after expiry is ALREADY handled: screen_candidates
+    re-runs scream_filter on freshly-enriched snapshots each cycle, so a
+    post-cooldown entry requires a genuinely NEW pass (no extra code needed).
+
+SPEC CHANGE FLAGGED (like Q1): old test_reenter_after_exit asserted IMMEDIATE
+  re-entry after a -40% dump — the exact defect. Rewritten to the cooldown
+  contract. New tests: blocked->expired->allowed, other-mint unaffected, block
+  logged, rug->long window, washout->long window, restart persistence.
+
+VERIFICATION (paste-level):
+  - local: py_compile OK; tests/test_meme_loop.py 17 passed; FULL pytest 1034
+    passed (EXITCODE=0); check_release.py EXITCODE=2; SECRET_SCAN_CLEAN.
+  - VPS: md5 EXACT match local for all 3 files; venv pytest test_meme_loop.py
+    17 passed; --reentry-cooldown present; service restarted active, cycle 1476
+    clean; positions.json carries "reentry_cooldown" and PRESERVES the open
+    position + realized_net_usd 13.05 across the restart.
+  - NOTE: one transient local failure (test_vault_api) was a 2s RPC-probe
+    timeout (src/rpc.py:25,45-49), unrelated; passes on re-run + in full suite.
+
+SHIPPED md5: src/meme_loop.py 96e4e3ae0cb711857da16a9c37adab8e
+             scripts/meme_runner.py 1b023bade6caf6926af5b0ff1e684df8
+             tests/test_meme_loop.py df205e228a5915ce21f9bd633d953176
+
+G1 STATUS: 9/30 round-trips, net +$13.05, day 1 of >=7. Restart 2026-10-17
+  18:36 CEST; first entry 2026-10-17 17:27Z. All round-trips post-restart.
+
+NOT CHANGED (deliberate, out of scope):
+  - NO retroactive cooldown: the window arms only on NEW exits, so the 4
+    pre-restart mints are not retro-blocked; the open 2gLnaQ...pump arms when
+    it next exits (avoids rewriting history / keeps measurement clean).
+  - Latent symbol="" in meme_loop.try_enter (cosmetic only; QUEUED, not touched).
+
+WATCH (no code change yet):
+  - Confirm the first post-cooldown block logs entry_blocked/"re-entry cooldown"
+    in a LIVE cycle (unit-tested, not yet observed live).
+  - Track unique-mint count vs total round-trips so 9/30 progress stays honest.
+  - After ~15-20 clean round-trips, review whether 45m/135m needs a
+    data-driven adjustment (only from data, never pre-emptively).
+
+QUEUED (live-phase, NOT started — captured from operator 2026-10-18):
+  When G1 passes and the satellite can risk real capital, the dominant
+  production pattern is mechanical profit-locking + circuit breakers +
+  deliberate capital extraction (not discretion). Design then, one change at a
+  time, once live data exists:
+    - TP ladder (recover stake at ~2x, tranches at 3-5x / 8-10x, moonbag on a
+      trailing stop); trailing / break-even stop (MAX_HOLD_S time-box exists).
+    - Portfolio circuit breakers: daily-loss cap, loss-streak cooldown, max
+      open / total-heat cap (some live in the EVM RiskGate, NOT the satellite).
+    - Hot-wallet hygiene: dedicated small hot wallet, no-withdrawal API keys,
+      scheduled sweep of realized gains to a cold/non-trading wallet.
+  Nothing here is wireable while paper-only. No code change now.
+  SEE: LIVE_TRADING_PLAYBOOK.md (full design + repo mapping + sec.8 GO-LIVE
+  RUNBOOK). Enabling is still DESIGN-ONLY; the scaffolding is PREPARED (sec.15).
+================================================================================
+
+SHIPPED 2026-10-19 - POST-G1 SCAFFOLDING PREPARED (offline, unwired, default-OFF)
+================================================================================
+Built + tested the post-G1 pieces so the eventual flip is a flag, not a build.
+ALL are INERT by default so the G1 paper measurement is byte-for-byte unchanged.
+  - src/meme_g1.py + scripts/meme_g1_report.py : read-only G1 progress gauge.
+    CLI: venv/bin/python scripts/meme_g1_report.py [--json].
+  - src/satellite_breakers.py : Phase-2 breakers (daily-loss, loss-streak,
+    max-open, portfolio-heat, drawdown halt). Pure; ported from risk_gate.py.
+  - src/meme_execute.py::live_sell : Phase-1 sell path (confirm-gated; it
+    BYPASSES ExecutionLedger.approve() - an exit frees capital, never buy-capped).
+  - src/meme_reconcile.py : Phase-3 local-vs-chain reconciliation (pure).
+  - src/meme_shadow.py : offline shadow-filter replay (candidate-filter tests).
+  - src/meme_loop.py : SatelliteLoop accepts breakers=/on_entry=/on_exit= (default
+    None -> inert). Halt transitions dispatch a best-effort alert (no-op unless
+    ALERT_WEBHOOK_URL is set). Wiring tests pin that default-OFF is inert.
+  - FIXED: symbol="" plumbing (TokenSnapshot.symbol via enrich->feed->runner->
+    try_enter; shown in portfolio()). Cosmetic; no gate impact.
+  - DOC: LIVE_TRADING_PLAYBOOK.md sec.5 (prepared list) + sec.8 GO-LIVE RUNBOOK.
+
+VERIFIED (local):
+  - full suite: 1075 passed (was 1034).
+  - check_release.py: EXITCODE=2 (open-with-skips; secrets SKIP = gitleaks absent).
+  - secret scan: SECRET_SCAN_CLEAN.
+  - Touched: src/meme_loop.py, src/meme_execute.py, src/meme_discovery.py,
+    src/meme_feed.py, src/meme_satellite.py, src/meme_g1.py, src/satellite_breakers.py,
+    src/meme_reconcile.py, src/meme_shadow.py, scripts/meme_g1_report.py,
+    scripts/meme_runner.py, + their tests.
+
+NOT CHANGED (deliberate): the G1 window rules (scream_filter thresholds, exit
+  rules, sizing, cooldowns) are untouched, so "net-positive under CURRENT rules"
+  stays honest. Nothing enabled: ALLOW_LIVE=false, DRY_RUN=true.
+
+NEXT: keep the paper loop running; at each checkpoint record unique-mint vs
+  round-trip counts and confirm the first live entry_blocked/"re-entry cooldown".
+  When G1 PASSES -> execute LIVE_TRADING_PLAYBOOK.md sec.6 (one piece at a time,
+  each with a regression test) and then sec.8.
+
+================================================================================
+16. DATA-SOURCE REPAIR + G1 CLOCK RESTART — 2026-10-19 (SHIPPED)
+================================================================================
+TRIGGER: the fresh window stalled (0 entries for ~4.4h, 10/30 round-trips
+frozen). Root cause chain: Solami Blur stream expired (needs a $25 minimum
+top-up the operator declined) -> discovery fell back to DexScreener fresh-mint
+profiles; RugCheck went NXDOMAIN (last data 2026-10-18 23:25Z, dead on all 3
+public resolvers) -> creator_address/creator_hold_pct unmeasurable -> 3,854 of
+4,585 graduated screens died on missing_data at Gate 3b.
+DECISION (operator-approved): repair the data sources for free, restart the G1
+clock (the old sample mixes regimes and is not decision-grade).
+
+SHIPPED (md5-verified deploys; backup /opt/tars/backup-datasource-fix/):
+  - creator_address <- Jupiter /tokens/v2/search `dev` (deployer), graduates
+    only (Gate 2/3b live after graduation; searching non-graduates wastes the
+    rate budget).
+  - creator_hold_pct <- Helius getTokenAccountsByOwner(dev,{mint}) summed /
+    supply * 100, computed in HeliusFeed.snapshot_for_mint when no supplier
+    provided it. On-chain truth: free, deterministic, no third-party uptime.
+    Transport failure stays None (never a false 0); 0 is a REAL answer (dev
+    sold). Verified live: every graduated mint measured so far shows 0.0
+    (typical pump.fun post-graduation dump) — Gate 3b is measuring now.
+  - creator_launches <- Jupiter `dev_mints`, NOTE ONLY (TokenSnapshot field +
+    screen-reason note; live values 1 / 4 / 144 / 893 / 6148 / 22127 — serial
+    deployers are visible; promote to a gate only after a measured
+    distribution).
+  - 429 hardening: /tokens/v2/search 429s after ~5 keyless calls (measured);
+    token_info now retries a transient 429 up to 3x (1s sleep, test-injected).
+    ANY bulk manual _enrich run will 429 Jupiter AND Helius (a 150-mint probe
+    did exactly that) — diagnose from the blotter instead.
+  - HeliusFeed.owner_token_balance_raw exported + covered (sum across multiple
+    accounts, Token-2022 amount at offset 64, malformed entries skipped).
+
+TESTS: 8 new (feed) + 1 (scream filter note-only pin) + 3 (429 retry) = chain
+  green: full local suite 1086 passed; remote py_compile OK; pre-reset proof
+  ran mr._enrich on the VPS and showed creator_hold_pct 0.0 where the old data
+  showed None->missing_data; first post-restart cycle's graduate screen reads
+  "creator cluster holds 0.0%: acceptable" + "deployer launch count 1 (note
+  only)" and rejects on a REAL reason (pool $10 < $20k thin_liquidity).
+
+G1 CLOCK: restarted 2026-10-19 ~11:02 CEST (zeroed counters, empty blotter).
+  Archives: blotter.pre-datasource-fix-2026-10-19.jsonl (14,697 lines,
+  +$9.1010 paper), positions.pre-datasource-fix-...json,
+  blotter.fix-v1-2026-10-19-v2.jsonl (intermediate window). Marker:
+  data/meme_satellite/G1_CLOCK_RESTART.json. deployer_history.json reset with
+  the window (it compounds from the blotter; rebuilt under the new regime).
+
+NOT CHANGED: all gate thresholds/exit rules/sizing/cooldowns (no rule change);
+  ALLOW_LIVE=false, DRY_RUN=true. Playbook sec.9 documents the repair.
+
+OPEN (unchanged, DECISIONS not code):
+  - Q4 liquidity floor ($20k vs $2-10k typical post-graduation pools) — if the
+    fresh window starves on thin_liquidity, that review is the next
+    one-change candidate.
+  - Blur top-up ($) declined; discovery remains DexScreener fallback; counts
+    as the standing budget decision, not a blocker for this window.
+
+NEXT WATCH ITEMS: (a) unconfirmed:graduated ratio per cycle in --diagnose;
+  (b) missing_data count should stay ~0 for graduates; (c) first PASS happens
+  when a graduated mint clears all gates (creator 0.0% + top10 <=50% + rt cost
+  + liquidity >= $20k + mcap >= $10k); (d) do NOT let G1 window noise from
+  manual probes enter the blotter.
+
+--------------------------------------------------------------------------------
+17. QUEUED CHANGE CANDIDATES — FILED, NO ACTION THIS WINDOW (2026-10-19)
+--------------------------------------------------------------------------------
+OPERATIVE DIRECTIVE: leave GoPlus + cluster ideas queued; do NOT probe or
+integrate anything mid-window. Zero code, zero external calls that could
+alter the sample while the repaired funnel accrues data. Details and action
+order live in LIVE_TRADING_PLAYBOOK.md sec.10; the event-overlay note in
+sec.11.
+  #1 GoPlus Solana token-security (transfer fee / tax / mutable metadata /
+     extra authority flags) as free read-only enrichment for the still-
+     unobserved buy_tax_pct / sell_tax_pct. Note-only or soft first; hard
+     gate only after measured post-G1 data. First post-window action: ONE
+     read-only probe (endpoint / shape / rate limits / field coverage).
+  #2 Holder-cluster / linked-wallet tightening (InsightX Atlas >=15%-group
+     rule): needs free API or cheap on-chain approximation — research only.
+  #3 Solsniffer snifscore + snifwallets serial-launcher: note-only
+     corroboration of Jupiter dev_mints. Lowest priority.
+  OPPORTUNISTIC EVENT OVERLAY (post-live only): GTA 6 launch (and similar
+  major cultural releases) — small, TIME-BOXED allocation to related memes
+  in the first 24-72h; separate risk budget; full safety checklist; hard
+  time/TP exit; re-evaluate only when live infra is proven. Filed in
+  playbook sec.11.
+PROVENANCE: @TheMaran free rug-check thread (X 2112114049366523960);
+  @SpoiledBySpoily GTA-6 meme overlay (X 2111877036658544758). No wallet
+  connect to any scanner (read-only discipline already enforced).
+WINDOW NOTE 2026-10-19 ~16:45: profit-ratchet exit change (the ONE rule
+  change, operator-approved, sec.10 discipline preserved for GoPlus/cluster
+  items) shipped + G1 restart #3 — full chain and rationale in
+  LIVE_TRADING_PLAYBOOK.md sec.12. Current gates unchanged (7d/30-rt).
+================================================================================

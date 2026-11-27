@@ -1,0 +1,14 @@
+{
+  "positions": [],
+  "spent_usd": 0.0,
+  "realized_net_usd": -1.0,
+  "cycle_count": 3,
+  "reentry_cooldown": {
+    "WINNER": {
+      "ts": 1795315550.3907518,
+      "cooldown_s": 8100.0,
+      "reason": "RUG: collapsing 33%/min off peak"
+    }
+  },
+  "updated_at": 1795315550.3984346
+}

@@ -1,0 +1,3 @@
+{"event": "entry", "mint": "RUGGED", "size_usd": 25.0, "price": 1.0, "sized_from_liquidity_usd": 50000.0, "sized_from_volume_usd": 10000.0, "paper": true, "ts": 1795315524.2872193, "cycle": 0}
+{"event": "exit", "mint": "RUGGED", "reason": "RUG: collapsing 96%/min off peak", "entry_price": 1.0, "exit_price": 0.04, "peak_price": 1.0, "size_usd": 25.0, "gross_usd": -24.0, "costs_usd": 1.0, "net_usd": -25.0, "hold_time_s": 0.0, "ts": 1795315524.2892275, "cycle": 0}
+{"event": "entry_blocked", "mint": "NEWRUG", "reason": "breaker: paused 76476s (streak=1, daily=$25.00)", "ts": 1795315524.3278074, "cycle": 0}

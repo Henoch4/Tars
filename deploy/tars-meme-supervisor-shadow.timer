@@ -1,0 +1,10 @@
+[Unit]
+Description=Start main memecoin supervisor shadow when readiness marker is present
+
+[Timer]
+OnBootSec=10min
+Persistent=false
+Unit=tars-meme-supervisor-shadow.service
+
+[Install]
+WantedBy=timers.target

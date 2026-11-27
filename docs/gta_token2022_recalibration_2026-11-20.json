@@ -1,0 +1,8 @@
+{
+  "results": [
+    {"mint":"BsbsB3WLq7vbY5En3MBCAsTrcwaCxNKY2Mp5pGuLpump","slot":471764287,"freshness":"fresh","transfer_fee":"absent","hook_present":false,"restriction_findings":[],"sell_restrictions":"unknown","classification":"blocked","reason":"sell_unassessed"},
+    {"mint":"2hwaRQs4WqThnp26XLpch5MBZhAHqses3vSv1Bkupump","slot":471764288,"freshness":"fresh","transfer_fee":"absent","hook_present":false,"restriction_findings":[],"sell_restrictions":"unknown","classification":"blocked","reason":"sell_unassessed"}
+  ],
+  "provenance":"finalized getAccountInfo; per-candidate slots differ by one and are not treated as one atomic snapshot",
+  "decision":"keep sixth shadow disabled"
+}

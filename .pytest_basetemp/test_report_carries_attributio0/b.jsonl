@@ -1,0 +1,4 @@
+{"event": "entry", "mint": "A", "ts": 1700000000.0}
+{"event": "exit", "mint": "A", "reason": "RUG: LP drained 95%", "net_usd": -20.0, "gross_usd": -19.0, "costs_usd": 1.0}
+{"event": "entry", "mint": "B", "ts": 1700000000.0}
+{"event": "exit", "mint": "B", "reason": "pivot: -35% off peak", "net_usd": 6.0, "gross_usd": 7.0, "costs_usd": 1.0}

@@ -1,0 +1,7 @@
+version: age_variant_v1
+variant_min_age_s: 1800
+paper_notional_usd: 25
+max_open_positions: 3
+minimum_completed_trades: 500
+live_promotion: never
+comparison: matched mint and discovery timestamp

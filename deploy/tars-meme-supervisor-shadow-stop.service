@@ -1,0 +1,7 @@
+[Unit]
+Description=Stop main memecoin supervisor shadow observer
+
+[Service]
+Type=oneshot
+ConditionPathExists=/etc/tars/ENABLE_MEME_SUPERVISOR_SHADOW
+ExecStart=/bin/systemctl stop tars-meme-supervisor-shadow.service

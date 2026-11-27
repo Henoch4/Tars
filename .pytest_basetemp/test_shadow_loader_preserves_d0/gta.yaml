@@ -1,0 +1,8 @@
+enabled: false
+live_enabled: false
+start_utc: '2026-11-18T00:00:00Z'
+end_utc: '2026-11-22T00:00:00Z'
+max_total_usd: 9
+max_per_token_usd: 3
+max_open_positions: 0
+keywords: [gta, gta6]

@@ -1,0 +1,19 @@
+{
+  "artifact_names": [
+    "feature_pipeline.pkl",
+    "model.joblib"
+  ],
+  "digests": {
+    "feature_pipeline.pkl": "1aef5a1bef7d4b4f9a43f24e733e1bc7cb7a3f38635f8a4f1d33380e4398c6f4",
+    "model.joblib": "b6487c3d1fa7082dc1432a329359b47214727317671ef068955bfd4c2f8c385b"
+  },
+  "metadata": {
+    "feature_cols": [
+      "f0",
+      "f1"
+    ],
+    "trained_at": "2026-10-28T00:00:00Z"
+  },
+  "subdirectory": "sub-train-SOL-USDT_1700000001000",
+  "trained_timestamp": 1700000001000
+}

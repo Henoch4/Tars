@@ -1,0 +1,6 @@
+{"event": "screen", "mint": "A", "passed": true, "rejected_by": null, "reasons": []}
+{"event": "screen", "mint": "B", "passed": false, "rejected_by": "missing_data", "reasons": ["x unobserved"]}
+{"event": "screen", "mint": "C", "passed": false, "rejected_by": "missing_data", "reasons": ["y unobserved"]}
+{"event": "screen", "mint": "D", "passed": false, "rejected_by": "thin_liquidity", "reasons": ["pool small"]}
+{"event": "screen", "mint": "E", "passed": false, "rejected_by": "holder_concentration", "reasons": ["top10 holds 73.2% (> 50%)"]}
+{"event": "entry", "mint": "A"}

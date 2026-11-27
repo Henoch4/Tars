@@ -1,0 +1,10 @@
+[Unit]
+Description=Start TARS GTA shadow scanner when readiness marker is present
+
+[Timer]
+OnBootSec=10min
+Persistent=false
+Unit=tars-gta-shadow.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,3 @@
+{"event": "entry", "mint": "M1", "size_usd": 22.84448, "price": 1.0, "sized_from_liquidity_usd": 22844.48, "sized_from_volume_usd": 5000000.0, "paper": true, "ts": 1795315524.3635044, "cycle": 0}
+{"event": "exit", "mint": "M1", "reason": "RUG: collapsing 50%/min off peak", "entry_price": 1.0, "exit_price": 0.5, "peak_price": 1.0, "size_usd": 22.84448, "gross_usd": -11.4222, "costs_usd": 0.9569, "net_usd": -12.3791, "hold_time_s": 0.0, "ts": 1795315524.3654761, "cycle": 0}
+{"event": "entry", "mint": "M2", "size_usd": 22.84448, "price": 1.0, "sized_from_liquidity_usd": 22844.48, "sized_from_volume_usd": 5000000.0, "paper": true, "ts": 1795315524.366904, "cycle": 0}

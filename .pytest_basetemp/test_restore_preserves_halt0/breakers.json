@@ -1,0 +1,1 @@
+{"ts": 1700000000.0, "daily_loss": {"19675": 105.0}, "consecutive_losses": 1, "paused_until": 1700006400.0, "halted": true, "halt_reason": "daily loss $105.00 >= 2.0x $50.00 cap"}

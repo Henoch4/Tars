@@ -1,0 +1,2 @@
+{"event": "reconciliation_failed", "reason": "reconciliation mismatch or unreadable", "report": {"ok": false, "reason": "mismatch"}, "state": "running", "ts": 1795315551.9410305}
+{"event": "halted", "reason": "reconciliation mismatch or unreadable", "state": "halted", "ts": 1795315551.9421637}

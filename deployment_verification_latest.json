@@ -1,0 +1,41 @@
+{
+  "artifact_type": "tarstrade_deployment_manifest",
+  "captured_at": "2026-11-27T13:23:37.842589+00:00",
+  "deployment_issues": [],
+  "files": {
+    "pyproject.toml": "2a61d6d6a5d57b17726a63be835616d54d13b92d3fb530bb60516258cea5a0d3",
+    "requirements.txt": "74b1c75d697b62596ce6333ccf122565654da05ab0845a8bb9fad53e3da314fe",
+    "scripts/safety_freeze_check.py": "ecc22e86860766b74dde0b3d886d9dc7e250134313fc6fdd29a06b578ebba52d",
+    "src/runtime.py": "0c748a6d53425a880d910ad06cd90d0b9c1cfeeb66591419e28837baad62a567",
+    "src/strategy_lifecycle.py": "5eccf72d8babe21702b4a16da485b4839037ddbc15f389f1cb14bd9723c33507"
+  },
+  "missing": [],
+  "ready": true,
+  "required_files": [
+    "pyproject.toml",
+    "requirements.txt",
+    "src/runtime.py",
+    "src/strategy_lifecycle.py",
+    "scripts/safety_freeze_check.py"
+  ],
+  "safety": {
+    "allow_live": false,
+    "dry_run": true
+  },
+  "vps_verification": {
+    "network_or_wallet_action": false,
+    "performed": true,
+    "runtime_policy": {
+      "allow_live": false,
+      "dry_run": true
+    },
+    "safety_scan": "pass",
+    "services": {
+      "tars-agent.service": "active",
+      "tars-gta-shadow.service": "inactive",
+      "tars-paperz.service": "active",
+      "tars-satellite.service": "active",
+      "tars-scheduler.service": "active"
+    }
+  }
+}

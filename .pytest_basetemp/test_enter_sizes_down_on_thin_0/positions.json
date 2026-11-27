@@ -1,0 +1,24 @@
+{
+  "positions": [
+    {
+      "mint": "M1",
+      "symbol": "",
+      "entry_price": 1.0,
+      "entry_usd": 20.0,
+      "size_usd": 20.0,
+      "entry_ts": 1795315550.317199,
+      "entry_window_volume_usd": 500000.0,
+      "peak_price": 1.0,
+      "last_price": 1.0,
+      "last_volume_24h_usd": null,
+      "lp_reserve_usd": 20000.0,
+      "lp_reserve_at_entry_usd": 20000.0,
+      "sell_tax_pct_now": null
+    }
+  ],
+  "spent_usd": 20.0,
+  "realized_net_usd": 0.0,
+  "cycle_count": 0,
+  "reentry_cooldown": {},
+  "updated_at": 1795315550.3182638
+}

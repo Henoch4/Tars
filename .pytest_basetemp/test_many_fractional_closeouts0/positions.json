@@ -1,0 +1,109 @@
+{
+  "positions": [],
+  "spent_usd": 0.0,
+  "realized_net_usd": -247.582592,
+  "cycle_count": 0,
+  "reentry_cooldown": {
+    "M0": {
+      "ts": 1795315524.3768744,
+      "cooldown_s": 8100.0,
+      "reason": "RUG: collapsing 50%/min off peak"
+    },
+    "M1": {
+      "ts": 1795315524.379999,
+      "cooldown_s": 8100.0,
+      "reason": "RUG: collapsing 50%/min off peak"
+    },
+    "M2": {
+      "ts": 1795315524.3835025,
+      "cooldown_s": 8100.0,
+      "reason": "RUG: collapsing 50%/min off peak"
+    },
+    "M3": {
+      "ts": 1795315524.3865094,
+      "cooldown_s": 8100.0,
+      "reason": "RUG: collapsing 50%/min off peak"
+    },
+    "M4": {
+      "ts": 1795315524.3892612,
+      "cooldown_s": 8100.0,
+      "reason": "RUG: collapsing 50%/min off peak"
+    },
+    "M5": {
+      "ts": 1795315524.3937957,
+      "cooldown_s": 8100.0,
+      "reason": "RUG: collapsing 50%/min off peak"
+    },
+    "M6": {
+      "ts": 1795315524.3970876,
+      "cooldown_s": 8100.0,
+      "reason": "RUG: collapsing 50%/min off peak"
+    },
+    "M7": {
+      "ts": 1795315524.3999777,
+      "cooldown_s": 8100.0,
+      "reason": "RUG: collapsing 50%/min off peak"
+    },
+    "M8": {
+      "ts": 1795315524.402827,
+      "cooldown_s": 8100.0,
+      "reason": "RUG: collapsing 50%/min off peak"
+    },
+    "M9": {
+      "ts": 1795315524.405888,
+      "cooldown_s": 8100.0,
+      "reason": "RUG: collapsing 50%/min off peak"
+    },
+    "M10": {
+      "ts": 1795315524.4107049,
+      "cooldown_s": 8100.0,
+      "reason": "RUG: collapsing 50%/min off peak"
+    },
+    "M11": {
+      "ts": 1795315524.4138038,
+      "cooldown_s": 8100.0,
+      "reason": "RUG: collapsing 50%/min off peak"
+    },
+    "M12": {
+      "ts": 1795315524.4169002,
+      "cooldown_s": 8100.0,
+      "reason": "RUG: collapsing 50%/min off peak"
+    },
+    "M13": {
+      "ts": 1795315524.419869,
+      "cooldown_s": 8100.0,
+      "reason": "RUG: collapsing 50%/min off peak"
+    },
+    "M14": {
+      "ts": 1795315524.4226937,
+      "cooldown_s": 8100.0,
+      "reason": "RUG: collapsing 50%/min off peak"
+    },
+    "M15": {
+      "ts": 1795315524.4277713,
+      "cooldown_s": 8100.0,
+      "reason": "RUG: collapsing 50%/min off peak"
+    },
+    "M16": {
+      "ts": 1795315524.4306226,
+      "cooldown_s": 8100.0,
+      "reason": "RUG: collapsing 50%/min off peak"
+    },
+    "M17": {
+      "ts": 1795315524.4336166,
+      "cooldown_s": 8100.0,
+      "reason": "RUG: collapsing 50%/min off peak"
+    },
+    "M18": {
+      "ts": 1795315524.4368587,
+      "cooldown_s": 8100.0,
+      "reason": "RUG: collapsing 50%/min off peak"
+    },
+    "M19": {
+      "ts": 1795315524.4406044,
+      "cooldown_s": 8100.0,
+      "reason": "RUG: collapsing 50%/min off peak"
+    }
+  },
+  "updated_at": 1795315524.4418573
+}

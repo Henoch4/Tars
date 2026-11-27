@@ -1,0 +1,14 @@
+{
+  "positions": [],
+  "spent_usd": 0.0,
+  "realized_net_usd": -8.0,
+  "cycle_count": 0,
+  "reentry_cooldown": {
+    "M1": {
+      "ts": 1795315550.4674113,
+      "cooldown_s": 8100.0,
+      "reason": "pivot: -28% off peak (>25%)"
+    }
+  },
+  "updated_at": 1795315550.468477
+}

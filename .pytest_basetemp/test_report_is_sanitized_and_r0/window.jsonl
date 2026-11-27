@@ -1,0 +1,2 @@
+{"event": "entry", "mint": "M", "ts": 1}
+{"event": "exit", "mint": "M", "reason": "TIME_BOX", "net_usd": -1, "ts": 2}

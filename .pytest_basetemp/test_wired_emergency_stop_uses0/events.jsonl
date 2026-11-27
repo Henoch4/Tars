@@ -1,0 +1,1 @@
+{"event": "emergency_stop", "flatten": {"attempted": true, "result": {"attempted": false, "closed": true, "results": [{"attempted": false, "closed": true, "mint": "", "reason": "no open position", "receipt": null, "remaining_raw": 0}], "unresolved": []}}, "reason": "operator kill", "state": "halted", "ts": 1795315551.7815814}
