@@ -125,3 +125,6 @@ ml_output/
 .vercel
 .env*
 critical_path_files.zip
+
+# Operational scripts — local only, never publish (contains VPS paths)
+scripts/meme_live_buy.py
