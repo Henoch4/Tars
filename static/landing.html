@@ -384,6 +384,13 @@ footer{border-top:1px solid var(--border);padding:var(--sp-700) 0 var(--sp-500);
 .paper-note{margin-top:var(--sp-500);max-width:640px;margin-left:auto;margin-right:auto;}
 .paper-note p{font-size:0.88rem;color:var(--ink-soft);line-height:1.6;}
 .paper-note b{color:var(--ink);}
+.road-wrap{display:flex;gap:var(--sp-400);flex-wrap:wrap;justify-content:center;max-width:800px;margin:0 auto;}
+.road-card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:var(--sp-500);text-align:center;min-width:160px;}
+.road-tag{font-family:'Geist Mono',monospace;font-size:0.72rem;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:var(--sp-200);display:block;}
+.road-title{font-weight:700;color:var(--ink);font-size:1rem;display:block;margin-bottom:10px;}
+.road-desc{font-size:0.88rem;color:var(--ink-soft);line-height:1.5;}
+.road-note{margin-top:var(--sp-500);max-width:800px;margin-left:auto;margin-right:auto;}
+.paper-note b{color:var(--ink);}
 </style>
 </head>
 <body>
@@ -740,6 +747,45 @@ footer{border-top:1px solid var(--border);padding:var(--sp-700) 0 var(--sp-500);
     </div>
     <div class="paper-note reveal">
       <p><b>This is paper trading, not live trading.</b> No real capital was ever at risk. Paper results show what the strategy would have done — they are not a promise of what live trading would do. Live results can be worse, better, or nothing like paper. Never deposit more than you can afford to lose entirely.</p>
+    </div>
+  </div>
+</section>
+
+<section class="roadmap">
+  <div class="container">
+    <div class="section-head reveal">
+      <div class="section-eyebrow">Our Plan</div>
+      <h2>What we built, what failed, what's next</h2>
+    </div>
+    <div class="road-wrap reveal">
+      <div class="road-card">
+        <div class="road-tag">Built &amp; Tested</div>
+        <div class="road-title">Risk limits that can't be bypassed</div>
+        <p class="road-desc">Daily loss caps, position limits, confidence floors — the robot can't change them, even if it wants to. Every decision is written to a public ledger before any trade happens.</p>
+      </div>
+      <div class="road-card">
+        <div class="road-tag">One strategy cleared the gate</div>
+        <div class="road-title">SOL funding carry</div>
+        <p class="road-desc">28 paper trades, +13.6% net after fees. It's the only one of four strategies tested that passed the walk-forward and Calmar exam. Everything else was retired.</p>
+      </div>
+      <div class="road-card">
+        <div class="road-tag">Retired — didn't work</div>
+        <div class="road-title">Mean reversion, momentum, directional ML</div>
+        <p class="road-desc">All three lost money after costs (−54% to −94% net, −90% for ML). They're retired. We don't hide that.</p>
+      </div>
+      <div class="road-card">
+        <div class="road-tag">In research — paper only</div>
+        <div class="road-title">New coin satellite</div>
+        <p class="road-desc">Screens fresh Solana coins with hard walls: no fabricated data, no live capital, automatic exits on rugs or volume collapse. Paper-only — no execution wiring.</p>
+      </div>
+      <div class="road-card">
+        <div class="road-tag">Designed — not built</div>
+        <div class="road-title">Pooled vault</div>
+        <p class="road-desc">A shared pot where external users could deposit. Contract design is done; no code written yet. Fees, legal, and operator first-loss capital come first — if ever.</p>
+      </div>
+    </div>
+    <div class="road-note reveal">
+      <p><b>No promises.</b> Live execution is disabled. The vault isn't open. Nothing here touches real money until it has passed every gate — in writing.</p>
     </div>
   </div>
 </section>
