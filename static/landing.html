@@ -444,6 +444,29 @@ h2.in .w span{transform:none}
 #prog{display:none}
 .paper-stat b{animation:none!important}
 }
+.paper-note b{color:var(--ink);}
+
+/* Ledger decision animation */
+.lg{display:grid;gap:14px}
+.row{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:20px 24px;display:grid;grid-template-columns:150px 1fr auto;gap:20px;align-items:center}
+.row h3{font-size:18px}.row p{margin:2px 0 0;color:var(--mut);font-size:14px}
+.meter{position:relative;height:10px;background:var(--line);border-radius:6px}
+.meter i{position:absolute;left:0;top:0;bottom:0;border-radius:6px;background:var(--navy);width:0;transition:width var(--slow) var(--out) var(--d)}
+.blk .meter i{background:var(--warn)}
+.row.go .meter i{width:var(--v)}
+.meter:after{content:"70%";position:absolute;left:70%;top:-20px;font:500 11px var(--mono);color:var(--mut);transform:translateX(-50%)}
+.meter u{position:absolute;left:70%;top:-4px;bottom:-4px;width:2px;background:var(--ink);opacity:.5}
+.steps{display:flex;gap:6px;margin-top:14px;font:500 12px var(--mono);color:var(--mut);flex-wrap:wrap}
+.steps span{padding:3px 9px;border-radius:99px;border:1px solid var(--line);transition:all var(--base) var(--out);transition-delay:calc(var(--d) + var(--k)*260ms)}
+.row.go .steps span.y{background:var(--mint);color:#06301c;border-color:var(--mint)}
+.row.go .steps span.n{background:transparent;color:var(--warn);border-color:var(--warn);text-decoration:line-through}
+.pill{font:700 12px var(--mono);padding:6px 14px;border-radius:99px;background:var(--line);color:var(--mut);min-width:96px;text-align:center}
+.pill:after{content:"writing"}
+.row.go .pill{animation:pp 0s linear calc(var(--d) + 1000ms) forwards}
+@keyframes pp{to{}}
+.row.go.ok .pill{background:var(--mint);color:#06301c}.row.go.blk .pill{background:var(--warn);color:#fff}
+.sksec{display:grid;gap:14px}
+.sk-row{height:96px;border-radius:20px}
 </style>
 </head>
 <body>
@@ -834,6 +857,17 @@ h2.in .w span{transform:none}
   </div>
 </section>
 
+<section class="ledger">
+  <div class="container">
+    <div class="section-head reveal">
+      <div class="section-eyebrow">Live decision trail</div>
+      <h2>Watch every decision get made</h2>
+    </div>
+    <div class="lg" id="lg"></div>
+    <div class="more"><button class="btn solid" id="again">Run another cycle</button><span>Sample decisions that show the format. Nothing here touches real money.</span></div>
+  </div>
+</section>
+
 <section class="roadmap">
   <div class="container">
     <div class="section-head reveal">
@@ -1220,7 +1254,6 @@ var binderIo=new IntersectionObserver(function(es){
     }
   }},{threshold:.3});
 binderIo.observe(document.getElementById('binder'));
-var reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /* Bootstrap audit screen */
 var boot=document.getElementById('boot'),bootLines=$$(".ln",boot),bootBar=$(".bar span",boot),bootTimers=[];
@@ -1248,7 +1281,43 @@ var statIo=new IntersectionObserver(function(es){
   }},{threshold:.3});
 $$('.paper-stat').forEach(function(c){statIo.observe(c)});
 
-/* Pointer parallax on hero robot */
+$$('.paper-stat').forEach(function(c){statIo.observe(c)});
+
+/* Ledger: decide → check → record → trade animation */
+var ledgerIo=new IntersectionObserver(function(es){
+  es.forEach(function(e){
+    if(e.isIntersecting){
+      runLedger(0);
+      ledgerIo.unobserve(e.target);
+    }
+  }},{threshold:.3});
+ledgerIo.observe(document.getElementById('lg'));
+
+var lgSets=[
+  [["Bitcoin","Wants to buy",78],["Solana","Wants to hold a position",65],["Ethereum","Wants to sell",74]],
+  [["BNB","Wants to buy",71],["Bitcoin","Wants to sell",68],["Solana","Wants to buy",82]]
+],lgCur=0,lgEl=document.getElementById('lg'),btnAgain=document.getElementById('again');
+function runLedger(i){
+  btnAgain.disabled=true;
+  lgEl.innerHTML='<div class="sksec">'+'<div class="sk-row"></div>'.repeat(3)+'</div>';
+  setTimeout(function(){
+    lgEl.innerHTML=lgSets[i].map(function(r,k){
+      var ok=r[2]>=70,d=k*420;
+      return '<article class="row '+(ok?"ok":"blk")+'" style="--d:'+d+'ms;--v:'+r[2]+'%">'
+      +'<div><h3>'+r[0]+'</h3><p>'+r[1]+'</p></div>'
+      +'<div><div class="meter"><i></i><u></u></div><div class="steps">'
+      +'<span class="y" style="--k:0">Decide '+r[2]+'%</span><span class="'+(ok?"y":"n")+'" style="--k:1">Check limits</span><span class="y" style="--k:2">Write record</span><span class="'+(ok?"y":"n")+'" style="--k:3">'+(ok?"Trade":"No order")+'</span></div></div>'
+      +'<div class="pill"></div></article>';
+    }).join("");
+    var rows=$$(".row",lgEl);
+    requestAnimationFrame(function(){requestAnimationFrame(function(){rows.forEach(function(r,k){
+      r.classList.add("go");
+      setTimeout(function(){var p=r.querySelector(".pill");p.textContent=p.dataset.s||"Done";p.classList.add("done")},k*420+1150);
+    });});});
+    setTimeout(function(){btnAgain.disabled=false},3000);
+  },reduce?50:1000);
+}
+btnAgain.onclick=function(){lgCur=(lgCur+1)%lgSets.length;runLedger(lgCur);};
 var hs=document.querySelector('.hero-stage');
 if(hs&&matchMedia('(pointer: fine)').matches){
   addEventListener('pointermove',function(e){
