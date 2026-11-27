@@ -414,7 +414,7 @@ footer{border-top:1px solid var(--border);padding:var(--sp-700) 0 var(--sp-500);
 .ln.ok b{opacity:1}
 .bar{height:2px;background:#1d2d3d;margin-top:22px;border-radius:2px;overflow:hidden}
 .bar span{display:block;height:100%;width:100%;background:#6FE0A6;transform:scaleX(0);transform-origin:left;transition:transform .38s linear}
-.skip{position:absolute;right:20px;bottom:calc(20px + env(safe-area-inset-bottom,0px));background:none;border:1px solid #2b4259;color:#8fa9c2;font:500 13px var(--mono);padding:8px 14px;border-radius:99px;cursor:pointer}
+.skip{position:fixed;right:20px;bottom:calc(20px + env(safe-area-inset-bottom,0px));background:none;border:1px solid #2b4259;color:#8fa9c2;font:500 13px var(--mono);padding:8px 14px;border-radius:99px;cursor:pointer;z-index:101}
 .paper-note b{color:var(--ink);}
 .hero-stage{position:relative;display:inline-block;transform:translate(var(--px,0),var(--py,0));transition:transform 160ms linear}
 
@@ -499,8 +499,8 @@ h2.in .w span{transform:none}
     <div class="ln"><span>record written, trading allowed</span><b>ok</b></div>
     <div class="bar"><span></span></div>
   </div>
-  <button class="skip" id="skip">Skip intro</button>
 </div>
+<button class="skip" id="skip">Skip intro</button>
 <a href="#main" class="skip-link">Skip to content</a>
 
 <div class="announce" id="announce">
