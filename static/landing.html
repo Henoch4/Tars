@@ -390,9 +390,39 @@ footer{border-top:1px solid var(--border);padding:var(--sp-700) 0 var(--sp-500);
 .road-desc{font-size:0.88rem;color:var(--ink-soft);line-height:1.5;}
 .road-note{margin-top:var(--sp-500);max-width:800px;margin-left:auto;margin-right:auto;}
 .paper-note b{color:var(--ink);}
+.hero-stage{position:relative;display:inline-block;transform:translate(var(--px,0),var(--py,0));transition:transform 160ms linear}
+
+/* Motion tokens */
+:root{--fast:200ms;--base:560ms;--slow:1100ms;--out:cubic-bezier(.16,1,.3,1)}
+
+/* Scroll progress bar */
+#prog{position:fixed;left:0;right:0;top:env(safe-area-inset-top,0px);height:3px;z-index:50;background:linear-gradient(90deg,var(--accent),var(--accent-dim));transform:scaleX(0);transform-origin:left}
+
+/* Heading words light up on scroll */
+h2 .w{display:inline-block;overflow:hidden;vertical-align:top;padding-bottom:.12em}
+h2 .w span{display:inline-block;transform:translateY(110%);transition:transform var(--slow) var(--out);transition-delay:calc(var(--i)*50ms)}
+h2.in .w span{transform:none}
+
+/* Cards rotate into place on scroll */
+.path-card{opacity:0;transform:translateY(56px) rotate(-2.5deg);transition:transform var(--slow) var(--out) var(--dl,0ms),opacity var(--base) var(--dl,0ms)}
+.path-card.in{opacity:1;transform:none}
+.path-card.in:hover{transform:translateY(-5px);transition-duration:var(--base);transition-delay:0ms}
+
+/* Manifesto words light up as you scroll */
+.ph{max-width:640px;font:700 clamp(28px,4vw,38px)/1.25 var(--ink);letter-spacing:-.02em}
+.ph span{opacity:.18;transition:opacity 300ms linear}
+.ph span.lit{opacity:1}
+
+/* Reduced motion */
+@media (prefers-reduced-motion:reduce){
+.path-card{opacity:1!important;transform:none!important}
+.h2 .w span,.ph span{transform:none!important;opacity:1!important}
+#prog{display:none}
+}
 </style>
 </head>
 <body>
+<div id="prog"></div>
 <a href="#main" class="skip-link">Skip to content</a>
 
 <div class="announce" id="announce">
@@ -448,7 +478,7 @@ footer{border-top:1px solid var(--border);padding:var(--sp-700) 0 var(--sp-500);
 <header class="hero">
   <div class="container hero-split">
     <div class="hero-visual">
-      <img src="/static/hero-tars.svg" alt="TARS robot character on stacked audit cards — navy, tan, and white" width="400" height="420">
+      <div class="hero-stage"><img src="/static/hero-tars.svg" alt="TARS robot character on stacked audit cards — navy, tan, and white" width="400" height="420"></div>
     </div>
     <div class="hero-text">
       <a class="eyebrow-pill hero-anim d1" href="#vault">
@@ -580,7 +610,7 @@ footer{border-top:1px solid var(--border);padding:var(--sp-700) 0 var(--sp-500);
   <div class="container">
     <div class="manifesto-inner reveal">
       <div class="section-eyebrow">Philosophy</div>
-      <p><b>TARS is not a magic money machine, a tip service, or another prediction platform.</b></p>
+      <h2 class="ph" id="ph"></h2>
       <p>It's an automated trader built like a bank vault: independent ways of spotting opportunities (only the ones that pass the history exam are ever allowed to trade), wrapped in limits the robot itself has no ability to change.</p>
       <p>Before every trade, it writes down what it's about to do in a public record. If the write fails, the trade doesn't happen. There is nothing to take on faith.</p>
       <p>You can check everything yourself: the same record the robot follows is public. The gap between what it decided and what it was allowed to do is zero.</p>
@@ -1116,6 +1146,52 @@ footer{border-top:1px solid var(--border);padding:var(--sp-700) 0 var(--sp-500);
     btt.addEventListener('click',function(){ window.scrollTo({top:0,behavior:'smooth'}); });
   } catch(e) { console.error('back-to-top init failed', e); }
 })();
+
+/* Scroll progress bar */
+window.addEventListener('scroll',function(){
+  var h=document.documentElement.scrollHeight-innerHeight;
+  var el=document.getElementById('prog');
+  if(el) el.style.transform='scaleX('+(h>0?scrollY/h:0)+')';
+}, {passive:true});
+
+/* Card stagger reveal: cards rotate into place with stagger on scroll */
+var io=new IntersectionObserver(function(es){
+  es.forEach(function(e){
+    if(e.isIntersecting){
+      var idx=Array.prototype.indexOf.call(e.parentElement.children,e.target);
+      e.target.style.setProperty('--dl',(idx*90)+'ms');
+      e.target.classList.add('in');
+      io.unobserve(e.target);
+    }
+  }},{threshold:.18});
+$$('.path-card').forEach(function(c){io.observe(c)});
+
+/* Pointer parallax on hero robot */
+var hs=document.querySelector('.hero-stage');
+if(hs&&matchMedia('(pointer: fine)').matches){
+  addEventListener('pointermove',function(e){
+    var r=hs.getBoundingClientRect();
+    var px=((e.clientX-r.left-r.width/2)/innerWidth*32).toFixed(1);
+    var py=((e.clientY-r.top-r.height/2)/innerHeight*20).toFixed(1);
+    hs.style.setProperty('--px',px);
+    hs.style.setProperty('--py',py);
+  });
+}
+
+/* Scroll-scrubbed manifesto text */
+var ph=document.getElementById('ph');
+if(ph){
+  var phText='TARS is not a magic money machine, a tip service, or another prediction platform. It is an automated trader built like a bank vault: independent ways of spotting opportunities (only the ones that pass the history exam are ever allowed to trade), wrapped in limits the robot itself has no ability to change. Before every trade, it writes down what it is about to do in a public record. If the write fails, the trade does not happen. There is nothing to take on faith. You can check everything yourself: the same record the robot follows is public. The gap between what it decided and what it was allowed to do is zero.';
+  ph.innerHTML=phText.split(' ').map(function(w,i){return '<span style="--i:'+i+'">'+w+'</span>'}).join(' ');
+  var ws=$$('span',ph),tick=false;
+  function scrubPh(){
+    tick=false;
+    var r=ph.getBoundingClientRect(),p=Math.min(1,Math.max(0,(innerHeight*.85-r.top)/(innerHeight*.45+r.height*.6))),n=Math.round(p*ws.length);
+    ws.forEach(function(w,i){w.classList.toggle('lit',i<n)})
+  }
+  addEventListener('scroll',function(){if(!tick){tick=true;requestAnimationFrame(scrubPh)}},{passive:true});scrubPh();
+}
+
     // Theme toggle
     function toggleTheme() {
       const html = document.documentElement;
