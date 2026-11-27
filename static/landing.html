@@ -118,6 +118,9 @@ p{text-wrap:pretty;margin:0;}
 .hero-anim.d3{animation-delay:300ms;}
 .hero-anim.d4{animation-delay:420ms;}
 .hero-anim.d5{animation-delay:540ms;}
+h1 .w{display:inline-block;overflow:hidden;vertical-align:top;padding-bottom:.12em}
+h1 .w span{display:inline-block;transform:translateY(110%);transition:transform var(--slow) var(--out);transition-delay:calc(var(--i)*60ms + 150ms)}
+.ready h1 .w span{transform:none}
 @keyframes hero-in{to{opacity:1;transform:translateY(0);}}
 
 .announce{background:var(--accent-dim);border-bottom:1px solid var(--border);
@@ -519,7 +522,7 @@ h2.in .w span{transform:none}
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
         New &middot; Shared vault in testing
       </a>
-      <h1 class="hero-anim d2">A trading robot with <span class="icon-inline"><svg width="0.85em" height="0.85em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="vertical-align:-0.12em;"><path d="M12 3 4 6.5v5c0 5 3.4 8.5 8 9.5 4.6-1 8-4.5 8-9.5v-5L12 3Z"/></svg></span> rules it cannot break.<br><span class="mono-emph">And it proves it, every trade.</span></h1>
+      <h1 class="hero-anim d2"><span class="w" style="--i:0"><span>A</span></span><span class="w" style="--i:1"><span>trading</span></span><span class="w" style="--i:2"><span>robot</span></span><span class="w" style="--i:3"><span>with</span></span><span class="w" style="--i:4"><span>rules</span></span><span class="w" style="--i:5"><span>it</span></span><span class="w" style="--i:6"><span>cannot</span></span><span class="w" style="--i:7"><span>break.</span></span><span class="w" style="--i:8"><span>And</span></span><span class="w" style="--i:9"><span>it</span></span><span class="w" style="--i:10"><span>proves</span></span><span class="w" style="--i:11"><span>it,</span></span><span class="w" style="--i:12"><span>every</span></span><span class="w" style="--i:13"><span>trade.</span></span></h1>
       <p class="sub hero-anim d3">TARS runs trading cycles on the markets. And before every single trade, it must write down what it's about to do in a public record nobody can edit. And no matter how confident it gets, it can never exceed strict limits set in advance.</p>
       <div class="hero-actions hero-anim d4">
         <a class="btn-pill" href="#waitlist">Get launch updates</a>
